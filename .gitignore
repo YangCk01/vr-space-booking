@@ -49,3 +49,6 @@ start-silent.vbs
 
 # Database backups
 *.sql
+
+# Embedded PostgreSQL (too large for git)
+tools/pgsql/
