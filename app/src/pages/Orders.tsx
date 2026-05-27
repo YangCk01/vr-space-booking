@@ -45,7 +45,7 @@ interface Order {
   phone?: string
   bookingTime: string
   createdAt: string
-  booking?: { personName: string; personPhone: string; personCount: number }
+  booking?: { personName: string; personPhone: string; personCount: number; game?: { title: string } }
   payMethod?: string
 }
 

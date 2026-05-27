@@ -624,8 +624,8 @@ export default function AccountsPage() {
       const payload: Parameters<typeof updateStaff>[1] = {
         name: formData.name,
         phone: formData.phone,
-        role: formData.role,
-        status: formData.status,
+        role: formData.role as StaffUser['role'],
+        status: formData.status as StaffUser['status'],
         venueIds: formData.role === 'MANAGER' ? formData.venueIds : undefined,
       }
       if (formData.password) {

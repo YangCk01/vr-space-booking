@@ -63,6 +63,7 @@ export async function checkConflict(params: {
   date: string
   startTime: string
   endTime: string
+  gameId?: string
   excludeId?: string
 }) {
   const res = await apiClient.get('/bookings/check-conflict', { params })

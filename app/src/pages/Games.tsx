@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import Layout from '@/components/Layout'
 import { getGames, createGame, updateGame, deleteGame } from '@/api/games'
-import type { Game } from '@/api/games'
+import type { Game, GameInput } from '@/api/games'
 import { uploadFile } from '@/api/upload'
 import { getImageUrl } from '@/lib/imageUrl'
 import { cn } from '@/lib/utils'
@@ -81,7 +81,7 @@ export default function Games() {
   })
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<Game> }) => updateGame(id, data),
+    mutationFn: ({ id, data }: { id: string; data: Partial<Game> }) => updateGame(id, data as Partial<GameInput>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['games'] })
       closeModal()

@@ -8,6 +8,7 @@ export interface Venue {
   area: number
   capacity: number
   pricePerHour: number
+  deviceCount: number
   image: string | null
   description: string | null
   address: string | null

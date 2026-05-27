@@ -15,6 +15,12 @@ export interface Order {
   cancelledAt: string | null
   refundAmount: number | null
   bookingTime: string
+  booking?: {
+    game?: { title: string }
+    personCount?: number
+    personName?: string
+    personPhone?: string
+  }
   createdAt: string
   updatedAt: string
 }

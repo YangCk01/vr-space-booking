@@ -10,6 +10,7 @@ export interface User {
   totalVisits: number
   totalSpent: number
   balance: number
+  points: number
   status: string
   registerDate: string
   lastLogin: string | null

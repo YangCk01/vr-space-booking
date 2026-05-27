@@ -46,7 +46,7 @@ export async function createGame(input: GameInput) {
   return res.data.data as Game
 }
 
-export async function updateGame(id: string, input: GameInput) {
+export async function updateGame(id: string, input: Partial<GameInput>) {
   const res = await apiClient.put(`/games/${id}`, input)
   return res.data.data as Game
 }

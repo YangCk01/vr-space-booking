@@ -23,6 +23,7 @@ export interface AuthUser {
   principalBalance: number // 本金钱包
   bonusBalance: number     // 赠送钱包
   points: number
+  totalSpent: number
 }
 
 export interface AuthResult {
