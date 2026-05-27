@@ -1,0 +1,206 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 220 14% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 217 91% 60%;
+    --radius: 0.625rem;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 96%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217 91% 60%;
+
+    /* VR Theme — Light */
+    --vr-bg-base: #F8FAFC;
+    --vr-bg-header: #FFFFFF;
+    --vr-bg-sidebar: #FFFFFF;
+    --vr-bg-card: #FFFFFF;
+    --vr-bg-elevated: #F1F5F9;
+    --vr-bg-surface: #F8FAFC;
+    --vr-bg-hover: #E2E8F0;
+    --vr-bg-active: #DBEAFE;
+
+    --vr-text-primary: #0F172A;
+    --vr-text-secondary: #475569;
+    --vr-text-tertiary: #94A3B8;
+    --vr-text-muted: #CBD5E1;
+
+    --vr-border: #E2E8F0;
+    --vr-border-subtle: #E2E8F0;
+    --vr-border-hover: #CBD5E1;
+    --vr-border-strong: #94A3B8;
+
+    --vr-accent-primary: #3B82F6;
+    --vr-accent-primary-hover: #2563EB;
+    --vr-accent-secondary: #06B6D4;
+    --vr-success: #10B981;
+    --vr-error: #EF4444;
+    --vr-warning: #F59E0B;
+    --vr-purple: #8B5CF6;
+    --vr-indigo: #6366F1;
+  }
+
+  .dark {
+    --background: 220 40% 8%;
+    --foreground: 210 40% 96%;
+    --card: 220 30% 13%;
+    --card-foreground: 210 40% 96%;
+    --popover: 220 30% 13%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 30% 18%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 220 30% 18%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 220 30% 18%;
+    --accent-foreground: 210 40% 96%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 215 28% 17%;
+    --input: 215 28% 17%;
+    --ring: 217 91% 60%;
+    --sidebar-background: 222 47% 11%;
+    --sidebar-foreground: 210 40% 96%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 30% 18%;
+    --sidebar-accent-foreground: 210 40% 96%;
+    --sidebar-border: 215 28% 17%;
+    --sidebar-ring: 217 91% 60%;
+
+    /* VR Theme — Dark */
+    --vr-bg-base: #0B1120;
+    --vr-bg-header: #151D2E;
+    --vr-bg-sidebar: #0F172A;
+    --vr-bg-card: #151D2E;
+    --vr-bg-elevated: #1E293B;
+    --vr-bg-surface: #0F172A;
+    --vr-bg-hover: #1E293B;
+    --vr-bg-active: #1E3A5F;
+
+    --vr-text-primary: #F1F5F9;
+    --vr-text-secondary: #94A3B8;
+    --vr-text-tertiary: #64748B;
+    --vr-text-muted: #475569;
+
+    --vr-border: #1E293B;
+    --vr-border-subtle: #1E293B;
+    --vr-border-hover: #334155;
+    --vr-border-strong: #475569;
+
+    --vr-accent-primary: #3B82F6;
+    --vr-accent-primary-hover: #2563EB;
+    --vr-accent-secondary: #06B6D4;
+    --vr-success: #10B981;
+    --vr-error: #EF4444;
+    --vr-warning: #F59E0B;
+    --vr-purple: #8B5CF6;
+    --vr-indigo: #6366F1;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-[var(--vr-bg-base)] text-[var(--vr-text-primary)] font-sans antialiased;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Date/time inputs: follow theme color-scheme so picker icons remain visible */
+  input[type="date"],
+  input[type="time"] {
+    color-scheme: light;
+  }
+  .dark input[type="date"],
+  .dark input[type="time"] {
+    color-scheme: dark;
+  }
+
+  /* Scrollbar — Light */
+  :root ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  :root ::-webkit-scrollbar-track {
+    background: #F1F5F9;
+  }
+  :root ::-webkit-scrollbar-thumb {
+    background: #CBD5E1;
+    border-radius: 9999px;
+  }
+  :root ::-webkit-scrollbar-thumb:hover {
+    background: #94A3B8;
+  }
+  :root * {
+    scrollbar-width: thin;
+    scrollbar-color: #CBD5E1 #F1F5F9;
+  }
+
+  /* Scrollbar — Dark */
+  .dark ::-webkit-scrollbar-track {
+    background: #0B1120;
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: #1E293B;
+    border-radius: 9999px;
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: #334155;
+  }
+  .dark * {
+    scrollbar-width: thin;
+    scrollbar-color: #1E293B #0B1120;
+  }
+}
+
+@layer utilities {
+  .gradient-primary {
+    background: linear-gradient(135deg, #3B82F6, #06B6D4);
+  }
+
+  .gradient-purple {
+    background: linear-gradient(135deg, #6366F1, #8B5CF6);
+  }
+
+  .gradient-card {
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.95));
+  }
+
+  .gradient-glow {
+    background: radial-gradient(circle, rgba(59, 130, 246, 0.15), transparent);
+  }
+}

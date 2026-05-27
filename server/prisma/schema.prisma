@@ -1,0 +1,431 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========== 用户与权限 ==========
+model User {
+  id                String        @id @default(uuid())
+  phone             String        @unique
+  password          String
+  name              String
+  email             String?
+  avatar            String?
+  level             UserLevel     @default(NORMAL)
+  totalVisits       Int           @default(0)
+  totalSpent        Int           @default(0)   // 累计本金消费（分）
+  balance           Int           @default(0)   // 【废弃】原单一余额，迁移后删除
+  principalBalance  Int           @default(0)   // 本金钱包（分）
+  bonusBalance      Int           @default(0)   // 赠送钱包（分）
+  points            Int           @default(0)   // 积分账户
+  status            UserStatus    @default(ACTIVE)
+  registerDate      DateTime      @default(now())
+  lastLogin         DateTime?
+  role              UserRole      @default(CUSTOMER)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  orders              Order[]
+  bookings            Booking[]
+  logs                OperationLog[]
+  recharges           RechargeRecord[]
+  transactions        BalanceTransaction[]
+  managedVenues       VenueManager[]
+  notifications       Notification[]
+  thirdPartyCoupons   ThirdPartyCoupon[]
+}
+
+enum UserLevel {
+  NORMAL
+  MEMBER
+  VIP
+  VIP_PLUS
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  OPERATOR
+  FINANCE
+  MANAGER
+  CUSTOMER
+}
+
+// ========== 场地 ==========
+model Venue {
+  id                  String        @id @default(uuid())
+  name                String
+  theme               String
+  status              VenueStatus   @default(FREE)
+  area                Int
+  capacity            Int
+  pricePerHour        Int           @default(0)
+  deviceCount         Int           @default(1)
+  image               String?
+  description         String?
+  maintenanceStartDate DateTime?    @db.Date
+  maintenanceEndDate   DateTime?    @db.Date
+  maintenanceStartTime String?
+  maintenanceEndTime   String?
+  address             String?
+  phone               String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  bookings      Booking[]
+  equipment     Equipment[]
+  managers      VenueManager[]
+}
+
+model VenueManager {
+  id        String   @id @default(uuid())
+  userId    String
+  venueId   String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  venue     Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, venueId])
+  @@index([userId])
+  @@index([venueId])
+}
+
+enum VenueStatus {
+  FREE
+  IN_USE
+  MAINTENANCE
+  DISABLED
+}
+
+// ========== 预约 ==========
+model Booking {
+  id            String        @id @default(uuid())
+  venueId       String
+  venue         Venue         @relation(fields: [venueId], references: [id])
+  userId        String?
+  user          User?         @relation(fields: [userId], references: [id])
+  gameId        String?
+  game          Game?         @relation(fields: [gameId], references: [id])
+  type          BookingType
+  title         String
+  date          DateTime      @db.Date
+  startTime     String
+  endTime       String
+  personName    String
+  personPhone   String
+  personCount   Int           @default(1)
+  note          String?
+  status        BookingStatus @default(CONFIRMED)
+  remindSent    Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  order         Order?
+}
+
+enum BookingType {
+  TEAM
+  INDIVIDUAL
+  CORPORATE
+  MAINTENANCE
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+}
+
+// ========== 订单 ==========
+model Order {
+  id                  String        @id @default(uuid())
+  orderNo             String        @unique
+  bookingId           String?       @unique
+  booking             Booking?      @relation(fields: [bookingId], references: [id])
+  userId              String?
+  user                User?         @relation(fields: [userId], references: [id])
+  venueId             String
+  venueName           String
+  originalAmount      Int           @default(0) // 散客原价（用于退款审计、营收计算）
+  amount              Int           // 订单应收现金金额（分）= 折扣后 - 积分抵扣
+  discountRate        Int           @default(100)  // 会员折扣率（如85）
+  discountAmount      Int           @default(0)    // 折扣减免金额（分）
+  principalDeduction  Int           @default(0)    // 本金钱包扣减（分）
+  bonusDeduction      Int           @default(0)    // 赠送钱包扣减（分）
+  pointsUsed          Int           @default(0)    // 使用积分数量
+  pointsDeduction     Int           @default(0)    // 积分抵扣金额（分）
+  status              OrderStatus   @default(PENDING)
+  source              OrderSource   @default(OFFLINE)
+  payMethod           PayMethod?
+  paidAt              DateTime?
+  cancelledAt         DateTime?
+  refundAmount        Int?
+  bookingTime         String
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  payments      Payment[]
+  transactions  BalanceTransaction[]
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  COMPLETED
+  CANCELLED
+  REFUNDING
+  REFUNDED
+}
+
+enum OrderSource {
+  ONLINE
+  OFFLINE
+}
+
+enum PayMethod {
+  WECHAT
+  ALIPAY
+  CASH
+  CARD
+  BALANCE
+  BALANCE_POINTS
+}
+
+// ========== 支付记录 ==========
+model Payment {
+  id            String          @id @default(uuid())
+  orderId       String
+  order         Order           @relation(fields: [orderId], references: [id])
+  amount        Int
+  method        PayMethod
+  transactionId String?
+  status        PaymentStatus   @default(SUCCESS)
+  createdAt     DateTime        @default(now())
+  
+  @@index([orderId])
+  @@index([createdAt])
+}
+
+enum PaymentStatus {
+  SUCCESS
+  FAILED
+  PENDING
+}
+
+// ========== 余额交易类型 ==========
+enum TransactionType {
+  RECHARGE
+  DEDUCT
+  REFUND
+  POINTS_EARN
+  POINTS_DEDUCT
+  CANCEL_RESTORE
+}
+
+// ========== 设备 ==========
+model Equipment {
+  id            String          @id @default(uuid())
+  name          String
+  model         String
+  code          String          @unique
+  type          EquipmentType
+  status        EquipmentStatus @default(NORMAL)
+  venueId       String?
+  venue         Venue?          @relation(fields: [venueId], references: [id])
+  buyDate       DateTime?
+  warranty      DateTime?
+  lastMaint     DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  maintenances  MaintenanceRecord[]
+}
+
+enum EquipmentType {
+  HEADSET
+  TRACKER
+  CONTROLLER
+  COMPUTER
+}
+
+enum EquipmentStatus {
+  NORMAL
+  WARNING
+  ERROR
+  MAINTENANCE
+}
+
+// ========== 设备维护记录 ==========
+model MaintenanceRecord {
+  id            String      @id @default(uuid())
+  equipmentId   String
+  equipment     Equipment   @relation(fields: [equipmentId], references: [id])
+  date          DateTime
+  type          String
+  description   String
+  operator      String?
+  createdAt     DateTime    @default(now())
+}
+
+// ========== 系统设置 ==========
+model SystemSetting {
+  id            String    @id @default(uuid())
+  key           String    @unique
+  value         Json
+  category      String
+  updatedAt     DateTime  @updatedAt
+}
+
+// ========== 操作日志 ==========
+model OperationLog {
+  id            String    @id @default(uuid())
+  userId        String?
+  user          User?     @relation(fields: [userId], references: [id])
+  operator      String
+  type          String
+  content       String
+  ip            String?
+  createdAt     DateTime  @default(now())
+}
+
+// ========== 数据备份记录 ==========
+model BackupRecord {
+  id            String    @id @default(uuid())
+  fileName      String
+  filePath      String
+  size          Int
+  type          String
+  status        String
+  createdAt     DateTime  @default(now())
+}
+
+// ========== 充值记录 ==========
+model RechargeRecord {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  amount        Int       // 实付金额（分）= 本金
+  bonus         Int       // 赠送金额（分）
+  total         Int       // 到账金额 = amount + bonus
+  payMethod     String    // WECHAT / ALIPAY
+  status        String    @default("PENDING") // PENDING / PAID / FAILED
+  paidAt        DateTime?
+  createdAt     DateTime  @default(now())
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ========== 余额变动流水 ==========
+model BalanceTransaction {
+  id                String          @id @default(uuid())
+  userId            String
+  user              User            @relation(fields: [userId], references: [id])
+  type              String    // RECHARGE / DEDUCT / REFUND / POINTS_EARN / POINTS_DEDUCT / CANCEL_RESTORE
+  amount            Int       // 【废弃】原单一变动金额，迁移后删除
+  principalAmount   Int       @default(0)   // 本金变动（可正可负）
+  bonusAmount       Int       @default(0)   // 赠送变动（可正可负）
+  pointsAmount      Int       @default(0)   // 积分变动（可正可负）
+  totalAmount       Int       @default(0)   // principalAmount + bonusAmount（冗余，便于查询）
+  orderId           String?
+  order             Order?    @relation(fields: [orderId], references: [id])
+  rechargeId        String?
+  remark            String?
+  createdAt         DateTime  @default(now())
+  
+  @@index([userId])
+  @@index([orderId])
+  @@index([rechargeId])
+  @@index([createdAt])
+  @@index([type])
+}
+
+// ========== 游戏内容 ==========
+model Game {
+  id          String    @id @default(uuid())
+  title       String
+  subtitle    String?
+  description String?
+  notice      String?
+  coverImage  String?
+  price       Int       @default(0)
+  duration    Int       @default(30)
+  tags        String[]
+  detailImages String[]
+  status      String    @default("ACTIVE")
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  bookings    Booking[]
+}
+
+// ========== 每日财务跑批记录 ==========
+model DailyFinancialReport {
+  id                      String   @id @default(uuid())
+  date                    String   @unique  // YYYY-MM-DD
+  
+  // 5.1 每日现金解缴表
+  rechargePrincipalIn     Int      @default(0)   // 当日新增充值本金（分）
+  directPayIn             Int      @default(0)   // 当日散客直付现金（分）
+  refundOut               Int      @default(0)   // 当日退款流出现金（分）
+  netCashFlow             Int      @default(0)   // 当日净现金流入（分）
+  
+  // 5.2 每日确权营收表
+  directRevenue           Int      @default(0)   // 散客核销确权收入（分）
+  memberPrincipalRevenue  Int      @default(0)   // 会员消费本金划扣确权（分）
+  totalRecognizedRevenue  Int      @default(0)   // 当日总确权营业额（分）
+  pointsDiscountCost      Int      @default(0)   // 积分折让成本（分）
+  
+  // 5.3 门店负债存量
+  totalPrincipalLiability Int      @default(0)   // 门店总真实负债（分）
+  totalBonusLiability     Int      @default(0)   // 门店虚拟负债池（分）
+  dormantPrincipal        Int      @default(0)   // 沉睡本金规模（分）
+  
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
+
+// ========== 用户通知 ==========
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String   // BOOKING_SUCCESS / BOOKING_REMIND / BOOKING_CANCEL / PAY_SUCCESS / MARKETING
+  title     String
+  content   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ========== 第三方平台优惠券（美团/抖音/大众点评） ==========
+model ThirdPartyCoupon {
+  id              String    @id @default(uuid())
+  code            String    @unique          // 兑换码
+  source          String                     // MEITUAN / DOUYIN / DIANPING
+  name            String                     // 券名称，如"满100减20"
+  description     String?                    // 描述
+  discountAmount  Int       @default(0)     // 优惠金额（分）
+  minOrderAmount  Int       @default(0)     // 最低使用门槛（分）
+  status          String    @default("UNUSED") // UNUSED / USED / EXPIRED
+  userId          String?
+  user            User?     @relation(fields: [userId], references: [id])
+  usedAt          DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}

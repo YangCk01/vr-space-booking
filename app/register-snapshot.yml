@@ -1,0 +1,36 @@
+- generic [ref=e4]:
+  - generic [ref=e6]:
+    - button [ref=e7] [cursor=pointer]:
+      - img [ref=e8]
+    - heading "注册" [level=1] [ref=e42]
+  - generic [ref=e11]:
+    - generic [ref=e12]:
+      - button "登录" [ref=e13] [cursor=pointer]
+      - button "注册" [ref=e14] [cursor=pointer]
+    - generic [ref=e15]:
+      - generic [ref=e43]:
+        - generic [ref=e44]: 姓名
+        - generic [ref=e45]:
+          - img [ref=e46]
+          - textbox "请输入姓名" [ref=e49]
+      - generic [ref=e16]:
+        - generic [ref=e17]: 手机号
+        - generic [ref=e18]:
+          - img [ref=e19]
+          - textbox "请输入手机号" [active] [ref=e21]: "17645161334"
+      - generic [ref=e22]:
+        - generic [ref=e23]: 密码
+        - generic [ref=e24]:
+          - img [ref=e25]
+          - textbox "请设置密码（至少6位）" [ref=e50]: "123456"
+          - button [ref=e29] [cursor=pointer]:
+            - img [ref=e36]
+      - generic [ref=e51]:
+        - generic [ref=e52]: 确认密码
+        - generic [ref=e53]:
+          - img [ref=e54]
+          - textbox "请再次输入密码" [ref=e57]
+    - button "注册" [ref=e58] [cursor=pointer]
+    - paragraph [ref=e34]:
+      - text: 已有账号？
+      - button "去登录" [ref=e59] [cursor=pointer]

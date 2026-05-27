@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# OS files
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Uploads
+uploads/
+
+# Logs
+logs/
+*.log
+
+# Prisma generated
+src/generated/prisma/
+
+# Temporary
+.gstack/
+
+# Playwright MCP screenshots
+.playwright-mcp/
+*.pid
+
+# Screenshots from testing
+*.png
+*.jpg
+*.jpeg
+
+# Plans
+IMPLEMENTATION_PLAN.md
+
+# Local scripts
+create-links.vbs
+create-shortcut.bat
+create-shortcut.ps1
+start-silent.vbs
+
+# Database backups
+*.sql

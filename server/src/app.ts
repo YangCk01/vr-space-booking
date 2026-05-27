@@ -1,0 +1,37 @@
+import express from 'express'
+import cors from 'cors'
+import path from 'path'
+import routes from './routes'
+import { errorHandler } from './middleware/errorHandler'
+
+const app = express()
+
+// 中间件
+const corsOrigin = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+  : process.env.NODE_ENV === 'production'
+    ? []
+    : ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174', 'http://127.0.0.1:5173', 'http://127.0.0.1:5174', 'http://192.168.2.200:5173', 'http://192.168.2.200:5174']
+
+app.use(cors({
+  origin: corsOrigin.length ? corsOrigin : true,
+  credentials: true,
+}))
+app.use(express.json())
+app.use(express.urlencoded({ extended: true }))
+
+// 静态文件
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
+
+// 健康检查
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
+// API 路由
+app.use('/api', routes)
+
+// 错误处理
+app.use(errorHandler)
+
+export default app

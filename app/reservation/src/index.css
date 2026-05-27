@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #0a0e27;
+    --bg-card: rgba(20, 26, 60, 0.85);
+    --bg-elevated: rgba(30, 38, 80, 0.7);
+    --bg-hover: rgba(40, 48, 100, 0.5);
+    --bg-active: rgba(99, 102, 241, 0.15);
+
+    --accent-primary: #6366f1;
+    --accent-secondary: #8b5cf6;
+    --accent-hover: #818cf8;
+
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.7);
+    --text-muted: rgba(255, 255, 255, 0.4);
+    --text-disabled: rgba(255, 255, 255, 0.25);
+
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --border-hover: rgba(255, 255, 255, 0.15);
+
+    --success: #10b981;
+    --warning: #f59e0b;
+    --error: #ef4444;
+
+    --gradient-accent: linear-gradient(135deg, #6366f1, #8b5cf6);
+    --gradient-card: linear-gradient(180deg, rgba(30, 38, 80, 0.6), rgba(15, 20, 50, 0.9));
+
+    --radius: 0.75rem;
+
+    /* 安全区域变量 */
+    --safe-top: env(safe-area-inset-top);
+    --safe-bottom: env(safe-area-inset-bottom);
+    --safe-left: env(safe-area-inset-left);
+    --safe-right: env(safe-area-inset-right);
+  }
+
+  * {
+    @apply border-[var(--border-subtle)];
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    /* 小程序/APP WebView 中防止弹性滚动 */
+    overscroll-behavior-y: none;
+  }
+
+  /* 输入框聚焦时不要自动放大（iOS） */
+  input, textarea, select {
+    font-size: 16px;
+  }
+
+  /* 按钮点击反馈 */
+  button, a {
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
+  /* Scrollbar — Dark */
+  ::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.25);
+    border-radius: 9999px;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.25) transparent;
+  }
+}
+
+@layer utilities {
+  .bg-gradient-accent {
+    background: var(--gradient-accent);
+  }
+  .bg-gradient-card {
+    background: var(--gradient-card);
+  }
+  .text-gradient {
+    background: var(--gradient-accent);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .shadow-glow {
+    box-shadow: 0 0 16px rgba(99, 102, 241, 0.3);
+  }
+  .shadow-glow-sm {
+    box-shadow: 0 0 8px rgba(99, 102, 241, 0.2);
+  }
+  .border-glow {
+    border-color: rgba(99, 102, 241, 0.4);
+  }
+
+  /* 安全区域工具类 */
+  .pb-safe {
+    padding-bottom: calc(1rem + var(--safe-bottom));
+  }
+  .pt-safe {
+    padding-top: calc(0.5rem + var(--safe-top));
+  }
+  /* 避开底部导航 + 安全区域 */
+  .pb-nav {
+    padding-bottom: calc(3.5rem + var(--safe-bottom));
+  }
+  .pb-nav-lg {
+    padding-bottom: calc(5rem + var(--safe-bottom));
+  }
+  .pb-nav-xl {
+    padding-bottom: calc(7rem + var(--safe-bottom));
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
