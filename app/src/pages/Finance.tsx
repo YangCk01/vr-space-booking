@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Wallet,
@@ -36,6 +36,7 @@ import {
 } from 'recharts'
 import * as XLSX from 'xlsx'
 import { format } from 'date-fns'
+import { toast } from 'sonner'
 import {
   getFinanceOverview,
   getFinanceFlow,
@@ -44,8 +45,13 @@ import {
   getDailyReports,
   generateDailyReport,
   reconcileFinance,
+  getReconcileDetails,
+  fixReconcileDiff,
+  getTotalSummary,
   type FlowItem,
   type DailyReport,
+  type ReconcileDetailsResult,
+  type TotalSummary,
 } from '@/api/finance'
 import {
   Sheet,
@@ -56,14 +62,18 @@ import {
 } from '@/components/ui/sheet'
 import { getVenues } from '@/api/venues'
 import { getOrderByNo } from '@/api/orders'
+import ReconExceptionsPanel from '@/components/ReconExceptionsPanel'
+import DeviceLogPanel from '@/components/DeviceLogPanel'
 
-type TabKey = 'overview' | 'flow' | 'refunds' | 'daily'
+type TabKey = 'overview' | 'flow' | 'refunds' | 'recon' | 'deviceLogs'
+type ReconSubTab = 'daily' | 'exceptions'
 
 const tabs = [
   { key: 'overview' as TabKey, label: '收支概览' },
   { key: 'flow' as TabKey, label: '收支明细' },
   { key: 'refunds' as TabKey, label: '退款记录' },
-  { key: 'daily' as TabKey, label: '每日报表' },
+  { key: 'recon' as TabKey, label: '对账中心' },
+  { key: 'deviceLogs' as TabKey, label: '设备日志' },
 ]
 
 const typeLabelMap: Record<string, string> = {
@@ -72,6 +82,25 @@ const typeLabelMap: Record<string, string> = {
   RECHARGE: '充值',
   BALANCE_DEDUCT: '余额扣款',
   BALANCE_REFUND: '余额退款',
+}
+
+const reconcileTypeMap: Record<string, string> = {
+  '本金余额': 'BALANCE_PRINCIPAL',
+  '赠送余额': 'BALANCE_BONUS',
+  '积分余额': 'BALANCE_POINTS',
+  '充值本金': 'RECHARGE_PRINCIPAL',
+  '充值赠送': 'RECHARGE_BONUS',
+  '在线直付': 'DIRECT_PAY',
+  '消费本金': 'CONSUME_PRINCIPAL',
+  '消费赠送': 'CONSUME_BONUS',
+  '退款总额': 'REFUND',
+  '积分发放': 'POINTS_EARN',
+  '积分赠送': 'POINTS_GIFT',
+  '积分兑换消耗': 'POINTS_EXCHANGE',
+  '优惠券发放': 'COUPON_GIFT',
+  '体验券发放': 'EXPERIENCE_GIFT',
+  '优惠券核销': 'COUPON_USED',
+  '体验券核销': 'EXPERIENCE_USED',
 }
 
 const typeColorMap: Record<string, string> = {
@@ -155,7 +184,9 @@ function exportFlowToExcel(items: FlowItem[], filename: string) {
 
 /* ─── Main Page ─── */
 export default function Finance() {
+  const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
+  const [reconSubTab, setReconSubTab] = useState<ReconSubTab>('daily')
   const [venueId, setVenueId] = useState('')
 
   /* Venues list */
@@ -203,6 +234,7 @@ export default function Finance() {
 
   /* Daily report states */
   const [dailyDate, setDailyDate] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [reconcileMode, setReconcileMode] = useState<'total' | 'daily'>('daily')
 
   /* Queries */
   const { data: overviewData } = useQuery({
@@ -241,6 +273,11 @@ export default function Finance() {
     queryFn: () => getDailyReport(dailyDate),
   })
 
+  const { data: totalSummary } = useQuery({
+    queryKey: ['finance', 'total-summary'],
+    queryFn: () => getTotalSummary(),
+  })
+
   const generateReportMut = useMutation({
     mutationFn: generateDailyReport,
     onSuccess: () => {
@@ -248,11 +285,48 @@ export default function Finance() {
     },
   })
 
+  const fixReconcileDiffMut = useMutation({
+    mutationFn: fixReconcileDiff,
+    onSuccess: () => {
+      toast.success('修复成功')
+      // 刷新明细和对账结果
+      queryClient.invalidateQueries({ queryKey: ['finance', 'reconcile-detail'] })
+      queryClient.invalidateQueries({ queryKey: ['finance', 'reconcile'] })
+      refetchReconcile()
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || '修复失败')
+    },
+  })
+
   const { data: reconcileData, refetch: refetchReconcile } = useQuery({
-    queryKey: ['finance', 'reconcile'],
-    queryFn: () => reconcileFinance(),
+    queryKey: ['finance', 'reconcile', reconcileMode, reconcileMode === 'daily' ? dailyDate : 'total'],
+    queryFn: () => reconcileFinance(reconcileMode === 'daily' ? dailyDate : undefined),
     enabled: false,
   })
+
+  /* Reconcile detail drawer */
+  const [reconcileDetailOpen, setReconcileDetailOpen] = useState(false)
+  const [reconcileDetailParams, setReconcileDetailParams] = useState<{type: string, date?: string} | null>(null)
+
+  const { data: reconcileDetailData } = useQuery<ReconcileDetailsResult | null>({
+    queryKey: ['finance', 'reconcile-detail', reconcileDetailParams],
+    queryFn: async () => {
+      if (!reconcileDetailParams) return null
+      return getReconcileDetails(reconcileDetailParams.type, reconcileDetailParams.date)
+    },
+    enabled: !!reconcileDetailParams,
+  })
+
+  const openReconcileDetail = (name: string) => {
+    const typeCode = reconcileTypeMap[name]
+    if (!typeCode) return
+    setReconcileDetailParams({
+      type: typeCode,
+      date: reconcileMode === 'daily' ? dailyDate : undefined,
+    })
+    setReconcileDetailOpen(true)
+  }
 
   const flowItems: FlowItem[] = flowData?.data || []
   const flowTotal = flowData?.meta?.total || 0
@@ -522,6 +596,7 @@ export default function Finance() {
                         <Tooltip
                           formatter={(v: number, name: string) => [`¥${(v / 100).toLocaleString()}`, name]}
                           contentStyle={tooltipStyle as any}
+                          itemStyle={{ color: '#94A3B8', fontSize: 12 }}
                         />
                       </PieChart>
                     </ResponsiveContainer>
@@ -899,27 +974,82 @@ export default function Finance() {
             </motion.div>
           )}
 
-          {/* ─── Daily Report Tab ─── */}
-          {activeTab === 'daily' && (
+          {/* ─── Reconciliation Center Tab ─── */}
+          {activeTab === 'recon' && reconSubTab === 'daily' && (
             <motion.div
-              key="daily"
+              key="recon-daily"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.25 }}
               className="space-y-4"
             >
+              {/* 二级 Tab 切换 */}
+              <div className="flex items-center gap-1 bg-vrbg-surface rounded-lg p-1 w-fit">
+                <button
+                  onClick={() => setReconSubTab('daily')}
+                  className={cn(
+                    'px-3 py-1 rounded text-vr-body-sm transition-colors',
+                    (reconSubTab as string) === 'daily'
+                      ? 'bg-vraccent-primary text-white'
+                      : 'text-vrtext-secondary hover:text-vrtext-primary'
+                  )}
+                >
+                  每日报表
+                </button>
+                <button
+                  onClick={() => setReconSubTab('exceptions')}
+                  className={cn(
+                    'px-3 py-1 rounded text-vr-body-sm transition-colors',
+                    (reconSubTab as string) === 'exceptions'
+                      ? 'bg-vraccent-primary text-white'
+                      : 'text-vrtext-secondary hover:text-vrtext-primary'
+                  )}
+                >
+                  对账异常
+                </button>
+              </div>
+
               {/* Date picker + Reconcile */}
               <div className="flex flex-wrap items-center gap-3 bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-vrtext-muted" />
-                  <input
-                    type="date"
-                    value={dailyDate}
-                    onChange={(e) => setDailyDate(e.target.value)}
-                    className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
-                  />
+                {/* 对账模式切换 */}
+                <div className="flex items-center gap-1 bg-vrbg-surface rounded-lg p-1">
+                  <button
+                    onClick={() => setReconcileMode('daily')}
+                    className={cn(
+                      'px-3 py-1 rounded text-vr-body-sm transition-colors',
+                      reconcileMode === 'daily'
+                        ? 'bg-vraccent-primary text-white'
+                        : 'text-vrtext-secondary hover:text-vrtext-primary'
+                    )}
+                  >
+                    按日对账
+                  </button>
+                  <button
+                    onClick={() => setReconcileMode('total')}
+                    className={cn(
+                      'px-3 py-1 rounded text-vr-body-sm transition-colors',
+                      reconcileMode === 'total'
+                        ? 'bg-vraccent-primary text-white'
+                        : 'text-vrtext-secondary hover:text-vrtext-primary'
+                    )}
+                  >
+                    总对账
+                  </button>
                 </div>
+
+                {reconcileMode === 'daily' && (
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-vrtext-muted" />
+                    <input
+                      type="date"
+                      value={dailyDate}
+                      onChange={(e) => setDailyDate(e.target.value)}
+                      className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
+                    />
+                  </div>
+                )}
+
                 <button
                   onClick={() => refetchReconcile()}
                   className="h-9 px-4 rounded-lg bg-vraccent-primary/10 border border-vraccent-primary/30 text-vr-body-sm text-vraccent-primary hover:bg-vraccent-primary/20 transition-colors"
@@ -943,96 +1073,358 @@ export default function Finance() {
                     ? 'bg-emerald-500/10 border-emerald-500/30'
                     : 'bg-red-500/10 border-red-500/30'
                 )}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className={cn('w-2 h-2 rounded-full', reconcileData.isBalanced ? 'bg-emerald-500' : 'bg-red-500')} />
-                    <span className={cn('text-vr-body-sm font-medium', reconcileData.isBalanced ? 'text-emerald-400' : 'text-red-400')}>
-                      {reconcileData.isBalanced ? '对账平衡' : '对账异常'}
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className={cn('w-2 h-2 rounded-full', reconcileData.isBalanced ? 'bg-emerald-500' : 'bg-red-500')} />
+                      <span className={cn('text-vr-body-sm font-medium', reconcileData.isBalanced ? 'text-emerald-400' : 'text-red-400')}>
+                        {reconcileData.isBalanced ? '对账平衡' : '对账异常'}
+                      </span>
+                    </div>
+                    <span className="text-vr-caption text-vrtext-muted">
+                      {reconcileData.mode === 'total'
+                        ? '总对账（全量累计）'
+                        : reconcileData.date
+                          ? `${reconcileData.date} 按日对账`
+                          : '按日对账'}
                     </span>
                   </div>
-                  <div className="grid grid-cols-3 gap-4 text-vr-caption text-vrtext-secondary">
-                    <div>实际本金: ¥{(reconcileData.actual.totalPrincipal / 100).toLocaleString()}</div>
-                    <div>期望本金: ¥{(reconcileData.expected.principal / 100).toLocaleString()}</div>
-                    <div>差异: ¥{(reconcileData.diff.principal / 100).toLocaleString()}</div>
-                    <div>实际赠送: ¥{(reconcileData.actual.totalBonus / 100).toLocaleString()}</div>
-                    <div>期望赠送: ¥{(reconcileData.expected.bonus / 100).toLocaleString()}</div>
-                    <div>差异: ¥{(reconcileData.diff.bonus / 100).toLocaleString()}</div>
-                  </div>
+                  {reconcileData.items && reconcileData.items.length > 0 ? (
+                    <div className="space-y-2">
+                      {reconcileData.items.map((item) => (
+                        <div key={item.name} className="grid grid-cols-12 gap-2 items-center text-vr-caption">
+                          <div className="col-span-2 text-vrtext-secondary font-medium">{item.name}</div>
+                          <div className="col-span-3 text-vrtext-primary">
+                            实际: {item.unit === '元' ? `¥${(item.actual / 100).toLocaleString()}` : `${item.actual.toLocaleString()}${item.unit || '分'}`}
+                          </div>
+                          <div className="col-span-3 text-vrtext-primary">
+                            期望: {item.unit === '元' ? `¥${(item.expected / 100).toLocaleString()}` : `${item.expected.toLocaleString()}${item.unit || '分'}`}
+                          </div>
+                          <div className={cn(
+                            'col-span-2 font-medium',
+                            item.diff !== 0 ? 'text-red-400' : 'text-vrtext-secondary'
+                          )}>
+                            差异: {item.unit === '元' ? `¥${(item.diff / 100).toLocaleString()}` : `${item.diff.toLocaleString()}${item.unit || '分'}`}
+                          </div>
+                          <div className="col-span-2">
+                            {item.isBalanced ? (
+                              <span className="inline-flex items-center gap-1 text-emerald-400">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                正常
+                              </span>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center gap-1 text-red-400 font-medium">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                                  异常
+                                </span>
+                                <button
+                                  onClick={() => openReconcileDetail(item.name)}
+                                  className="text-vraccent-primary hover:underline text-xs"
+                                >
+                                  查看明细
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          {item.note && (
+                            <div className="col-span-12 text-vrtext-muted text-xs">{item.note}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-vr-caption text-vrtext-secondary py-2">
+                      对账数据格式异常，请刷新页面或重启后端服务
+                    </div>
+                  )}
                 </div>
               )}
 
               {/* Daily report cards */}
-              {dailyReport ? (
+              {reconcileMode === 'daily' ? (
+                dailyReport ? (
+                  <div className="space-y-4">
+                    {/* 5.1 现金解缴表 */}
+                    <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
+                      <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">每日现金解缴表（收付实现制）</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">充值本金</p>
+                          <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.rechargePrincipalIn / 100).toLocaleString()}</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">在线直付</p>
+                          <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.directPayIn / 100).toLocaleString()}</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">退款流出</p>
+                          <p className="text-vr-body font-semibold text-vrerror">¥{(dailyReport.refundOut / 100).toLocaleString()}</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">净现金流入</p>
+                          <p className="text-vr-body font-semibold text-vraccent-primary">¥{(dailyReport.netCashFlow / 100).toLocaleString()}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 5.2 确权营收表 */}
+                    <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
+                      <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">每日确权营收表（权责发生制）</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">在线直付确权</p>
+                          <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.directRevenue / 100).toLocaleString()}</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">会员本金确权</p>
+                          <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.memberPrincipalRevenue / 100).toLocaleString()}</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">总确权营业额</p>
+                          <p className="text-vr-body font-semibold text-vraccent-primary">¥{(dailyReport.totalRecognizedRevenue / 100).toLocaleString()}</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">积分兑换成本</p>
+                          <p className="text-vr-body font-semibold text-vrtext-secondary">{(dailyReport.pointsExchangeCost || 0).toLocaleString()} 积分</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">积分赠送成本</p>
+                          <p className="text-vr-body font-semibold text-vrtext-secondary">{(dailyReport.pointsGiftCost || 0).toLocaleString()} 积分</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">优惠券折让成本</p>
+                          <p className="text-vr-body font-semibold text-vrtext-secondary">¥{(dailyReport.couponDiscountCost / 100).toLocaleString()}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 5.2b 营销凭证流转 */}
+                    <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
+                      <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">营销凭证流转（发放 / 核销 / 在途）</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">赠送折扣券</p>
+                          <p className="text-vr-body font-semibold text-vrtext-primary">{(dailyReport.couponGiftCount || 0).toLocaleString()} 张</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">赠送体验券</p>
+                          <p className="text-vr-body font-semibold text-vrtext-primary">{(dailyReport.experienceGiftCount || 0).toLocaleString()} 张</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">核销折扣券</p>
+                          <p className="text-vr-body font-semibold text-vraccent-primary">{(dailyReport.couponUsedCount || 0).toLocaleString()} 张</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">核销体验券</p>
+                          <p className="text-vr-body font-semibold text-vraccent-primary">{(dailyReport.experienceUsedCount || 0).toLocaleString()} 张</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 5.3 负债存量 */}
+                    <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
+                      <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">门店负债存量监控台</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">总真实负债（本金）</p>
+                          <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.totalPrincipalLiability / 100).toLocaleString()}</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">虚拟负债池（赠送）</p>
+                          <p className="text-vr-body font-semibold text-vrtext-secondary">¥{(dailyReport.totalBonusLiability / 100).toLocaleString()}</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">积分负债池</p>
+                          <p className="text-vr-body font-semibold text-vraccent-primary">{(dailyReport.pointsLiability || 0).toLocaleString()} 积分</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">沉睡本金（90天无流水）</p>
+                          <p className="text-vr-body font-semibold text-vrwarning">¥{(dailyReport.dormantPrincipal / 100).toLocaleString()}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-12 text-center text-vrtext-tertiary text-vr-body-sm">
+                    该日期暂无报表数据，系统将每日 00:05 自动生成
+                  </div>
+                )
+              ) : totalSummary ? (
                 <div className="space-y-4">
-                  {/* 5.1 现金解缴表 */}
+                  {/* 累计现金解缴表 */}
                   <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
-                    <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">每日现金解缴表（收付实现制）</h3>
+                    <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">累计现金解缴表（收付实现制）</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">充值本金</p>
-                        <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.rechargePrincipalIn / 100).toLocaleString()}</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计充值本金</p>
+                        <p className="text-vr-body font-semibold text-vrtext-primary">¥{(totalSummary.totalRechargePrincipalIn / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">在线直付</p>
-                        <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.directPayIn / 100).toLocaleString()}</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计在线直付</p>
+                        <p className="text-vr-body font-semibold text-vrtext-primary">¥{(totalSummary.totalDirectPayIn / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">退款流出</p>
-                        <p className="text-vr-body font-semibold text-vrerror">¥{(dailyReport.refundOut / 100).toLocaleString()}</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计退款流出</p>
+                        <p className="text-vr-body font-semibold text-vrerror">¥{(totalSummary.totalRefundOut / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">净现金流入</p>
-                        <p className="text-vr-body font-semibold text-vraccent-primary">¥{(dailyReport.netCashFlow / 100).toLocaleString()}</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计净现金流入</p>
+                        <p className="text-vr-body font-semibold text-vraccent-primary">¥{(totalSummary.totalNetCashFlow / 100).toLocaleString()}</p>
                       </div>
                     </div>
                   </div>
 
-                  {/* 5.2 确权营收表 */}
+                  {/* 累计确权营收表 */}
                   <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
-                    <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">每日确权营收表（权责发生制）</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">累计确权营收表（权责发生制）</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">在线直付确权</p>
-                        <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.directRevenue / 100).toLocaleString()}</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计在线直付确权</p>
+                        <p className="text-vr-body font-semibold text-vrtext-primary">¥{(totalSummary.totalDirectRevenue / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">会员本金确权</p>
-                        <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.memberPrincipalRevenue / 100).toLocaleString()}</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计会员本金确权</p>
+                        <p className="text-vr-body font-semibold text-vrtext-primary">¥{(totalSummary.totalMemberPrincipalRevenue / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">总确权营业额</p>
-                        <p className="text-vr-body font-semibold text-vraccent-primary">¥{(dailyReport.totalRecognizedRevenue / 100).toLocaleString()}</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计确权营业额</p>
+                        <p className="text-vr-body font-semibold text-vraccent-primary">¥{(totalSummary.totalRecognizedRevenue / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">积分折让成本</p>
-                        <p className="text-vr-body font-semibold text-vrtext-secondary">¥{(dailyReport.pointsDiscountCost / 100).toLocaleString()}</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计积分兑换成本</p>
+                        <p className="text-vr-body font-semibold text-vrtext-secondary">{(totalSummary.totalPointsExchangeCost || 0).toLocaleString()} 积分</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">累计积分赠送成本</p>
+                        <p className="text-vr-body font-semibold text-vrtext-secondary">{(totalSummary.totalPointsGiftCost || 0).toLocaleString()} 积分</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">累计优惠券折让成本</p>
+                        <p className="text-vr-body font-semibold text-vrtext-secondary">¥{(totalSummary.totalCouponDiscountCost / 100).toLocaleString()}</p>
                       </div>
                     </div>
                   </div>
 
-                  {/* 5.3 负债存量 */}
+                  {/* 累计营销凭证流转 */}
+                  <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
+                    <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">累计营销凭证流转</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">累计赠送折扣券</p>
+                        <p className="text-vr-body font-semibold text-vrtext-primary">{(totalSummary.totalCouponGift || 0).toLocaleString()} 张</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">累计赠送体验券</p>
+                        <p className="text-vr-body font-semibold text-vrtext-primary">{(totalSummary.totalExperienceGift || 0).toLocaleString()} 张</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">累计核销折扣券</p>
+                        <p className="text-vr-body font-semibold text-vraccent-primary">{(totalSummary.totalCouponUsed || 0).toLocaleString()} 张</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">累计核销体验券</p>
+                        <p className="text-vr-body font-semibold text-vraccent-primary">{(totalSummary.totalExperienceUsed || 0).toLocaleString()} 张</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 负债存量 */}
                   <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
                     <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">门店负债存量监控台</h3>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                       <div className="bg-vrbg-surface rounded-lg p-3">
                         <p className="text-vr-caption text-vrtext-tertiary">总真实负债（本金）</p>
-                        <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.totalPrincipalLiability / 100).toLocaleString()}</p>
+                        <p className="text-vr-body font-semibold text-vrtext-primary">¥{(totalSummary.totalPrincipalLiability / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
                         <p className="text-vr-caption text-vrtext-tertiary">虚拟负债池（赠送）</p>
-                        <p className="text-vr-body font-semibold text-vrtext-secondary">¥{(dailyReport.totalBonusLiability / 100).toLocaleString()}</p>
+                        <p className="text-vr-body font-semibold text-vrtext-secondary">¥{(totalSummary.totalBonusLiability / 100).toLocaleString()}</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">积分负债池</p>
+                        <p className="text-vr-body font-semibold text-vraccent-primary">{(totalSummary.totalPointsLiability || 0).toLocaleString()} 积分</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
                         <p className="text-vr-caption text-vrtext-tertiary">沉睡本金（90天无流水）</p>
-                        <p className="text-vr-body font-semibold text-vrwarning">¥{(dailyReport.dormantPrincipal / 100).toLocaleString()}</p>
+                        <p className="text-vr-body font-semibold text-vrwarning">¥{(totalSummary.dormantPrincipal / 100).toLocaleString()}</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">在途折扣券</p>
+                        <p className="text-vr-body font-semibold text-vrtext-secondary">{(totalSummary.totalCouponUnused || 0).toLocaleString()} 张</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">在途体验券</p>
+                        <p className="text-vr-body font-semibold text-vrtext-secondary">{(totalSummary.totalExperienceUnused || 0).toLocaleString()} 张</p>
                       </div>
                     </div>
                   </div>
                 </div>
               ) : (
                 <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-12 text-center text-vrtext-tertiary text-vr-body-sm">
-                  该日期暂无报表数据，系统将每日 00:05 自动生成
+                  加载中...
                 </div>
               )}
+            </motion.div>
+          )}
+
+          {activeTab === 'recon' && reconSubTab === 'exceptions' && (
+            <motion.div
+              key="recon-exceptions"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-6"
+            >
+              {/* 二级 Tab 切换 */}
+              <div className="flex items-center gap-1 bg-vrbg-surface rounded-lg p-1 w-fit">
+                <button
+                  onClick={() => setReconSubTab('daily')}
+                  className={cn(
+                    'px-3 py-1 rounded text-vr-body-sm transition-colors',
+                    (reconSubTab as string) === 'daily'
+                      ? 'bg-vraccent-primary text-white'
+                      : 'text-vrtext-secondary hover:text-vrtext-primary'
+                  )}
+                >
+                  每日报表
+                </button>
+                <button
+                  onClick={() => setReconSubTab('exceptions')}
+                  className={cn(
+                    'px-3 py-1 rounded text-vr-body-sm transition-colors',
+                    reconSubTab === 'exceptions'
+                      ? 'bg-vraccent-primary text-white'
+                      : 'text-vrtext-secondary hover:text-vrtext-primary'
+                  )}
+                >
+                  对账异常
+                </button>
+              </div>
+
+              <div>
+                <h2 className="text-lg font-semibold text-vrtext-primary">对账异常池</h2>
+                <p className="text-vr-body-sm text-vrtext-tertiary mt-1">三方对账差异记录与处理</p>
+              </div>
+              <ReconExceptionsPanel />
+            </motion.div>
+          )}
+
+          {/* ─── Device Logs Tab ─── */}
+          {activeTab === 'deviceLogs' && (
+            <motion.div
+              key="deviceLogs"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-6"
+            >
+              <div>
+                <h2 className="text-lg font-semibold text-vrtext-primary">设备日志管理</h2>
+                <p className="text-vr-body-sm text-vrtext-tertiary mt-1">头显设备运行日志录入与硬件对账统计</p>
+              </div>
+              <DeviceLogPanel venues={venues} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -1172,6 +1564,69 @@ export default function Finance() {
           </div>
         </SheetContent>
       </Sheet>
+
+      {/* Reconcile Detail Sheet */}
+      <Sheet open={reconcileDetailOpen} onOpenChange={setReconcileDetailOpen}>
+        <SheetContent className="w-[520px] bg-vrbg-card border-vrborder-subtle overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle className="text-vrtext-primary">差异明细</SheetTitle>
+            <SheetDescription className="text-vrtext-secondary">
+              {reconcileDetailData ? `共 ${reconcileDetailData.items.length} 条差异记录` : '加载中...'}
+            </SheetDescription>
+          </SheetHeader>
+          <div className="mt-4 space-y-3">
+            {reconcileDetailData?.items.map((item) => (
+              <div key={item.id} className="bg-vrbg-surface rounded-lg p-3 border border-vrborder-subtle">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-vr-body-sm text-vrtext-primary font-medium">{item.title}</span>
+                  <div className="flex items-center gap-2">
+                    <span className={cn(
+                      'text-vr-caption font-medium',
+                      item.diff !== 0 ? 'text-red-400' : 'text-emerald-400'
+                    )}>
+                      差异: {item.unit === '元' ? `¥${(item.diff / 100).toLocaleString()}` : `${item.diff.toLocaleString()}分`}
+                    </span>
+                    {item.diff !== 0 && reconcileDetailParams && (
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`确认修复「${item.title}」的差异 ${item.diff}${item.unit === '元' ? '元' : '分'}？\n将创建调整流水以平账。`)) {
+                            fixReconcileDiffMut.mutate({
+                              type: reconcileDetailParams.type,
+                              targetId: item.id,
+                              diff: item.diff,
+                              date: reconcileDetailParams.date,
+                              mode: reconcileDetailData?.mode,
+                            })
+                          }
+                        }}
+                        disabled={fixReconcileDiffMut.isPending}
+                        className="text-xs px-2 py-0.5 rounded bg-vraccent-primary/10 text-vraccent-primary hover:bg-vraccent-primary/20 disabled:opacity-50 transition-colors"
+                      >
+                        {fixReconcileDiffMut.isPending ? '修复中...' : '修复'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {item.subtitle && (
+                  <div className="text-vr-caption text-vrtext-tertiary mb-1">{item.subtitle}</div>
+                )}
+                <div className="flex items-center gap-3 text-vr-caption text-vrtext-secondary">
+                  <span>实际: {item.unit === '元' ? `¥${(item.actual / 100).toLocaleString()}` : `${item.actual.toLocaleString()}${item.unit || '分'}`}</span>
+                  <span>期望: {item.unit === '元' ? `¥${(item.expected / 100).toLocaleString()}` : `${item.expected.toLocaleString()}${item.unit || '分'}`}</span>
+                </div>
+                <div className="mt-1 text-vr-caption">
+                  <span className="text-vrtext-secondary">原因: </span>
+                  <span className="text-vrtext-primary">{item.reason}</span>
+                </div>
+              </div>
+            ))}
+            {reconcileDetailData && reconcileDetailData.items.length === 0 && (
+              <div className="text-center text-vr-caption text-vrtext-tertiary py-8">暂无差异明细</div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
     </Layout>
   )
 }

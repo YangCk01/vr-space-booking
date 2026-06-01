@@ -10,9 +10,11 @@ import {
   QrCode,
   CheckCircle2,
   AlertCircle,
+  Gift,
+  MapPin,
 } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { verifyCoupon, getMyCoupons, useCoupon, type ThirdPartyCoupon } from '@/api/coupons'
+import { verifyCoupon, getMyCoupons, useCoupon, getMyUserCoupons, type ThirdPartyCoupon, type UserCoupon } from '@/api/coupons'
 import { useAuth } from '@/providers/AuthProvider'
 
 /* ─── Platform configs ─── */
@@ -94,6 +96,95 @@ function QrScanner({ onScan, onClose }: { onScan: (text: string) => void; onClos
         <p className="mt-4 text-sm text-red-400 px-6 text-center">{error}</p>
       )}
     </motion.div>
+  )
+}
+
+/* ─── User Coupon Card ─── */
+function UserCouponCard({ coupon }: { coupon: UserCoupon }) {
+  const isUsed = coupon.status === 'USED'
+  const isExpired = coupon.status === 'EXPIRED'
+  const isExperience = coupon.type === 'EXPERIENCE_FREE'
+
+  return (
+    <div
+      className="relative overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)]"
+      style={{ opacity: isUsed || isExpired ? 0.6 : 1 }}
+    >
+      <div className="flex items-stretch">
+        <div
+          className="w-1.5 shrink-0"
+          style={{ backgroundColor: isExperience ? '#6366f1' : '#10b981' }}
+        />
+        <div className="flex-1 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold"
+                  style={{
+                    backgroundColor: isExperience ? '#6366f1' : '#10b981',
+                    color: '#fff',
+                  }}
+                >
+                  {isExperience ? '体验券' : '优惠券'}
+                </span>
+                {isUsed && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--text-muted)]/20 text-[var(--text-muted)]">
+                    已使用
+                  </span>
+                )}
+                {isExpired && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--error)]/10 text-[var(--error)]">
+                    已过期
+                  </span>
+                )}
+                {coupon.source === 'MANUAL_GIFT' && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-vrsuccess/10 text-vrsuccess">
+                    管理员赠送
+                  </span>
+                )}
+                {coupon.source === 'EXCHANGE' && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]">
+                    积分兑换
+                  </span>
+                )}
+              </div>
+              <h4 className="text-sm font-semibold text-[var(--text-primary)] mt-1.5">
+                {coupon.name}
+              </h4>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5 flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                有效期至 {coupon.validTo ? new Date(coupon.validTo).toLocaleDateString() : '永久'}
+              </p>
+            </div>
+            <div className="text-right shrink-0">
+              {isExperience ? (
+                <p className="text-lg font-bold text-[var(--accent-primary)]">免费</p>
+              ) : (
+                <p className="text-lg font-bold text-[var(--accent-primary)]">
+                  {coupon.discountRate ? `${coupon.discountRate / 10}折` : '折扣'}
+                </p>
+              )}
+              <p className="text-[10px] text-[var(--text-muted)]">
+                {isExperience ? '体验券' : '优惠券'}
+              </p>
+            </div>
+          </div>
+
+          {!isUsed && !isExpired && (
+            <p className="mt-2 text-[10px] text-[var(--text-muted)] flex items-center gap-1">
+              <MapPin className="w-3 h-3" />
+              预约游戏时可用
+            </p>
+          )}
+          {isUsed && coupon.usedAt && (
+            <p className="mt-2 text-[10px] text-[var(--text-muted)]">
+              使用时间：{new Date(coupon.usedAt).toLocaleString()}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -193,8 +284,17 @@ export default function Coupons() {
     enabled: isLoggedIn,
   })
 
+  const { data: userCoupons, isLoading: userCouponsLoading } = useQuery({
+    queryKey: ['my-user-coupons'],
+    queryFn: getMyUserCoupons,
+    enabled: isLoggedIn,
+  })
+
   const unusedCoupons = (coupons || []).filter((c) => c.status === 'UNUSED')
   const usedCoupons = (coupons || []).filter((c) => c.status === 'USED')
+
+  const unusedUserCoupons = (userCoupons || []).filter((c) => c.status === 'UNUSED')
+  const usedUserCoupons = (userCoupons || []).filter((c) => c.status === 'USED')
 
   /* Mutations */
   const verifyMut = useMutation({
@@ -347,11 +447,42 @@ export default function Coupons() {
           </AnimatePresence>
         </div>
 
+        {/* ─── User Coupons (from points exchange) ─── */}
+        {isLoggedIn && (
+          <div>
+            <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3 flex items-center gap-2">
+              <Gift className="w-4 h-4 text-[var(--accent-primary)]" />
+              积分兑换券
+              {unusedUserCoupons.length > 0 && (
+                <span className="text-xs text-[var(--text-muted)]">({unusedUserCoupons.length}张可用)</span>
+              )}
+            </h3>
+
+            {userCouponsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="w-6 h-6 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : unusedUserCoupons.length > 0 ? (
+              <div className="space-y-3">
+                {unusedUserCoupons.map((coupon) => (
+                  <UserCouponCard key={coupon.id} coupon={coupon} />
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-6">
+                <Gift className="w-8 h-8 mx-auto mb-2 text-[var(--text-muted)] opacity-30" />
+                <p className="text-xs text-[var(--text-muted)]">暂无积分兑换券</p>
+                <p className="text-[10px] text-[var(--text-secondary)] mt-1">前往积分商城兑换体验券和优惠券</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ─── My Coupons ─── */}
         <div>
           <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3 flex items-center gap-2">
             <Ticket className="w-4 h-4 text-[var(--accent-primary)]" />
-            我的优惠券
+            第三方优惠券
             {unusedCoupons.length > 0 && (
               <span className="text-xs text-[var(--text-muted)]">({unusedCoupons.length}张可用)</span>
             )}
@@ -391,8 +522,11 @@ export default function Coupons() {
             使用记录
           </h3>
 
-          {usedCoupons.length > 0 ? (
+          {usedCoupons.length > 0 || usedUserCoupons.length > 0 ? (
             <div className="space-y-3">
+              {usedUserCoupons.map((coupon) => (
+                <UserCouponCard key={coupon.id} coupon={coupon} />
+              ))}
               {usedCoupons.map((coupon) => (
                 <CouponCard key={coupon.id} coupon={coupon} />
               ))}

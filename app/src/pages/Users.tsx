@@ -25,6 +25,9 @@ import {
   Loader2,
   Receipt,
   TicketCheck,
+  Gift,
+  Coins,
+  Ticket,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
 import { cn } from '@/lib/utils'
@@ -47,6 +50,7 @@ import {
 import { getUsers, createUser, updateUser, deleteUser } from '@/api/users'
 import type { User as ApiUser } from '@/api/users'
 import { getSettings } from '@/api/settings'
+import { giftPoints, giftCoupon, getPointsGiftRecords, getCouponGiftRecords } from '@/api/gift'
 
 function useDynamicLevelTabs(levels: Array<{ key: string; name: string }>) {
   return [
@@ -203,6 +207,19 @@ function UserDetailSheet({
 
   const avatarColor = getAvatarColor(user.name)
   const [level, setLevel] = useState(user.level)
+  const [activeTab, setActiveTab] = useState<'info' | 'gifts'>('info')
+
+  const { data: pointsRecords } = useQuery({
+    queryKey: ['gift-points-records', user.id],
+    queryFn: () => getPointsGiftRecords({ userId: user.id, pageSize: 20 }),
+    enabled: open && activeTab === 'gifts',
+  })
+
+  const { data: couponRecords } = useQuery({
+    queryKey: ['gift-coupon-records', user.id],
+    queryFn: () => getCouponGiftRecords({ userId: user.id, pageSize: 20 }),
+    enabled: open && activeTab === 'gifts',
+  })
 
   // Sync level when user changes
   useMemo(() => {
@@ -287,7 +304,7 @@ function UserDetailSheet({
               </div>
               <div>
                 <p className="text-vr-caption text-vrtext-tertiary">余额</p>
-                <p className="text-vr-h3 text-vrtext-primary font-bold">¥{(user.balance / 100).toLocaleString()}</p>
+                <p className="text-vr-h3 text-vrtext-primary font-bold">¥{(((user.principalBalance || 0) + (user.bonusBalance || 0)) / 100).toLocaleString()}</p>
               </div>
             </div>
             <div className="bg-vrbg-elevated rounded-xl p-4 flex items-center gap-3">
@@ -301,11 +318,35 @@ function UserDetailSheet({
             </div>
           </motion.div>
 
-          {/* User Info Card — 两列网格 */}
+          {/* Tab Switcher */}
+          <div className="flex gap-1 bg-vrbg-elevated rounded-lg p-1">
+            <button
+              onClick={() => setActiveTab('info')}
+              className={`flex-1 h-8 rounded-md text-vr-caption font-medium transition-colors ${
+                activeTab === 'info'
+                  ? 'bg-vraccent-primary text-white'
+                  : 'text-vrtext-secondary hover:text-vrtext-primary'
+              }`}
+            >
+              用户信息
+            </button>
+            <button
+              onClick={() => setActiveTab('gifts')}
+              className={`flex-1 h-8 rounded-md text-vr-caption font-medium transition-colors ${
+                activeTab === 'gifts'
+                  ? 'bg-vraccent-primary text-white'
+                  : 'text-vrtext-secondary hover:text-vrtext-primary'
+              }`}
+            >
+              赠送记录
+            </button>
+          </div>
+
+          {activeTab === 'info' && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2, duration: 0.3 }}
+            transition={{ delay: 0.1, duration: 0.3 }}
             className="bg-vrbg-elevated rounded-xl p-5"
           >
             <h4 className="text-vr-body-sm text-vrtext-secondary font-medium mb-4">用户信息</h4>
@@ -332,6 +373,65 @@ function UserDetailSheet({
               ))}
             </div>
           </motion.div>
+          )}
+
+          {activeTab === 'gifts' && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1, duration: 0.3 }}
+            className="space-y-4"
+          >
+            {/* Points Gift Records */}
+            <div className="bg-vrbg-elevated rounded-xl p-5">
+              <h4 className="text-vr-body-sm text-vrtext-secondary font-medium mb-3">积分赠送</h4>
+              {(pointsRecords?.data?.data || []).length === 0 ? (
+                <p className="text-vr-caption text-vrtext-muted">暂无积分赠送记录</p>
+              ) : (
+                <div className="space-y-2">
+                  {(pointsRecords?.data?.data || []).map((record: any) => (
+                    <div key={record.id} className="flex items-center justify-between py-2 border-b border-vrborder-subtle last:border-0">
+                      <div>
+                        <p className="text-vr-body-sm text-vrtext-primary">+{record.pointsAmount} 积分</p>
+                        <p className="text-vr-caption text-vrtext-muted">{record.remark}</p>
+                      </div>
+                      <span className="text-vr-caption text-vrtext-muted">
+                        {new Date(record.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Coupon Gift Records */}
+            <div className="bg-vrbg-elevated rounded-xl p-5">
+              <h4 className="text-vr-body-sm text-vrtext-secondary font-medium mb-3">优惠券赠送</h4>
+              {(couponRecords?.data?.data || []).length === 0 ? (
+                <p className="text-vr-caption text-vrtext-muted">暂无优惠券赠送记录</p>
+              ) : (
+                <div className="space-y-2">
+                  {(couponRecords?.data?.data || []).map((record: any) => (
+                    <div key={record.id} className="flex items-center justify-between py-2 border-b border-vrborder-subtle last:border-0">
+                      <div>
+                        <p className="text-vr-body-sm text-vrtext-primary">{record.name}</p>
+                        <p className="text-vr-caption text-vrtext-muted">
+                          {record.giftReason === 'COMPLAINT' ? '客诉' :
+                           record.giftReason === 'EQUIPMENT_FAILURE' ? '设备故障' :
+                           record.giftReason === 'ENTERTAIN_CLIENT' ? '招待客户' : '备注'}
+                          {record.giftRemark ? ` - ${record.giftRemark}` : ''}
+                        </p>
+                      </div>
+                      <span className="text-vr-caption text-vrtext-muted">
+                        {new Date(record.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </motion.div>
+          )}
 
           {/* Membership Upgrade */}
           {/* 会员等级已改为由充值系统自动计算，禁止手动修改 */}
@@ -523,6 +623,20 @@ export default function UsersPage() {
   })
   const [createError, setCreateError] = useState('')
   const [createLoading, setCreateLoading] = useState(false)
+
+  /* ─── Gift states ─── */
+  const [giftPointsOpen, setGiftPointsOpen] = useState(false)
+  const [giftCouponOpen, setGiftCouponOpen] = useState(false)
+  const [giftingUser, setGiftingUser] = useState<ApiUser | null>(null)
+  const [giftChoiceOpen, setGiftChoiceOpen] = useState(false)
+  const [giftChoiceUser, setGiftChoiceUser] = useState<ApiUser | null>(null)
+  const [giftPointsForm, setGiftPointsForm] = useState({ points: '', reason: 'COMPLAINT', remark: '' })
+  const [giftCouponForm, setGiftCouponForm] = useState({
+    name: '', type: 'EXPERIENCE_FREE' as 'EXPERIENCE_FREE' | 'DISCOUNT',
+    discountRate: '', validityDays: '30', reason: 'COMPLAINT', remark: '',
+  })
+  const [giftError, setGiftError] = useState('')
+  const [giftLoading, setGiftLoading] = useState(false)
 
   const { levels: memberLevels, levelMap, reverseMap } = useMemberLevels()
   const levelTabs = useDynamicLevelTabs(memberLevels)
@@ -854,6 +968,16 @@ export default function UsersPage() {
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
+                          <button
+                            onClick={() => {
+                              setGiftChoiceUser(user)
+                              setGiftChoiceOpen(true)
+                            }}
+                            className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrsuccess hover:bg-vrsuccess/10 transition-colors"
+                            title="赠送"
+                          >
+                            <Gift className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </motion.tr>
@@ -1065,6 +1189,327 @@ export default function UsersPage() {
           </div>
         </SheetContent>
       </Sheet>
+      {/* ─── Gift Points Sheet ─── */}
+      <Sheet open={giftPointsOpen} onOpenChange={setGiftPointsOpen}>
+        <SheetContent side="right" className="w-[480px] bg-vrbg-card border-l border-vrborder-subtle p-0 sm:max-w-[480px]">
+          <SheetHeader className="p-6 border-b border-vrborder-subtle">
+            <SheetTitle className="text-vr-h3 text-vrtext-primary font-semibold">赠送积分</SheetTitle>
+          </SheetHeader>
+          <div className="p-6 space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 80px)' }}>
+            {giftingUser && (
+              <div className="flex items-center gap-3 p-3 bg-vrbg-elevated rounded-lg">
+                <div className="w-10 h-10 rounded-full bg-vraccent-primary/10 flex items-center justify-center text-vraccent-primary font-semibold">
+                  {giftingUser.name.charAt(0)}
+                </div>
+                <div>
+                  <p className="text-vr-body-sm text-vrtext-primary font-medium">{giftingUser.name}</p>
+                  <p className="text-vr-caption text-vrtext-secondary">当前积分 {giftingUser.points || 0}</p>
+                </div>
+              </div>
+            )}
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">赠送积分 <span className="text-vr-error">*</span></label>
+              <input
+                type="number"
+                min={1}
+                value={giftPointsForm.points}
+                onChange={(e) => setGiftPointsForm((f) => ({ ...f, points: e.target.value }))}
+                placeholder="请输入积分数量"
+                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">赠送原因 <span className="text-vr-error">*</span></label>
+              <div className="space-y-2">
+                {[
+                  { key: 'COMPLAINT', label: '客诉' },
+                  { key: 'EQUIPMENT_FAILURE', label: '设备故障' },
+                  { key: 'ENTERTAIN_CLIENT', label: '招待客户' },
+                  { key: 'OTHER', label: '备注' },
+                ].map((r) => (
+                  <label key={r.key} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="giftReason"
+                      checked={giftPointsForm.reason === r.key}
+                      onChange={() => setGiftPointsForm((f) => ({ ...f, reason: r.key }))}
+                      className="w-4 h-4 accent-vraccent-primary"
+                    />
+                    <span className="text-vr-body-sm text-vrtext-primary">{r.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">备注说明</label>
+              <textarea
+                value={giftPointsForm.remark}
+                onChange={(e) => setGiftPointsForm((f) => ({ ...f, remark: e.target.value }))}
+                placeholder={giftPointsForm.reason === 'OTHER' ? '请输入具体原因（必填）' : '请输入补充说明（选填）'}
+                rows={3}
+                className="w-full px-3 py-2 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all resize-none"
+              />
+            </div>
+            {giftError && (
+              <p className="text-vr-body-sm text-vr-error">{giftError}</p>
+            )}
+            <div className="pt-4 flex gap-3">
+              <button
+                onClick={() => setGiftPointsOpen(false)}
+                className="flex-1 h-10 rounded-lg border border-vrborder-subtle text-vrtext-secondary text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors"
+              >
+                取消
+              </button>
+              <button
+                disabled={giftLoading || !giftPointsForm.points || parseInt(giftPointsForm.points) < 1 || (giftPointsForm.reason === 'OTHER' && !giftPointsForm.remark.trim())}
+                onClick={async () => {
+                  if (!giftingUser) return
+                  setGiftLoading(true)
+                  setGiftError('')
+                  try {
+                    await giftPoints({
+                      userId: giftingUser.id,
+                      points: parseInt(giftPointsForm.points),
+                      reason: giftPointsForm.reason as any,
+                      remark: giftPointsForm.remark || undefined,
+                    })
+                    setGiftPointsOpen(false)
+                    queryClient.invalidateQueries({ queryKey: ['users'] })
+                  } catch (err: any) {
+                    setGiftError(err?.response?.data?.message || err?.message || '赠送失败')
+                  } finally {
+                    setGiftLoading(false)
+                  }
+                }}
+                className="flex-1 h-10 rounded-lg bg-vrsuccess text-white text-vr-body-sm font-medium hover:bg-vrsuccess/90 transition-colors disabled:opacity-50"
+              >
+                {giftLoading ? '赠送中...' : '确认赠送'}
+              </button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* ─── Gift Coupon Sheet ─── */}
+      <Sheet open={giftCouponOpen} onOpenChange={setGiftCouponOpen}>
+        <SheetContent side="right" className="w-[480px] bg-vrbg-card border-l border-vrborder-subtle p-0 sm:max-w-[480px]">
+          <SheetHeader className="p-6 border-b border-vrborder-subtle">
+            <SheetTitle className="text-vr-h3 text-vrtext-primary font-semibold">赠送优惠券</SheetTitle>
+          </SheetHeader>
+          <div className="p-6 space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 80px)' }}>
+            {giftingUser && (
+              <div className="flex items-center gap-3 p-3 bg-vrbg-elevated rounded-lg">
+                <div className="w-10 h-10 rounded-full bg-vraccent-primary/10 flex items-center justify-center text-vraccent-primary font-semibold">
+                  {giftingUser.name.charAt(0)}
+                </div>
+                <div>
+                  <p className="text-vr-body-sm text-vrtext-primary font-medium">{giftingUser.name}</p>
+                  <p className="text-vr-caption text-vrtext-secondary">{giftingUser.phone}</p>
+                </div>
+              </div>
+            )}
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">优惠券名称 <span className="text-vr-error">*</span></label>
+              <input
+                type="text"
+                value={giftCouponForm.name}
+                onChange={(e) => setGiftCouponForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="例如：VR体验补偿券"
+                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">优惠券类型 <span className="text-vr-error">*</span></label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="couponType"
+                    checked={giftCouponForm.type === 'EXPERIENCE_FREE'}
+                    onChange={() => setGiftCouponForm((f) => ({ ...f, type: 'EXPERIENCE_FREE' }))}
+                    className="w-4 h-4 accent-vraccent-primary"
+                  />
+                  <span className="text-vr-body-sm text-vrtext-primary">体验券（免单1人）</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="couponType"
+                    checked={giftCouponForm.type === 'DISCOUNT'}
+                    onChange={() => setGiftCouponForm((f) => ({ ...f, type: 'DISCOUNT' }))}
+                    className="w-4 h-4 accent-vraccent-primary"
+                  />
+                  <span className="text-vr-body-sm text-vrtext-primary">折扣券</span>
+                </label>
+              </div>
+            </div>
+            {giftCouponForm.type === 'DISCOUNT' && (
+              <div>
+                <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">折扣率（%）<span className="text-vr-error">*</span></label>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={giftCouponForm.discountRate}
+                  onChange={(e) => setGiftCouponForm((f) => ({ ...f, discountRate: e.target.value }))}
+                  placeholder="例如：85 表示85折"
+                  className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                />
+              </div>
+            )}
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">有效期（天）<span className="text-vr-error">*</span></label>
+              <input
+                type="number"
+                min={1}
+                value={giftCouponForm.validityDays}
+                onChange={(e) => setGiftCouponForm((f) => ({ ...f, validityDays: e.target.value }))}
+                placeholder="默认30天"
+                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">赠送原因 <span className="text-vr-error">*</span></label>
+              <div className="space-y-2">
+                {[
+                  { key: 'COMPLAINT', label: '客诉' },
+                  { key: 'EQUIPMENT_FAILURE', label: '设备故障' },
+                  { key: 'ENTERTAIN_CLIENT', label: '招待客户' },
+                  { key: 'OTHER', label: '备注' },
+                ].map((r) => (
+                  <label key={r.key} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="giftCouponReason"
+                      checked={giftCouponForm.reason === r.key}
+                      onChange={() => setGiftCouponForm((f) => ({ ...f, reason: r.key }))}
+                      className="w-4 h-4 accent-vraccent-primary"
+                    />
+                    <span className="text-vr-body-sm text-vrtext-primary">{r.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">备注说明</label>
+              <textarea
+                value={giftCouponForm.remark}
+                onChange={(e) => setGiftCouponForm((f) => ({ ...f, remark: e.target.value }))}
+                placeholder={giftCouponForm.reason === 'OTHER' ? '请输入具体原因（必填）' : '请输入补充说明（选填）'}
+                rows={3}
+                className="w-full px-3 py-2 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all resize-none"
+              />
+            </div>
+            {giftError && (
+              <p className="text-vr-body-sm text-vr-error">{giftError}</p>
+            )}
+            <div className="pt-4 flex gap-3">
+              <button
+                onClick={() => setGiftCouponOpen(false)}
+                className="flex-1 h-10 rounded-lg border border-vrborder-subtle text-vrtext-secondary text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors"
+              >
+                取消
+              </button>
+              <button
+                disabled={
+                  giftLoading ||
+                  !giftCouponForm.name.trim() ||
+                  !giftCouponForm.validityDays ||
+                  parseInt(giftCouponForm.validityDays) < 1 ||
+                  (giftCouponForm.type === 'DISCOUNT' && (!giftCouponForm.discountRate || parseInt(giftCouponForm.discountRate) < 1 || parseInt(giftCouponForm.discountRate) > 99)) ||
+                  (giftCouponForm.reason === 'OTHER' && !giftCouponForm.remark.trim())
+                }
+                onClick={async () => {
+                  if (!giftingUser) return
+                  setGiftLoading(true)
+                  setGiftError('')
+                  try {
+                    await giftCoupon({
+                      userId: giftingUser.id,
+                      name: giftCouponForm.name.trim(),
+                      type: giftCouponForm.type,
+                      discountRate: giftCouponForm.type === 'DISCOUNT' ? parseInt(giftCouponForm.discountRate) : undefined,
+                      validityDays: parseInt(giftCouponForm.validityDays),
+                      reason: giftCouponForm.reason as any,
+                      remark: giftCouponForm.remark || undefined,
+                    })
+                    setGiftCouponOpen(false)
+                    queryClient.invalidateQueries({ queryKey: ['users'] })
+                  } catch (err: any) {
+                    setGiftError(err?.response?.data?.message || err?.message || '赠送失败')
+                  } finally {
+                    setGiftLoading(false)
+                  }
+                }}
+                className="flex-1 h-10 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
+              >
+                {giftLoading ? '赠送中...' : '确认赠送'}
+              </button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* ─── Gift Choice Dialog ─── */}
+      <AlertDialog open={giftChoiceOpen} onOpenChange={setGiftChoiceOpen}>
+        <AlertDialogContent className="bg-vrbg-card border-vrborder-subtle sm:max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-vrtext-primary">
+              赠送 {giftChoiceUser?.name}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-vrtext-secondary">
+              请选择赠送类型
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex flex-col gap-2 py-2">
+            <button
+              onClick={() => {
+                setGiftChoiceOpen(false)
+                if (giftChoiceUser) {
+                  setGiftingUser(giftChoiceUser)
+                  setGiftPointsForm({ points: '', reason: 'COMPLAINT', remark: '' })
+                  setGiftError('')
+                  setGiftPointsOpen(true)
+                }
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-vrbg-elevated hover:bg-vrsuccess/10 border border-vrborder-subtle hover:border-vrsuccess/30 transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded-full bg-vrsuccess/10 flex items-center justify-center shrink-0">
+                <Coins className="w-5 h-5 text-vrsuccess" />
+              </div>
+              <div>
+                <p className="text-vr-body-sm text-vrtext-primary font-medium">赠送积分</p>
+                <p className="text-vr-caption text-vrtext-muted">手动赠送积分到会员账户</p>
+              </div>
+            </button>
+            <button
+              onClick={() => {
+                setGiftChoiceOpen(false)
+                if (giftChoiceUser) {
+                  setGiftingUser(giftChoiceUser)
+                  setGiftCouponForm({ name: '', type: 'EXPERIENCE_FREE', discountRate: '', validityDays: '30', reason: 'COMPLAINT', remark: '' })
+                  setGiftError('')
+                  setGiftCouponOpen(true)
+                }
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-vrbg-elevated hover:bg-vraccent-primary/10 border border-vrborder-subtle hover:border-vraccent-primary/30 transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded-full bg-vraccent-primary/10 flex items-center justify-center shrink-0">
+                <Ticket className="w-5 h-5 text-vraccent-primary" />
+              </div>
+              <div>
+                <p className="text-vr-body-sm text-vrtext-primary font-medium">赠送优惠券</p>
+                <p className="text-vr-caption text-vrtext-muted">创建体验券或折扣券赠送给会员</p>
+              </div>
+            </button>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-transparent border-vrborder-subtle text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary">
+              取消
+            </AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   )
 }

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { ChevronLeft, MapPin, Clock, AlertCircle, Coins } from 'lucide-react'
+import { ChevronLeft, MapPin, Clock, AlertCircle, Coins, Ticket, Check } from 'lucide-react'
 import { createBooking, checkConflict } from '@/api/bookings'
 import { createOrder, payOrder } from '@/api/orders'
 import { getImageUrl } from '@/lib/imageUrl'
@@ -52,9 +52,19 @@ export default function OrderConfirm() {
   const [personName, setPersonName] = useState('')
   const [personPhone, setPersonPhone] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<'wechat' | 'alipay' | 'balance'>('wechat')
-  const [usePoints, setUsePoints] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const [slotInfo, setSlotInfo] = useState<{ status: string; currentCount: number; remainingCount: number; maxCount: number } | null>(null)
+  const [selectedCoupon, setSelectedCoupon] = useState<any | null>(null)
+
+  // 查询可用优惠券
+  const { data: usableCoupons } = useQuery({
+    queryKey: ['usable-coupons'],
+    queryFn: async () => {
+      const res = await apiClient.get('/points/coupons/usable')
+      return res.data.data as any[]
+    },
+    enabled: isLoggedIn,
+  })
 
   // 实时校验时段状态
   useEffect(() => {
@@ -103,22 +113,38 @@ export default function OrderConfirm() {
   const totalPrice = gamePrice * personCount
   const totalFen = Math.round(totalPrice * 100)
 
-  // 1. 先算会员折扣
-  const discountedFen = Math.round(totalFen * discount / 100)
+  // 价格计算顺序：
+  // 1. 体验券先抵扣（免1人原价）
+  // 2. 剩余部分打会员折扣
+  // 3. DISCOUNT优惠券再折上折
+  let couponDiscountFen = 0
+  let discountedFen = totalFen
 
-  // 2. 再算积分抵扣（基于折扣后金额，积分不打折）
-  const deductRate = memberConfig?.points?.deductRate ?? 100
-  const userPoints = user?.points || 0
-  // 最大可用积分：最多覆盖折扣后金额
-  const maxPointsNeeded = Math.ceil(discountedFen / 100) * deductRate
-  const maxPointsCanUse = Math.min(userPoints, maxPointsNeeded)
-  const pointsToUse = usePoints && isLoggedIn ? maxPointsCanUse : 0
-  const pointsDeductionFen = Math.floor(pointsToUse * 100 / deductRate)
-  // 限制积分抵扣不超过折扣后金额
-  const actualPointsDeductionFen = Math.min(pointsDeductionFen, discountedFen)
-  const remainingFen = Math.max(0, discountedFen - actualPointsDeductionFen)
+  if (selectedCoupon?.type === 'EXPERIENCE_FREE') {
+    // 体验券：先抵扣1人原价，剩余再打会员折扣
+    couponDiscountFen = Math.round(gamePrice * 100)
+    const afterCoupon = Math.max(0, totalFen - couponDiscountFen)
+    discountedFen = Math.round(afterCoupon * discount / 100)
+  } else if (selectedCoupon?.type === 'DISCOUNT' && selectedCoupon.discountRate) {
+    // 优惠券：先会员折扣，再折上折
+    const afterMember = Math.round(totalFen * discount / 100)
+    const afterCoupon = Math.round(afterMember * selectedCoupon.discountRate / 100)
+    couponDiscountFen = afterMember - afterCoupon
+    discountedFen = afterCoupon
+  } else {
+    // 无券：只打会员折扣
+    discountedFen = Math.round(totalFen * discount / 100)
+  }
+
+  const remainingFen = discountedFen
   const finalPrice = remainingFen / 100
-  const pointsDeductionAmount = actualPointsDeductionFen / 100
+
+  // 会员优惠金额（基于实际打折基数）
+  let discountBaseFen = totalFen
+  if (selectedCoupon?.type === 'EXPERIENCE_FREE') {
+    discountBaseFen = Math.max(0, totalFen - couponDiscountFen)
+  }
+  const memberDiscountFen = discountBaseFen - Math.round(discountBaseFen * discount / 100)
 
   const handlePay = async () => {
     if (!personName.trim() || !personPhone.trim()) {
@@ -126,17 +152,8 @@ export default function OrderConfirm() {
       return
     }
 
-    // 纯积分抵扣时强制走余额支付分支（后端只扣积分不扣余额）
-    const effectivePayMethod = remainingFen === 0 && pointsToUse > 0 ? 'balance' : paymentMethod
-
-    // 积分抵扣仅支持余额支付（在线支付+积分抵扣需后续扩展）
-    if (pointsToUse > 0 && remainingFen > 0 && effectivePayMethod !== 'balance') {
-      setErrorMsg('积分抵扣仅支持余额支付，请选择余额支付或关闭积分抵扣')
-      return
-    }
-
-    // 余额支付检查（考虑积分抵扣后剩余金额）
-    if (effectivePayMethod === 'balance') {
+    // 余额支付检查
+    if (paymentMethod === 'balance') {
       const balance = user?.balance || 0
       const need = remainingFen
       if (balance < need) {
@@ -191,17 +208,19 @@ export default function OrderConfirm() {
           customer: personName,
           phone: personPhone,
           source: 'ONLINE',
-          payMethod: effectivePayMethod === 'balance' ? 'BALANCE' : undefined,
-          pointsUsed: pointsToUse > 0 ? pointsToUse : undefined,
+          payMethod: paymentMethod === 'balance' ? 'BALANCE' : undefined,
+          userCouponId: selectedCoupon?.id,
         })
         // 非余额支付：完成支付流程
-        if (effectivePayMethod !== 'balance' && order?.id && remainingFen > 0) {
-          await payOrder(order.id, effectivePayMethod === 'wechat' ? 'WECHAT' : 'ALIPAY')
+        if (paymentMethod !== 'balance' && order?.id && remainingFen > 0) {
+          await payOrder(order.id, paymentMethod === 'wechat' ? 'WECHAT' : 'ALIPAY')
         }
         queryClient.invalidateQueries({ queryKey: ['bookings'], exact: false })
         queryClient.invalidateQueries({ queryKey: ['orders'] })
         await queryClient.invalidateQueries({ queryKey: ['rechargeConfig'] })
-        navigate('/success', { state: { venueName, date, startTime, endTime, durationMin, totalPrice, personName, personCount, orderId: booking.id } })
+        queryClient.invalidateQueries({ queryKey: ['usable-coupons'] })
+        queryClient.invalidateQueries({ queryKey: ['points-coupons'] })
+        navigate('/success', { state: { venueName, date, startTime, endTime, durationMin, totalPrice, finalPrice: finalPrice.toFixed(2), originalPrice: totalPrice.toFixed(2), personName, personCount, orderId: booking.id, couponName: selectedCoupon?.name, couponDiscount: couponDiscountFen } })
       }
     } catch (err: any) {
       const msg = err?.response?.data?.message || '预约提交失败，请稍后重试'
@@ -294,33 +313,69 @@ export default function OrderConfirm() {
           </div>
         </div>
 
-        {/* Points deduction */}
-        {isLoggedIn && user && userPoints > 0 && (
+        {/* Coupon selection */}
+        {/* Coupon selection */}
+        {isLoggedIn && (
           <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Coins className="w-4 h-4 text-amber-500" />
-                <span className="text-sm font-medium text-[var(--text-primary)]">使用积分抵扣</span>
+            <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3 flex items-center gap-1.5">
+              <Ticket className="w-4 h-4 text-[var(--accent-primary)]" />
+              优惠券
+            </h3>
+            {usableCoupons && usableCoupons.length > 0 ? (
+              <div className="space-y-2">
+                <button
+                  onClick={() => setSelectedCoupon(null)}
+                  className={cn(
+                    'w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all',
+                    !selectedCoupon
+                      ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/5'
+                      : 'border-[var(--border-subtle)] bg-transparent hover:border-[var(--border-hover)]',
+                  )}
+                >
+                  <div className={cn(
+                    'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0',
+                    !selectedCoupon ? 'border-[var(--accent-primary)]' : 'border-[var(--text-muted)]',
+                  )}>
+                    {!selectedCoupon && <div className="w-2.5 h-2.5 rounded-full bg-[var(--accent-primary)]" />}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm text-[var(--text-primary)]">不使用优惠券</p>
+                  </div>
+                </button>
+                {usableCoupons.map((coupon: any) => (
+                  <button
+                    key={coupon.id}
+                    onClick={() => setSelectedCoupon(coupon)}
+                    className={cn(
+                      'w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all',
+                      selectedCoupon?.id === coupon.id
+                        ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/5'
+                        : 'border-[var(--border-subtle)] bg-transparent hover:border-[var(--border-hover)]',
+                    )}
+                  >
+                    <div className={cn(
+                      'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0',
+                      selectedCoupon?.id === coupon.id ? 'border-[var(--accent-primary)]' : 'border-[var(--text-muted)]',
+                    )}>
+                      {selectedCoupon?.id === coupon.id && <div className="w-2.5 h-2.5 rounded-full bg-[var(--accent-primary)]" />}
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm text-[var(--text-primary)]">{coupon.name}</p>
+                      <p className="text-xs text-[var(--text-muted)]">
+                        {coupon.type === 'EXPERIENCE_FREE' ? '体验券 · 免1人费用' : coupon.discountRate ? `优惠券 · ${(coupon.discountRate / 10).toFixed(coupon.discountRate % 10 === 0 ? 0 : 1)}折` : '优惠券'}
+                        {coupon.validTo && ` · 有效期至${new Date(coupon.validTo).toLocaleDateString()}`}
+                      </p>
+                    </div>
+                    {selectedCoupon?.id === coupon.id && (
+                      <Check className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                    )}
+                  </button>
+                ))}
               </div>
-              <button
-                onClick={() => setUsePoints((v) => !v)}
-                className={cn(
-                  'w-11 h-6 rounded-full transition-colors relative',
-                  usePoints ? 'bg-[var(--accent-primary)]' : 'bg-[var(--border-hover)]',
-                )}
-              >
-                <div className={cn(
-                  'w-5 h-5 rounded-full bg-white shadow-sm absolute top-0.5 transition-transform',
-                  usePoints ? 'translate-x-5' : 'translate-x-0.5',
-                )} />
-              </button>
-            </div>
-            {usePoints && (
-              <div className="mt-2 text-xs text-[var(--text-muted)]">
-                可用 {userPoints} 积分，抵扣 ¥{pointsDeductionAmount.toFixed(2)}
-                {pointsToUse >= maxPointsCanUse && actualPointsDeductionFen < discountedFen && (
-                  <span className="text-amber-500 ml-1">（积分不足全额抵扣）</span>
-                )}
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] py-2">
+                <Ticket className="w-4 h-4 opacity-50" />
+                <span>暂无可用优惠券</span>
               </div>
             )}
           </div>
@@ -336,7 +391,7 @@ export default function OrderConfirm() {
               ...(isLoggedIn && user ? [{
                 key: 'balance' as const,
                 label: '余额支付',
-                sub: `当前余额 ¥${(user.balance || 0) / 100}${discount < 100 ? ` · 享${discount}折` : ''}${usePoints && actualPointsDeductionFen > 0 ? ` · 积分已抵¥${pointsDeductionAmount.toFixed(2)}` : ''}`,
+                sub: `当前余额 ¥${(user.balance || 0) / 100}${discount < 100 ? ` · 享${discount}折` : ''}`,
                 disabled: (user.balance || 0) < remainingFen,
               }] : []),
             ].map((m: any) => (
@@ -374,25 +429,34 @@ export default function OrderConfirm() {
             <span className="text-[var(--text-secondary)]">体验费用</span>
             <span className="text-[var(--text-primary)]">¥{totalPrice.toFixed(2)}</span>
           </div>
-          {actualPointsDeductionFen > 0 && (
+          {/* 体验券先显示 */}
+          {selectedCoupon?.type === 'EXPERIENCE_FREE' && couponDiscountFen > 0 && (
             <div className="flex items-center justify-between text-sm">
-              <span className="text-[var(--text-secondary)]">积分抵扣</span>
-              <span className="text-amber-500">-¥{pointsDeductionAmount.toFixed(2)}</span>
+              <span className="text-[var(--text-secondary)]">{selectedCoupon.name}</span>
+              <span className="text-[var(--success)]">-¥{(couponDiscountFen / 100).toFixed(2)}</span>
             </div>
           )}
+          {/* 会员优惠 */}
           {discount < 100 && currentLevel && (
             <div className="flex items-center justify-between text-sm">
               <span className="text-[var(--text-secondary)]">{currentLevel.name}优惠（{discount}折）</span>
-              <span className="text-[var(--success)]">-¥{((totalFen - discountedFen) / 100).toFixed(2)}</span>
+              <span className="text-[var(--success)]">-¥{(memberDiscountFen / 100).toFixed(2)}</span>
+            </div>
+          )}
+          {/* DISCOUNT优惠券 */}
+          {selectedCoupon?.type === 'DISCOUNT' && couponDiscountFen > 0 && (
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-[var(--text-secondary)]">{selectedCoupon.name}</span>
+              <span className="text-[var(--success)]">-¥{(couponDiscountFen / 100).toFixed(2)}</span>
             </div>
           )}
           <div className="border-t border-[var(--border-subtle)] pt-2 flex items-center justify-between">
             <span className="text-sm font-medium text-[var(--text-primary)]">合计</span>
             <span className="text-lg font-bold text-[var(--error)]">¥{finalPrice.toFixed(2)}</span>
           </div>
-          {(discount < 100 || actualPointsDeductionFen > 0) && (
+          {(discount < 100 || (selectedCoupon && couponDiscountFen > 0)) && (
             <p className="text-xs text-[var(--text-muted)] text-right">
-              已省 ¥{(((totalFen - discountedFen) / 100) + pointsDeductionAmount).toFixed(2)}
+              已省 ¥{((memberDiscountFen + couponDiscountFen) / 100).toFixed(2)}
             </p>
           )}
         </div>
@@ -419,11 +483,8 @@ export default function OrderConfirm() {
           <div>
             <span className="text-xs text-[var(--text-muted)]">待支付</span>
             <span className="text-lg font-bold text-[var(--error)] ml-2">¥{finalPrice.toFixed(2)}</span>
-            {(discount < 100 || actualPointsDeductionFen > 0) && (
+            {discount < 100 && (
               <span className="text-xs text-[var(--text-muted)] line-through ml-1">¥{totalPrice.toFixed(2)}</span>
-            )}
-            {actualPointsDeductionFen > 0 && remainingFen === 0 && (
-              <span className="text-xs text-amber-500 ml-1">（积分全额抵扣）</span>
             )}
           </div>
           <button
@@ -436,7 +497,7 @@ export default function OrderConfirm() {
                 : 'bg-gradient-accent shadow-glow hover:shadow-glow-sm',
             )}
           >
-            {isSubmitting ? '提交中...' : (remainingFen === 0 && actualPointsDeductionFen > 0 ? '确认抵扣' : '立即支付')}
+            {isSubmitting ? '提交中...' : '立即支付'}
           </button>
         </div>
       </div>

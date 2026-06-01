@@ -17,13 +17,15 @@ import Coupons from './pages/Coupons'
 import HelpFeedback from './pages/HelpFeedback'
 import AccountSettings from './pages/AccountSettings'
 import AuthPage from './pages/AuthPage'
+import PointsMall from './pages/PointsMall'
+import MyPointsOrders from './pages/MyPointsOrders'
 import BottomNav from './components/BottomNav'
 import { ScrollContainerContext } from './hooks/useScrollContainer'
 
 export default function App() {
   const location = useLocation()
   // 隐藏底部导航的页面
-  const hideNav = ['/confirm', '/success', '/login', '/recharge', '/game', '/pay', '/account-records', '/member-benefits', '/coupons', '/help', '/account-settings'].some((p) => location.pathname.startsWith(p))
+  const hideNav = ['/confirm', '/success', '/login', '/recharge', '/game', '/pay', '/account-records', '/member-benefits', '/coupons', '/help', '/account-settings', '/points-mall', '/points-orders'].some((p) => location.pathname.startsWith(p))
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -45,6 +47,8 @@ export default function App() {
         <Route path="/coupons" element={<Coupons />} />
         <Route path="/help" element={<HelpFeedback />} />
         <Route path="/account-settings" element={<AccountSettings />} />
+        <Route path="/points-mall" element={<PointsMall />} />
+        <Route path="/points-orders" element={<MyPointsOrders />} />
         <Route path="/pay/:id" element={<Pay />} />
       </Routes>
     </AnimatePresence>

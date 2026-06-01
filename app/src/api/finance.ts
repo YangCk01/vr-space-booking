@@ -62,9 +62,16 @@ export interface DailyReport {
   directRevenue: number
   memberPrincipalRevenue: number
   totalRecognizedRevenue: number
-  pointsDiscountCost: number
+  pointsExchangeCost: number
+  pointsGiftCost: number
+  couponDiscountCost: number
+  couponGiftCount: number
+  experienceGiftCount: number
+  couponUsedCount: number
+  experienceUsedCount: number
   totalPrincipalLiability: number
   totalBonusLiability: number
+  pointsLiability: number
   dormantPrincipal: number
 }
 
@@ -83,12 +90,92 @@ export async function generateDailyReport(date: string) {
   return res.data.data
 }
 
-export async function reconcileFinance() {
-  const res = await apiClient.get('/finance/reconcile')
-  return res.data.data as {
-    actual: { totalPrincipal: number; totalBonus: number; total: number }
-    expected: { principal: number; bonus: number; total: number }
-    diff: { principal: number; bonus: number }
-    isBalanced: boolean
-  }
+export interface ReconcileItem {
+  name: string
+  actual: number
+  expected: number
+  diff: number
+  unit: string
+  note?: string
+  isBalanced: boolean
+}
+
+export interface ReconcileResult {
+  mode: 'total' | 'daily'
+  date: string | null
+  isBalanced: boolean
+  items: ReconcileItem[]
+}
+
+export interface ReconcileDetailItem {
+  id: string
+  title: string
+  subtitle?: string
+  actual: number
+  expected: number
+  diff: number
+  unit: string
+  reason: string
+  link?: string
+}
+
+export interface ReconcileDetailsResult {
+  type: string
+  mode: 'total' | 'daily'
+  date: string | null
+  totalDiff: number
+  items: ReconcileDetailItem[]
+}
+
+export async function reconcileFinance(date?: string) {
+  const res = await apiClient.get('/finance/reconcile', {
+    params: date ? { date } : undefined,
+  })
+  return res.data.data as ReconcileResult
+}
+
+export async function getReconcileDetails(type: string, date?: string) {
+  const res = await apiClient.get('/finance/reconcile-details', {
+    params: { type, date },
+  })
+  return res.data.data as ReconcileDetailsResult
+}
+
+export async function fixReconcileDiff(params: {
+  type: string
+  targetId: string
+  diff: number
+  date?: string
+  mode?: string
+}) {
+  const res = await apiClient.post('/finance/fix-reconcile-diff', params)
+  return res.data
+}
+
+export interface TotalSummary {
+  totalRechargePrincipalIn: number
+  totalDirectPayIn: number
+  totalRefundOut: number
+  totalNetCashFlow: number
+  totalDirectRevenue: number
+  totalMemberPrincipalRevenue: number
+  totalRecognizedRevenue: number
+  totalPointsExchangeCost: number
+  totalPointsGiftCost: number
+  totalCouponDiscountCost: number
+  totalCouponGift: number
+  totalExperienceGift: number
+  totalCouponUsed: number
+  totalExperienceUsed: number
+  totalCouponUnused: number
+  totalExperienceUnused: number
+  totalPrincipalLiability: number
+  totalBonusLiability: number
+  totalPointsLiability: number
+  dormantPrincipal: number
+}
+
+export async function getTotalSummary() {
+  const res = await apiClient.get('/finance/total-summary')
+  return res.data.data as TotalSummary
 }

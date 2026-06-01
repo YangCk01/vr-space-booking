@@ -9,9 +9,13 @@ interface LocationState {
   endTime: string
   durationMin: number
   totalPrice: number
+  finalPrice?: string
+  originalPrice?: string
   personName: string
   personCount: number
   orderId: string
+  couponName?: string
+  couponDiscount?: number
 }
 
 export default function OrderSuccess() {
@@ -28,7 +32,9 @@ export default function OrderSuccess() {
     )
   }
 
-  const { venueName, date, startTime, endTime, durationMin, totalPrice, personCount, orderId } = state
+  const { venueName, date, startTime, endTime, durationMin, totalPrice, finalPrice, originalPrice, personCount, orderId, couponName, couponDiscount } = state
+  const displayOriginal = originalPrice || totalPrice?.toFixed(2) || '0.00'
+  const displayFinal = finalPrice || totalPrice?.toFixed(2) || '0.00'
   const month = parseInt(date.split('-')[1])
   const day = parseInt(date.split('-')[2])
   const weekDay = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date(date).getDay()]
@@ -119,9 +125,18 @@ export default function OrderSuccess() {
             <span className="text-xs text-[var(--text-muted)]">人数</span>
             <span className="text-sm text-[var(--text-primary)]">{personCount}人</span>
           </div>
+          {couponName && couponDiscount && couponDiscount > 0 && (
+            <>
+              <div className="border-t border-[var(--border-subtle)]" />
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-[var(--text-muted)]">优惠券</span>
+                <span className="text-sm text-[var(--success)]">{couponName} · -¥{(couponDiscount / 100).toFixed(2)}</span>
+              </div>
+            </>
+          )}
           <div className="flex justify-between items-center">
-            <span className="text-xs text-[var(--text-muted)]">金额</span>
-            <span className="text-sm font-bold text-[var(--error)]">¥{totalPrice}</span>
+            <span className="text-xs text-[var(--text-muted)]">实付金额</span>
+            <span className="text-sm font-bold text-[var(--error)]">¥{displayFinal}</span>
           </div>
         </div>
       </motion.div>

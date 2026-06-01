@@ -5,11 +5,13 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { X, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getBookings } from '@/api/bookings'
+import { getVenue } from '@/api/venues'
 import { useAuth } from '@/providers/AuthProvider'
 
 interface TimeSheetProps {
   venueId: string
   gamePrice: number
+  gameDuration?: number
   onSelect: (date: string, startTime: string, endTime: string) => void
   onClose: () => void
 }
@@ -27,7 +29,7 @@ function minutesToTime(minutes: number) {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
 }
 
-export default function TimeSheet({ venueId, gamePrice, onSelect, onClose }: TimeSheetProps) {
+export default function TimeSheet({ venueId, gamePrice, gameDuration = 30, onSelect, onClose }: TimeSheetProps) {
   const navigate = useNavigate()
   const { isLoggedIn } = useAuth()
   // Generate 7 days
@@ -58,36 +60,45 @@ export default function TimeSheet({ venueId, gamePrice, onSelect, onClose }: Tim
     queryFn: () => getBookings({ venueId, date: dateStr }),
   })
 
-  const occupied = useMemo(() => {
-    const bookings: any[] = bookingsData?.data || []
-    const set = new Set<string>()
-    for (const b of bookings) {
-      if (b.status === 'CANCELLED') continue
-      const s = timeToMinutes(b.startTime)
-      const e = timeToMinutes(b.endTime)
-      for (let m = s; m < e; m += 30) {
-        set.add(minutesToTime(m))
-      }
-    }
-    return set
-  }, [bookingsData])
+  const { data: venueData } = useQuery({
+    queryKey: ['venue', venueId],
+    queryFn: () => getVenue(venueId),
+    enabled: !!venueId,
+  })
 
-  // Generate time slots 09:00 - 21:00, 30min each
+  // Generate time slots dynamically based on gameDuration and venue business hours
   const timeSlots = useMemo(() => {
+    const bookings: any[] = bookingsData?.data || []
     const slots: { time: string; end: string; occupied: boolean; past: boolean }[] = []
     const now = new Date()
     const todayStr = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}`
     const isToday = dateStr === todayStr
 
-    for (let m = 9 * 60; m < 21 * 60; m += 30) {
+    const openMinutes = venueData?.openTime ? timeToMinutes(venueData.openTime) : 9 * 60
+    const closeMinutes = venueData?.closeTime ? timeToMinutes(venueData.closeTime) : 21 * 60
+
+    for (let m = openMinutes; m < closeMinutes; m += gameDuration) {
       const t = minutesToTime(m)
-      const e = minutesToTime(m + 30)
-      const isOccupied = occupied.has(t)
+      const e = minutesToTime(m + gameDuration)
+
+      // 过滤超出营业时间的场次
+      if (m + gameDuration > closeMinutes) continue
+
+      // 检查是否与已有预约时间重叠
+      const isOccupied = bookings.some((b) => {
+        if (b.status === 'CANCELLED') return false
+        const bs = timeToMinutes(b.startTime)
+        const be = timeToMinutes(b.endTime)
+        const ms = timeToMinutes(t)
+        const me = timeToMinutes(e)
+        return ms < be && me > bs
+      })
+
       const isPast = isToday && m <= now.getHours() * 60 + now.getMinutes()
       slots.push({ time: t, end: e, occupied: isOccupied, past: isPast })
     }
     return slots
-  }, [occupied, dateStr])
+  }, [bookingsData, dateStr, gameDuration, venueData])
 
   const dayLabel = (idx: number, date: Date) => {
     if (idx === 0) return '今天'
@@ -122,7 +133,7 @@ export default function TimeSheet({ venueId, gamePrice, onSelect, onClose }: Tim
           </div>
 
           {/* Day tabs */}
-          <div className="flex gap-2 overflow-x-auto px-5 pb-3 scrollbar-hide">
+          <div className="flex gap-2 overflow-x-auto px-5 pb-3 scrollbar-hide snap-x snap-mandatory touch-pan-x scroll-smooth">
             {days.map((date, idx) => {
               const isActive = idx === selectedDay
               return (
@@ -130,7 +141,7 @@ export default function TimeSheet({ venueId, gamePrice, onSelect, onClose }: Tim
                   key={idx}
                   onClick={() => setSelectedDay(idx)}
                   className={cn(
-                    'flex flex-col items-center justify-center min-w-[72px] h-16 rounded-xl border transition-all duration-200',
+                    'flex flex-col items-center justify-center min-w-[72px] h-16 rounded-xl border transition-all duration-200 snap-start',
                     isActive
                       ? 'bg-gradient-accent text-white border-transparent shadow-glow-sm'
                       : 'bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-secondary)] hover:border-[var(--border-hover)]',

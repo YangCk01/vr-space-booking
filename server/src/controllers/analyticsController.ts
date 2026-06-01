@@ -141,15 +141,15 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
 
     const bookingTrend = prevBookings > 0
       ? Math.round(((currentBookings - prevBookings) / prevBookings) * 100)
-      : 0
+      : null
     const revenueTrend = prevRevenue._sum.amount
       ? Math.round(((currentRevenue._sum.amount || 0) - prevRevenue._sum.amount) / prevRevenue._sum.amount * 100)
-      : 0
+      : null
     const prevPlayerCount = prevPlayers._sum.personCount || 0
     const currPlayerCount = currentPlayers._sum.personCount || 0
     const playersTrend = prevPlayerCount > 0
       ? Math.round(((currPlayerCount || 0) - prevPlayerCount) / prevPlayerCount * 100)
-      : 0
+      : null
 
     // 客单价（分→元）
     const currentAOV = currentBookings > 0 ? Math.round((currentRevenue._sum.amount || 0) / currentBookings) : 0

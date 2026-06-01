@@ -38,6 +38,11 @@ interface Order {
   orderNo: string
   venueName: string
   amount: number
+  originalAmount?: number
+  discountAmount?: number
+  couponDiscount?: number
+  userCouponId?: string
+  userCoupon?: { name: string; type: string; discountRate: number | null; source?: string; giftReason?: string; giftRemark?: string }
   status: string
   bookingId?: string
   user?: { name: string; phone: string }
@@ -190,6 +195,9 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
                 { label: '预约人', value: order.booking?.personName || '-', icon: <User className="w-4 h-4 text-vrtext-muted" /> },
                 { label: '联系电话', value: order.booking?.personPhone || '-', icon: <Phone className="w-4 h-4 text-vrtext-muted" /> },
                 { label: '订单金额', value: '', icon: <Receipt className="w-4 h-4 text-vrtext-muted" /> },
+                ...(order.couponDiscount && order.couponDiscount > 0 ? [{ label: '优惠券抵扣', value: `-¥${(order.couponDiscount / 100).toFixed(2)} ${order.userCoupon ? '(' + order.userCoupon.name + ')' : ''}${order.userCoupon?.source === 'MANUAL_GIFT' ? ' [管理员赠送]' : ''}`, icon: <Receipt className="w-4 h-4 text-vrtext-muted" /> }] : []),
+                ...(order.discountAmount && order.discountAmount > 0 ? [{ label: '会员优惠', value: `-¥${(order.discountAmount / 100).toFixed(2)}`, icon: <Receipt className="w-4 h-4 text-vrtext-muted" /> }] : []),
+                { label: '实付金额', value: `¥${((order.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: <Receipt className="w-4 h-4 text-vrtext-muted" /> },
                 { label: '支付方式', value: payMethodLabelMap[order.payMethod || ''] || order.payMethod || '-', icon: <PaymentIcon className="w-4 h-4 text-vrtext-muted" /> },
                 { label: '创建时间', value: formatDateTime(order.createdAt), icon: <Clock className="w-4 h-4 text-vrtext-muted" /> },
               ].map((item, idx) => (
@@ -202,7 +210,7 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
                     'text-vr-body-sm text-vrtext-primary',
                     item.label === '订单金额' && 'font-semibold text-vrwarning'
                   )}>
-                    {item.label === '订单金额' ? `¥${((order.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : item.value}
+                    {item.label === '订单金额' ? `¥${((order.originalAmount || order.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : item.value}
                   </span>
                 </div>
               ))}
@@ -287,19 +295,21 @@ export default function Orders() {
   const [searchQuery, setSearchQuery] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'ONLINE' | 'OFFLINE'>('all')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(5)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   const { data: orderData, isFetching } = useQuery({
-    queryKey: ['orders', activeTab, searchQuery, startDate, endDate, currentPage, pageSize],
+    queryKey: ['orders', activeTab, searchQuery, startDate, endDate, sourceFilter, currentPage, pageSize],
     queryFn: () =>
       getOrders({
         status: activeTab === 'all' ? undefined : activeTab.toUpperCase(),
         search: searchQuery || undefined,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
+        source: sourceFilter === 'all' ? undefined : sourceFilter,
         page: currentPage,
         pageSize,
       }),
@@ -422,6 +432,7 @@ export default function Orders() {
       search: searchQuery || undefined,
       startDate: startDate || undefined,
       endDate: endDate || undefined,
+      source: sourceFilter === 'all' ? undefined : sourceFilter,
       page: 1,
       pageSize: 9999,
     })
@@ -440,7 +451,10 @@ export default function Orders() {
       预约时间: o.bookingTime,
       游戏: (o as any).booking?.game?.title || 'VR体验',
       人数: o.booking?.personCount ?? '-',
-      金额: (o.amount || 0) / 100,
+      原价: (o.originalAmount || o.amount || 0) / 100,
+      会员优惠: (o.discountAmount || 0) / 100,
+      优惠券抵扣: (o.couponDiscount || 0) / 100,
+      实付金额: (o.amount || 0) / 100,
       状态: statusLabelMap[o.status] || o.status,
       支付方式: payMethodLabelMap[o.payMethod || ''] || o.payMethod || '-',
       创建时间: o.createdAt ? format(new Date(o.createdAt), 'yyyy-MM-dd HH:mm:ss') : '-',
@@ -456,7 +470,10 @@ export default function Orders() {
       { wch: 20 }, // 预约时间
       { wch: 16 }, // 游戏
       { wch: 8 },  // 人数
-      { wch: 12 }, // 金额
+      { wch: 12 }, // 原价
+      { wch: 12 }, // 会员优惠
+      { wch: 12 }, // 优惠券抵扣
+      { wch: 12 }, // 实付金额
       { wch: 10 }, // 状态
       { wch: 12 }, // 支付方式
       { wch: 20 }, // 创建时间
@@ -589,20 +606,17 @@ export default function Orders() {
                   activeTab === tab.key ? 'text-vraccent-primary' : 'text-vrtext-secondary hover:text-vrtext-primary'
                 )}
               >
-                <span className="flex items-center gap-2">
+                <span className="flex items-center gap-1.5">
                   {tab.label}
-                  {tab.key === 'pending' && tabCounts.pending > 0 && (
-                    <motion.span
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      transition={{ type: 'spring', stiffness: 500, damping: 15 }}
-                      className="min-w-[20px] h-5 px-1.5 rounded-full bg-vrerror text-white text-vr-caption font-medium flex items-center justify-center"
+                  {tabCounts[tab.key] !== undefined && tabCounts[tab.key] > 0 && (
+                    <span
+                      className={cn(
+                        'min-w-[18px] h-[18px] px-1 rounded-full text-[11px] leading-none font-semibold flex items-center justify-center',
+                        activeTab === tab.key
+                          ? 'bg-vraccent-primary/15 text-vraccent-primary'
+                          : 'bg-vrbg-elevated text-vrtext-muted'
+                      )}
                     >
-                      {tabCounts.pending}
-                    </motion.span>
-                  )}
-                  {tab.key !== 'pending' && tabCounts[tab.key] !== undefined && (
-                    <span className="text-vrtext-muted text-vr-caption">
                       {tabCounts[tab.key]}
                     </span>
                   )}
@@ -617,9 +631,32 @@ export default function Orders() {
               </motion.button>
             ))}
           </div>
-          <span className="text-vr-caption text-vrtext-tertiary">
-            {total} 条记录
-          </span>
+          <div className="flex items-center gap-3">
+            {/* 来源筛选 */}
+            <div className="flex items-center gap-1 bg-vrbg-surface rounded-lg p-1">
+              {([
+                { key: 'all', label: '全部' },
+                { key: 'ONLINE', label: '线上' },
+                { key: 'OFFLINE', label: '线下' },
+              ] as const).map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => { setSourceFilter(s.key); setCurrentPage(1) }}
+                  className={cn(
+                    'px-3 py-1 rounded text-vr-body-sm font-medium transition-colors',
+                    sourceFilter === s.key
+                      ? 'bg-vraccent-primary text-white'
+                      : 'text-vrtext-secondary hover:text-vrtext-primary'
+                  )}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-vr-caption text-vrtext-tertiary">
+              {total} 条记录
+            </span>
+          </div>
         </div>
 
         {/* Table */}
@@ -640,7 +677,8 @@ export default function Orders() {
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[170px]">预约时间</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">游戏</th>
                   <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[70px]">人数</th>
-                  <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[90px]">金额</th>
+                  <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[90px]">实付</th>
+                  <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">优惠</th>
                   <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[110px]">状态</th>
                   <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[130px]">操作</th>
                 </tr>
@@ -682,6 +720,20 @@ export default function Orders() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className="text-vr-body-sm text-vrtext-primary font-semibold">¥{((order.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {(order.couponDiscount && order.couponDiscount > 0) || (order.discountAmount && order.discountAmount > 0) ? (
+                          <div className="flex flex-col items-end">
+                            <span className="text-vr-caption text-vrsuccess">
+                              -¥{(((order.couponDiscount || 0) + (order.discountAmount || 0)) / 100).toFixed(2)}
+                            </span>
+                            {order.userCoupon && (
+                              <span className="text-[10px] text-vrtext-muted">{order.userCoupon.name}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-vr-caption text-vrtext-muted">-</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-center">
                         <StatusBadge status={order.status.toLowerCase()} statusText={

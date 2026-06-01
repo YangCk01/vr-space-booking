@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { subDays, format } from 'date-fns'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -86,14 +86,16 @@ function StatCard({ stat, index }: { stat: any; index: number }) {
           >
             {stat.prefix}{stat.value}{stat.suffix}
           </motion.p>
-          {stat.trend !== null && stat.trend !== undefined && (
+          {stat.trendLabel && (
             <div className="flex items-center gap-1 mt-1.5">
-              {stat.trend >= 0 ? (
-                <TrendingUp className="w-3.5 h-3.5 text-vrsuccess" />
-              ) : (
-                <TrendingDown className="w-3.5 h-3.5 text-vrerror" />
+              {stat.trend != null && (
+                stat.trend >= 0 ? (
+                  <TrendingUp className="w-3.5 h-3.5 text-vrsuccess" />
+                ) : (
+                  <TrendingDown className="w-3.5 h-3.5 text-vrerror" />
+                )
               )}
-              <span className={cn('text-vr-caption', stat.trend >= 0 ? 'text-vrsuccess' : 'text-vrerror')}>
+              <span className={cn('text-vr-caption', stat.trend != null ? (stat.trend >= 0 ? 'text-vrsuccess' : 'text-vrerror') : 'text-vrtext-muted')}>
                 {stat.trendLabel}
               </span>
             </div>
@@ -216,14 +218,19 @@ function VenueCard({ venue, index }: { venue: any; index: number }) {
 
 /* ─── Schedule Timeline ─── */
 function ScheduleTimeline({ venues, bookings }: { venues: Venue[]; bookings: Booking[] }) {
-  const startHour = 8
-  const endHour = 22
   const slotHeight = 72
-  const totalHours = endHour - startHour + 1
-  const timeSlots = Array.from({ length: totalHours }, (_, i) => {
-    const h = startHour + i
-    return String(h).padStart(2, '0') + ':00'
-  })
+  const { startHour, endHour, totalHours, timeSlots } = useMemo(() => {
+    const allOpen = venues.map((v) => v.openTime ? parseInt(v.openTime.split(':')[0]) : 9)
+    const allClose = venues.map((v) => v.closeTime ? parseInt(v.closeTime.split(':')[0]) : 22)
+    const startH = allOpen.length > 0 ? Math.min(...allOpen) : 9
+    const endH = allClose.length > 0 ? Math.max(...allClose) : 22
+    const hours = endH - startH + 1
+    const slots = Array.from({ length: hours }, (_, i) => {
+      const h = startH + i
+      return String(h).padStart(2, '0') + ':00'
+    })
+    return { startHour: startH, endHour: endH, totalHours: hours, timeSlots: slots }
+  }, [venues])
 
   const getEventStyle = (type: string) => {
     switch (type) {
@@ -703,10 +710,10 @@ export default function Home() {
   const prefix = dashRange === 'today' ? '今日' : '总'
   const compareLabel = dashRange === 'today' ? '较昨日' : '较上期'
   const statCards = stats ? [
-    { label: `${prefix}预约场次`, value: String(stats.todayBookings), numericValue: stats.todayBookings, trend: stats.bookingTrend, trendLabel: `${compareLabel} ${stats.bookingTrend >= 0 ? '+' : ''}${stats.bookingTrend}%`, gradient: 'from-vraccent-primary to-vraccent-secondary' },
+    { label: `${prefix}预约场次`, value: String(stats.todayBookings), numericValue: stats.todayBookings, trend: stats.bookingTrend, trendLabel: stats.bookingTrend != null ? `${compareLabel} ${stats.bookingTrend >= 0 ? '+' : ''}${stats.bookingTrend}%` : `${compareLabel} —`, gradient: 'from-vraccent-primary to-vraccent-secondary' },
     { label: `${prefix}核销场次`, value: String(stats.todayUsed), numericValue: stats.todayUsed, trend: stats.usedTrend ?? null, trendLabel: stats.usedTrend != null ? `${compareLabel} ${stats.usedTrend >= 0 ? '+' : ''}${stats.usedTrend}%` : '', gradient: 'from-vraccent-secondary to-vrsuccess' },
-    { label: `${prefix}营业额`, value: String((stats.todayRevenue / 100).toFixed(0)), numericValue: stats.todayRevenue / 100, prefix: '¥', trend: stats.revenueTrend, trendLabel: `${compareLabel} ${stats.revenueTrend >= 0 ? '+' : ''}${stats.revenueTrend}%`, gradient: 'from-vrpurple to-vrindigo' },
-    { label: `${prefix}到场人次`, value: String(stats.todayPlayers), numericValue: stats.todayPlayers, suffix: '', trend: stats.playersTrend ?? null, trendLabel: stats.playersTrend != null ? `${compareLabel} ${stats.playersTrend >= 0 ? '+' : ''}${stats.playersTrend}%` : '', gradient: 'from-vrsuccess to-vraccent-secondary' },
+    { label: `${prefix}营业额`, value: String((stats.todayRevenue / 100).toFixed(2)), numericValue: stats.todayRevenue / 100, prefix: '¥', trend: stats.revenueTrend, trendLabel: stats.revenueTrend != null ? `${compareLabel} ${stats.revenueTrend >= 0 ? '+' : ''}${stats.revenueTrend}%` : `${compareLabel} —`, gradient: 'from-vrpurple to-vrindigo' },
+    { label: `${prefix}到场人次`, value: String(stats.todayPlayers), numericValue: stats.todayPlayers, suffix: '', trend: stats.playersTrend ?? null, trendLabel: stats.playersTrend != null ? `${compareLabel} ${stats.playersTrend >= 0 ? '+' : ''}${stats.playersTrend}%` : `${compareLabel} —`, gradient: 'from-vrsuccess to-vraccent-secondary' },
   ] : []
 
   return (

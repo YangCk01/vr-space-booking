@@ -40,6 +40,8 @@ export default function Orders() {
     mutationFn: cancelOrder,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders'] })
+      queryClient.invalidateQueries({ queryKey: ['usable-coupons'] })
+      queryClient.invalidateQueries({ queryKey: ['points-coupons'] })
       refreshUser()
       setCancelId(null)
     },
@@ -129,7 +131,12 @@ export default function Orders() {
                   {o.booking?.game?.title || 'VR体验'} · {o.booking?.personCount || 1}人
                 </p>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold text-[var(--error)]">¥{((o.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-bold text-[var(--error)]">¥{((o.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    {o.couponDiscount > 0 && (
+                      <span className="text-xs text-[var(--success)]">-¥{(o.couponDiscount / 100).toFixed(2)}</span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2">
                     {o.status === 'PENDING' && (
                       <button

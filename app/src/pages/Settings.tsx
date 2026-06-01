@@ -604,13 +604,24 @@ function PaymentApiSettings({ settings }: { settings?: Record<string, any> }) {
 function NotificationSettings({ settings }: { settings?: Record<string, any> }) {
   const s = settings || {}
   const queryClient = useQueryClient()
-  const [scenes, setScenes] = useState([
+
+  const [userScenes, setUserScenes] = useState([
     { label: '预约成功通知', key: 'scene_booking_success', checked: s.scene_booking_success?.value ?? true },
     { label: '预约提醒（开场前）', key: 'scene_booking_remind', checked: s.scene_booking_remind?.value ?? true },
     { label: '预约取消通知', key: 'scene_booking_cancel', checked: s.scene_booking_cancel?.value ?? true },
     { label: '支付成功通知', key: 'scene_pay_success', checked: s.scene_pay_success?.value ?? true },
+    { label: '积分赠送通知', key: 'scene_points_gift', checked: s.scene_points_gift?.value ?? true },
+    { label: '优惠券赠送通知', key: 'scene_coupon_gift', checked: s.scene_coupon_gift?.value ?? true },
     { label: '营销推送（可选）', key: 'scene_marketing', checked: s.scene_marketing?.value ?? false },
   ])
+
+  const [adminScenes, setAdminScenes] = useState([
+    { label: '商品售出提醒', key: 'scene_admin_product_sold', checked: s.scene_admin_product_sold?.value ?? true },
+    { label: '库存不足提醒', key: 'scene_admin_low_stock', checked: s.scene_admin_low_stock?.value ?? true },
+    { label: '新订单提醒', key: 'scene_admin_new_order', checked: s.scene_admin_new_order?.value ?? true },
+    { label: '退款申请提醒', key: 'scene_admin_refund_request', checked: s.scene_admin_refund_request?.value ?? true },
+  ])
+
   const [saved, setSaved] = useState(false)
 
   const mutation = useMutation({
@@ -623,30 +634,53 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
   })
 
   const handleSave = () => {
-    mutation.mutate([
-      { key: 'scene_booking_success', value: scenes[0].checked, category: 'notification' },
-      { key: 'scene_booking_remind', value: scenes[1].checked, category: 'notification' },
-      { key: 'scene_booking_cancel', value: scenes[2].checked, category: 'notification' },
-      { key: 'scene_pay_success', value: scenes[3].checked, category: 'notification' },
-      { key: 'scene_marketing', value: scenes[4].checked, category: 'notification' },
-    ])
+    const payload = [
+      ...userScenes.map((s) => ({ key: s.key, value: s.checked, category: 'notification' })),
+      ...adminScenes.map((s) => ({ key: s.key, value: s.checked, category: 'notification' })),
+    ]
+    mutation.mutate(payload)
   }
 
   return (
     <div>
       <h2 className="text-vr-h2 text-vrtext-primary mb-6">通知设置</h2>
+
+      {/* 用户端通知 */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-        <h4 className="text-vr-h4 text-vrtext-primary mb-4">通知场景</h4>
+        <h4 className="text-vr-h4 text-vrtext-primary mb-2">用户端通知</h4>
         <p className="text-vr-caption text-vrtext-tertiary mb-4">
           勾选后，对应场景会在用户端（C端）产生消息通知
         </p>
-        <div className="space-y-2">
-          {scenes.map((s, i) => (
+        <div className="space-y-2 mb-6">
+          {userScenes.map((s, i) => (
             <label key={s.key} className="flex items-center gap-3 py-2 cursor-pointer group">
               <input
                 type="checkbox"
                 checked={s.checked}
-                onChange={() => setScenes((p) => p.map((x, j) => (j === i ? { ...x, checked: !x.checked } : x)))}
+                onChange={() => setUserScenes((p) => p.map((x, j) => (j === i ? { ...x, checked: !x.checked } : x)))}
+                className="w-4 h-4 rounded border-vrborder-hover bg-vrbg-surface text-vraccent-primary accent-[#3B82F6]"
+              />
+              <span className="text-vr-body-sm text-vrtext-primary group-hover:text-vrtext-secondary transition-colors">
+                {s.label}
+              </span>
+            </label>
+          ))}
+        </div>
+      </motion.div>
+
+      {/* 管理员端通知 */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+        <h4 className="text-vr-h4 text-vrtext-primary mb-2">管理员通知</h4>
+        <p className="text-vr-caption text-vrtext-tertiary mb-4">
+          勾选后，对应场景会在管理后台产生系统通知（推送给所有管理员）
+        </p>
+        <div className="space-y-2 mb-6">
+          {adminScenes.map((s, i) => (
+            <label key={s.key} className="flex items-center gap-3 py-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={s.checked}
+                onChange={() => setAdminScenes((p) => p.map((x, j) => (j === i ? { ...x, checked: !x.checked } : x)))}
                 className="w-4 h-4 rounded border-vrborder-hover bg-vrbg-surface text-vraccent-primary accent-[#3B82F6]"
               />
               <span className="text-vr-body-sm text-vrtext-primary group-hover:text-vrtext-secondary transition-colors">

@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
 import { AuthGuard } from './components/AuthGuard'
+import { Toaster } from '@/components/ui/sonner'
 import Home from './pages/Home'
 import Venues from './pages/Venues'
 import Booking from './pages/Booking'
@@ -16,8 +17,10 @@ import Login from './pages/Login'
 
 export default function App() {
   return (
-    <AuthGuard>
-      <Routes>
+    <>
+      <Toaster position="top-right" />
+      <AuthGuard>
+        <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<Home />} />
         <Route path="/venues" element={<Venues />} />
@@ -32,6 +35,7 @@ export default function App() {
         <Route path="/accounts" element={<Accounts />} />
         <Route path="/reservation" element={<Reservation />} />
       </Routes>
-    </AuthGuard>
+      </AuthGuard>
+    </>
   )
 }

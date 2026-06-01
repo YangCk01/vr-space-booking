@@ -126,6 +126,10 @@ async function seed() {
     { key: 'scene_booking_cancel', value: { value: true }, category: 'notification' },
     { key: 'scene_pay_success', value: { value: true }, category: 'notification' },
     { key: 'scene_marketing', value: { value: false }, category: 'notification' },
+    { key: 'scene_admin_product_sold', value: { value: true }, category: 'notification' },
+    { key: 'scene_admin_low_stock', value: { value: true }, category: 'notification' },
+    { key: 'scene_admin_new_order', value: { value: true }, category: 'notification' },
+    { key: 'scene_admin_refund_request', value: { value: true }, category: 'notification' },
     /* ── member ── */
     { key: 'recharge_tiers', value: { value: [{ amount: 500, bonus: 0, level: 'NORMAL' }, { amount: 1000, bonus: 100, level: 'MEMBER' }, { amount: 2000, bonus: 300, level: 'VIP' }, { amount: 5000, bonus: 1000, level: 'VIP+' }] }, category: 'member' },
     { key: 'member_levels', value: { value: [{ key: 'NORMAL', name: '普通会员', discount: 100, threshold: 0 }, { key: 'MEMBER', name: '银卡会员', discount: 95, threshold: 1000 }, { key: 'VIP', name: '金卡会员', discount: 90, threshold: 2000 }, { key: 'VIP+', name: '钻石会员', discount: 85, threshold: 5000 }] }, category: 'member' },

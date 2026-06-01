@@ -1,6 +1,6 @@
 import { apiClient } from './client'
 
-export async function uploadFile(type: 'venues' | 'logos' | 'avatars' | 'games', file: File) {
+export async function uploadFile(type: 'venues' | 'logos' | 'avatars' | 'games' | 'products', file: File) {
   const formData = new FormData()
   formData.append('file', file)
 

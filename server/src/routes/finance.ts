@@ -18,6 +18,11 @@ router.post('/generate-report', authenticate, requireRole('SUPER_ADMIN','ADMIN',
 
 // 新增：对账
 router.get('/reconcile', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.reconcile)
+router.get('/reconcile-details', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.reconcileDetails)
+router.post('/fix-reconcile-diff', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.fixReconcileDiff)
+
+// 新增：全平台累计汇总
+router.get('/total-summary', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.totalSummary)
 
 // 新增：流水查询
 router.get('/transactions', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.listTransactions)

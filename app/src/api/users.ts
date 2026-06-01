@@ -10,6 +10,8 @@ export interface User {
   totalVisits: number
   totalSpent: number
   balance: number
+  principalBalance: number
+  bonusBalance: number
   points: number
   status: string
   registerDate: string

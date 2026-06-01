@@ -30,7 +30,7 @@ export interface OrderInput {
   phone?: string
   source?: 'ONLINE' | 'OFFLINE'
   payMethod?: string
-  pointsUsed?: number
+  userCouponId?: string
 }
 
 export async function getOrders(params?: {

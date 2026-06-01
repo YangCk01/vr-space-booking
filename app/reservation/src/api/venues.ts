@@ -12,6 +12,8 @@ export interface Venue {
   description: string | null
   address: string | null
   phone: string | null
+  openTime: string | null
+  closeTime: string | null
   maintenanceStartDate: string | null
   maintenanceEndDate: string | null
   maintenanceStartTime: string | null

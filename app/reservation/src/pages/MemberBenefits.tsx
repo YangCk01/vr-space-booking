@@ -143,9 +143,9 @@ export default function MemberBenefits() {
                 <Star className="w-4 h-4 text-[var(--accent-primary)]" />
               </div>
               <div>
-                <p className="text-sm text-[var(--text-primary)]">积分抵扣</p>
+                <p className="text-sm text-[var(--text-primary)]">积分商城</p>
                 <p className="text-xs text-[var(--text-muted)]">
-                  {memberConfig?.points?.deductRate || 100} 积分抵 1 元
+                  积分可兑换体验券和小商品
                 </p>
               </div>
             </div>

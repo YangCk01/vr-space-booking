@@ -95,6 +95,8 @@ const emptyVenue = {
   deviceCount: 1,
   address: '',
   phone: '',
+  openTime: '09:00',
+  closeTime: '22:00',
   maintenanceStartDate: '',
   maintenanceEndDate: '',
   maintenanceStartTime: '',
@@ -182,6 +184,8 @@ export default function Venues() {
     setFormData({
       ...venue,
       status: normalizeStatus(venue.status),
+      openTime: venue.openTime || '09:00',
+      closeTime: venue.closeTime || '22:00',
       maintenanceStartDate: dateStr(venue.maintenanceStartDate),
       maintenanceEndDate: dateStr(venue.maintenanceEndDate),
       maintenanceStartTime: venue.maintenanceStartTime || '',
@@ -207,7 +211,8 @@ export default function Venues() {
       capacity: Number(formData.capacity),
       deviceCount: Number(formData.deviceCount) || 1,
       image: formData.image || undefined,
-      description: formData.description || undefined,
+      openTime: formData.openTime || '09:00',
+      closeTime: formData.closeTime || '22:00',
       address: formData.address,
       phone: formData.phone,
     }
@@ -342,11 +347,12 @@ export default function Venues() {
         className="bg-vrbg-card rounded-xl border border-vrborder-DEFAULT overflow-hidden"
       >
         {/* Table header */}
-        <div className="grid grid-cols-[1fr_80px_80px_80px_100px_120px] items-center h-11 px-4 bg-vrbg-elevated border-b border-vrborder-DEFAULT">
+        <div className="grid grid-cols-[1fr_80px_80px_80px_100px_100px_120px] items-center h-11 px-4 bg-vrbg-elevated border-b border-vrborder-DEFAULT">
           <span className="text-vr-caption text-vrtext-secondary font-medium">场地</span>
           <span className="text-vr-caption text-vrtext-secondary font-medium text-center">面积</span>
           <span className="text-vr-caption text-vrtext-secondary font-medium text-center">容量</span>
           <span className="text-vr-caption text-vrtext-secondary font-medium text-center">设备数</span>
+          <span className="text-vr-caption text-vrtext-secondary font-medium text-center">营业时间</span>
           <span className="text-vr-caption text-vrtext-secondary font-medium text-center">状态</span>
           <span className="text-vr-caption text-vrtext-secondary font-medium text-right">操作</span>
         </div>
@@ -375,7 +381,7 @@ export default function Venues() {
                   key={venue.id}
                   variants={itemVariants}
                   layout
-                  className="grid grid-cols-[1fr_80px_80px_80px_100px_120px] items-center h-16 px-4 border-b border-vrborder-DEFAULT/50 hover:bg-vrbg-hover transition-colors duration-150 group"
+                  className="grid grid-cols-[1fr_80px_80px_80px_100px_100px_120px] items-center h-16 px-4 border-b border-vrborder-DEFAULT/50 hover:bg-vrbg-hover transition-colors duration-150 group"
                 >
                   {/* Venue info */}
                   <div className="flex items-center gap-3">
@@ -397,6 +403,11 @@ export default function Venues() {
 
                   {/* Device Count */}
                   <span className="text-vr-body-sm text-vrtext-primary text-center">{venue.deviceCount || 1}台</span>
+
+                  {/* Business Hours */}
+                  <span className="text-vr-body-sm text-vrtext-primary text-center">
+                    {venue.openTime || '09:00'} - {venue.closeTime || '22:00'}
+                  </span>
 
                   {/* Status */}
                   <div className="flex justify-center">
@@ -709,22 +720,30 @@ export default function Venues() {
                   />
                 </motion.div>
 
-                {/* Notes */}
+                {/* Business Hours */}
                 <motion.div
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.3, duration: 0.3 }}
                 >
                   <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">
-                    备注
+                    营业时间
                   </label>
-                  <textarea
-                    value={formData.description || ''}
-                    onChange={(e) => setFormData((p: any) => ({ ...p, description: e.target.value }))}
-                    placeholder="请输入场地备注信息..."
-                    rows={3}
-                    className="w-full px-3 py-2 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all resize-none"
-                  />
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="time"
+                      value={formData.openTime || '09:00'}
+                      onChange={(e) => setFormData((p: any) => ({ ...p, openTime: e.target.value }))}
+                      className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all"
+                    />
+                    <span className="text-vrtext-tertiary text-vr-body-sm shrink-0">至</span>
+                    <input
+                      type="time"
+                      value={formData.closeTime || '22:00'}
+                      onChange={(e) => setFormData((p: any) => ({ ...p, closeTime: e.target.value }))}
+                      className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all"
+                    />
+                  </div>
                 </motion.div>
               </div>
 

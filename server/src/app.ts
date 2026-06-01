@@ -3,6 +3,7 @@ import cors from 'cors'
 import path from 'path'
 import routes from './routes'
 import { errorHandler } from './middleware/errorHandler'
+import { startReconJob } from './jobs/reconciliationJob'
 
 const app = express()
 
@@ -33,5 +34,8 @@ app.use('/api', routes)
 
 // 错误处理
 app.use(errorHandler)
+
+// 启动对账定时任务
+startReconJob()
 
 export default app

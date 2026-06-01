@@ -20,6 +20,7 @@ import { getGames } from '@/api/games'
 import type { Game } from '@/api/games'
 import { getUsers } from '@/api/users'
 import type { User } from '@/api/users'
+import { getSettings } from '@/api/settings'
 import { getBookings, createBooking, checkConflict } from '@/api/bookings'
 import type { Booking } from '@/api/bookings'
 import { createOrder } from '@/api/orders'
@@ -44,19 +45,19 @@ type ViewType = 'day' | 'week' | 'month'
 /* ─── Animation ─── */
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number]
 
-/* ─── Time slots 08:00-22:00 (hourly for gantt grid) ─── */
-const timeSlots: string[] = []
-for (let h = 8; h <= 22; h++) {
-  timeSlots.push(`${String(h).padStart(2, '0')}:00`)
+/* ─── Helper: parse venue open/close hour ─── */
+function parseVenueHours(venue?: Venue) {
+  const openH = venue?.openTime ? parseInt(venue.openTime.split(':')[0]) : 9
+  const closeH = venue?.closeTime ? parseInt(venue.closeTime.split(':')[0]) : 22
+  return { openH, closeH }
 }
 
-/* ─── Half-hour slots for modal (08:00-22:00) ─── */
-const halfHourSlots: string[] = []
-for (let h = 8; h <= 22; h++) {
-  halfHourSlots.push(`${String(h).padStart(2, '0')}:00`)
-  if (h < 22) {
-    halfHourSlots.push(`${String(h).padStart(2, '0')}:30`)
+function buildHourSlots(openH: number, closeH: number): string[] {
+  const slots: string[] = []
+  for (let h = openH; h <= closeH; h++) {
+    slots.push(`${String(h).padStart(2, '0')}:00`)
   }
+  return slots
 }
 
 /* ─── Helper: check if a time slot is in the past ─── */
@@ -72,9 +73,9 @@ function isSlotPast(slot: string, dateStr: string): boolean {
   return slotMinutes <= nowMinutes
 }
 
-function add30Minutes(time: string): string {
+function addMinutes(time: string, minutes: number): string {
   const [h, m] = time.split(':').map(Number)
-  const total = h * 60 + m + 30
+  const total = h * 60 + m + minutes
   const newH = Math.floor(total / 60)
   const newM = total % 60
   return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
@@ -110,10 +111,25 @@ function eventHeightMinutes(start: string, end: string): number {
   return Math.max(diff, 30)
 }
 
-function eventTopOffset(start: string): number {
+function eventTopOffset(start: string, dayStartHour: number = 9): number {
   const startMinutes = timeToMinutes(start)
-  const dayStartMinutes = 8 * 60 // 08:00
+  const dayStartMinutes = dayStartHour * 60
   return startMinutes - dayStartMinutes
+}
+
+/* ─── Compute stacked top positions per hour slot ─── */
+function computeStackTops(events: any[], slotHeight: number, headerOffset: number, dayStartHour: number = 9) {
+  const sorted = [...events].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime))
+  const hourMap = new Map<number, number>()
+  const result = new Map<string, number>()
+  for (const e of sorted) {
+    const hour = parseInt(e.startTime.split(':')[0])
+    const idx = hourMap.get(hour) || 0
+    const hourTop = ((hour - dayStartHour) * slotHeight) + headerOffset
+    result.set(e.id, hourTop + idx * 76) // 72px height + 4px gap
+    hourMap.set(hour, idx + 1)
+  }
+  return result
 }
 
 /* ─── Compute side-by-side layout for overlapping events ─── */
@@ -207,6 +223,28 @@ export default function Booking() {
   })
   const venues = venueData?.data || []
 
+  /* ─── Dynamic time axis based on venue business hours ─── */
+  const { hourSlots, dayStartHour, dayEndHour, slotHeight, totalHeight } = useMemo(() => {
+    let openH = 9
+    let closeH = 22
+    if (selectedVenue !== 'all') {
+      const v = venues.find((v: Venue) => v.id === selectedVenue)
+      if (v) {
+        const parsed = parseVenueHours(v)
+        openH = parsed.openH
+        closeH = parsed.closeH
+      }
+    } else if (venues.length > 0) {
+      const allOpen = venues.map((v: Venue) => parseVenueHours(v).openH)
+      const allClose = venues.map((v: Venue) => parseVenueHours(v).closeH)
+      openH = Math.min(...allOpen)
+      closeH = Math.max(...allClose)
+    }
+    const slots = buildHourSlots(openH, closeH)
+    const slotHeight = 80
+    return { hourSlots: slots, dayStartHour: openH, dayEndHour: closeH, slotHeight, totalHeight: slots.length * slotHeight }
+  }, [venues, selectedVenue])
+
   /* ─── Date range for bookings ─── */
   const dateRange = useMemo(() => {
     const fmt = (d: Date) => format(d, 'yyyy-MM-dd')
@@ -265,6 +303,26 @@ export default function Booking() {
   const [isSearchingUser, setIsSearchingUser] = useState(false)
   const [slotStatus, setSlotStatus] = useState<{ status: string; currentCount: number; remainingCount: number; maxCount: number } | null>(null)
 
+  /* ─── Member levels config (for discount) ─── */
+  const { data: settings } = useQuery({
+    queryKey: ['settings', 'member'],
+    queryFn: () => getSettings('member'),
+    staleTime: 60000,
+  })
+  const memberLevels = (settings?.member_levels?.value || []) as Array<{ key: string; name: string; discount: number }>
+
+  /* ─── Real balance & discount ─── */
+  const realBalance = useMemo(() => {
+    if (!matchedUser) return 0
+    return (matchedUser.principalBalance || 0) + (matchedUser.bonusBalance || 0)
+  }, [matchedUser])
+
+  const discountRate = useMemo(() => {
+    if (!matchedUser || memberLevels.length === 0) return 100
+    const level = memberLevels.find((l) => l.key === matchedUser.level || l.name === matchedUser.level)
+    return level?.discount ?? 100
+  }, [matchedUser, memberLevels])
+
   /* ─── Check slot conflict (拼场逻辑) ─── */
   useEffect(() => {
     if (!showModal || !bookingForm.venue || !bookingForm.gameId || !modalTime) {
@@ -277,7 +335,7 @@ export default function Booking() {
           venueId: bookingForm.venue,
           date: bookingDate,
           startTime: modalTime,
-          endTime: add30Minutes(modalTime),
+          endTime: addMinutes(modalTime, selectedGame?.duration || 30),
           gameId: bookingForm.gameId,
         })
         setSlotStatus(res)
@@ -303,7 +361,7 @@ export default function Booking() {
     const timer = setTimeout(async () => {
       setIsSearchingUser(true)
       try {
-        const res = await getUsers({ search: phone, pageSize: 5 })
+        const res = await getUsers({ search: phone, pageSize: 5, _t: Date.now() })
         const users = res.data || []
         // 精确匹配手机号
         const exactMatch = users.find((u: User) => u.phone === phone)
@@ -318,15 +376,19 @@ export default function Booking() {
     return () => clearTimeout(timer)
   }, [bookingForm.phone])
 
-  /* Ensure modalTime is valid when modal opens or date changes */
+  /* Ensure modalTime is valid when modal opens or date/venue changes */
   useEffect(() => {
     if (showModal) {
-      const firstAvailable = halfHourSlots.find((t) => !isSlotPast(t, bookingDate))
-      if (firstAvailable && (!modalTime || isSlotPast(modalTime, bookingDate))) {
+      const venue = venues.find((v: Venue) => v.id === bookingForm.venue)
+      const vHours = parseVenueHours(venue)
+      const vSlots = buildHourSlots(vHours.openH, vHours.closeH)
+      const firstAvailable = vSlots.find((t) => !isSlotPast(t, bookingDate))
+      const isInRange = modalTime ? vSlots.includes(modalTime) : false
+      if (firstAvailable && (!modalTime || isSlotPast(modalTime, bookingDate) || !isInRange)) {
         setModalTime(firstAvailable)
       }
     }
-  }, [showModal, bookingDate])
+  }, [showModal, bookingDate, bookingForm.venue, venues])
 
   const createMutation = useMutation({
     mutationFn: createBooking,
@@ -393,14 +455,14 @@ export default function Booking() {
   }, [selectedVenue, allEvents])
 
   /* ─── Check if a time is within venue maintenance window ─── */
-  function isInMaintenanceWindow(venue: Venue | undefined, dateStr: string, timeStr: string): boolean {
+  function isInMaintenanceWindow(venue: Venue | undefined, dateStr: string, timeStr: string, duration = 30): boolean {
     if (!venue || venue.status !== 'MAINTENANCE') return false
     if (!venue.maintenanceStartDate || !venue.maintenanceEndDate || !venue.maintenanceStartTime || !venue.maintenanceEndTime) return false
     const startDate = venue.maintenanceStartDate.slice(0, 10)
     const endDate = venue.maintenanceEndDate.slice(0, 10)
     if (dateStr < startDate || dateStr > endDate) return false
     const s1 = timeToMinutes(timeStr)
-    const e1 = s1 + 30
+    const e1 = s1 + duration
     const ms1 = timeToMinutes(venue.maintenanceStartTime)
     const me1 = timeToMinutes(venue.maintenanceEndTime)
     return s1 < me1 && e1 > ms1
@@ -431,9 +493,11 @@ export default function Booking() {
 
     setModalVenue(defaultVenueId)
     setCreateError(null)
-    // pick first non-past slot for today, else 09:00
+    // pick first non-past slot for today based on venue business hours
     const nowStr = getCurrentTimeString()
-    const defaultTime = time || halfHourSlots.find((s) => s > nowStr) || '09:00'
+    const vHours = parseVenueHours(venue)
+    const vSlots = buildHourSlots(vHours.openH, vHours.closeH)
+    const defaultTime = time || vSlots.find((s) => s > nowStr) || `${String(vHours.openH).padStart(2, '0')}:00`
     setModalTime(defaultTime)
     setBookingForm({
       type: 'team',
@@ -462,8 +526,14 @@ export default function Booking() {
   const selectedGame = useMemo(() => games.find((g: Game) => g.id === bookingForm.gameId), [games, bookingForm.gameId])
   const estimatedAmount = useMemo(() => {
     if (!selectedGame) return '0'
-    return ((selectedGame.price * bookingForm.count) / 100).toLocaleString()
-  }, [selectedGame, bookingForm.count])
+    const raw = Math.round(selectedGame.price * bookingForm.count * discountRate / 100)
+    return (raw / 100).toLocaleString()
+  }, [selectedGame, bookingForm.count, discountRate])
+
+  const estimatedAmountRaw = useMemo(() => {
+    if (!selectedGame) return 0
+    return Math.round(selectedGame.price * bookingForm.count * discountRate / 100)
+  }, [selectedGame, bookingForm.count, discountRate])
 
   /* ─── Stats ─── */
   const stats = useMemo(() => {
@@ -477,10 +547,6 @@ export default function Booking() {
       maintenance: todayEvents.filter((e) => e.type === 'MAINTENANCE' || e.type === 'maintenance').length,
     }
   }, [allEvents])
-
-  /* ─── Slot height ─── */
-  const slotHeight = 40 // px per half-hour
-  const totalHeight = halfHourSlots.length * slotHeight
 
   return (
     <Layout breadcrumb={['预约排场']}>
@@ -659,13 +725,18 @@ export default function Booking() {
             <div className="flex overflow-x-auto">
               {/* Time axis */}
               <div className="w-[60px] shrink-0 border-r border-vrborder-DEFAULT" style={{ height: totalHeight }}>
-                {halfHourSlots.map((slot) => (
+                {hourSlots.map((slot) => (
                   <div
                     key={slot}
-                    className="flex items-start justify-end pr-2 text-vr-caption text-vrtext-tertiary"
+                    className={cn(
+                      'flex items-start justify-end pr-2 text-vr-caption',
+                      slot.endsWith(':00') || slot.endsWith(':30')
+                        ? 'text-vrtext-tertiary'
+                        : 'text-vrtext-tertiary/30'
+                    )}
                     style={{ height: slotHeight }}
                   >
-                    {slot}
+                    {slot.endsWith(':00') || slot.endsWith(':30') ? slot : ''}
                   </div>
                 ))}
               </div>
@@ -684,10 +755,15 @@ export default function Booking() {
                       <p className="text-vr-body-sm text-vrtext-primary font-medium">{venue.name}</p>
                     </div>
 
-                    {/* Time grid lines with half-hour ticks */}
-                    {halfHourSlots.map((slot) => (
+                    {/* Time grid lines with quarter-hour ticks */}
+                    {hourSlots.map((slot) => (
                       <div key={slot} className="relative" style={{ height: slotHeight }}>
-                        <div className="absolute bottom-0 left-0 right-0 border-b border-vrborder-DEFAULT/40" />
+                        <div className={cn(
+                          'absolute bottom-0 left-0 right-0',
+                          slot.endsWith(':00') || slot.endsWith(':30')
+                            ? 'border-b border-vrborder-DEFAULT/40'
+                            : 'border-b border-vrborder-DEFAULT/15'
+                        )} />
                       </div>
                     ))}
 
@@ -695,11 +771,10 @@ export default function Booking() {
                     {(() => {
                       const venueEvents = filteredEvents.filter((e) => e.venueId === venue.id)
                       const layout = computeEventLayout(venueEvents)
+                      const stackTops = computeStackTops(venueEvents, slotHeight, slotHeight, dayStartHour)
                       return venueEvents.map((event, idx) => {
                         const cfg = eventTypeConfig[event.type]
                         const EventIcon = cfg.icon
-                        const top = eventTopOffset(event.startTime)
-                        const height = eventHeightMinutes(event.startTime, event.endTime)
                         const lo = layout.get(event.id)
                         const col = lo?.col ?? 0
                         const total = lo?.total ?? 1
@@ -720,8 +795,8 @@ export default function Booking() {
                             animate={{ opacity: 1, scaleY: 1 }}
                             transition={{ duration: 0.35, delay: idx * 0.08, ease: easeOut }}
                             style={{
-                              top: ((top / 30) * slotHeight) + slotHeight, // offset for header
-                              height: Math.max((height / 30) * slotHeight, 36),
+                              top: stackTops.get(event.id) ?? 0,
+                              height: 72,
                               left: leftStyle,
                               width: widthStyle,
                             }}
@@ -804,13 +879,18 @@ export default function Booking() {
             <div className="flex overflow-x-auto">
               {/* Time axis */}
               <div className="w-[60px] shrink-0 border-r border-vrborder-DEFAULT" style={{ height: totalHeight }}>
-                {halfHourSlots.map((slot) => (
+                {hourSlots.map((slot) => (
                   <div
                     key={slot}
-                    className="flex items-start justify-end pr-2 text-vr-caption text-vrtext-tertiary"
+                    className={cn(
+                      'flex items-start justify-end pr-2 text-vr-caption',
+                      slot.endsWith(':00') || slot.endsWith(':30')
+                        ? 'text-vrtext-tertiary'
+                        : 'text-vrtext-tertiary/30'
+                    )}
                     style={{ height: slotHeight }}
                   >
-                    {slot}
+                    {slot.endsWith(':00') || slot.endsWith(':30') ? slot : ''}
                   </div>
                 ))}
               </div>
@@ -838,10 +918,15 @@ export default function Booking() {
                     </p>
                   </div>
 
-                  {/* Grid lines with half-hour ticks */}
-                  {halfHourSlots.map((slot) => (
+                  {/* Grid lines with quarter-hour ticks */}
+                  {hourSlots.map((slot) => (
                     <div key={slot} className="relative" style={{ height: slotHeight }}>
-                      <div className="absolute bottom-0 left-0 right-0 border-b border-vrborder-DEFAULT/40" />
+                      <div className={cn(
+                        'absolute bottom-0 left-0 right-0',
+                        slot.endsWith(':00') || slot.endsWith(':30')
+                          ? 'border-b border-vrborder-DEFAULT/40'
+                          : 'border-b border-vrborder-DEFAULT/15'
+                      )} />
                     </div>
                   ))}
 
@@ -853,13 +938,12 @@ export default function Booking() {
                     if (selectedVenue !== 'all') {
                       const venueEvents = dayEvents.filter((e) => e.venueId === selectedVenue)
                       const layout = computeEventLayout(venueEvents)
+                      const stackTops = computeStackTops(venueEvents, slotHeight, slotHeight, dayStartHour)
                       return dayEvents
                         .filter((e) => e.venueId === selectedVenue)
                         .map((event, idx) => {
                           const cfg = eventTypeConfig[event.type]
                           const EventIcon = cfg.icon
-                          const top = eventTopOffset(event.startTime)
-                          const height = eventHeightMinutes(event.startTime, event.endTime)
                           const lo = layout.get(event.id)
                           const subCol = lo?.col ?? 0
                           const subTotal = lo?.total ?? 1
@@ -872,8 +956,8 @@ export default function Booking() {
                               animate={{ opacity: 1, scaleY: 1 }}
                               transition={{ duration: 0.35, delay: idx * 0.04 }}
                               style={{
-                                top: ((top / 30) * slotHeight) + slotHeight,
-                                height: Math.max((height / 30) * slotHeight, 36),
+                                top: stackTops.get(event.id) ?? 0,
+                                height: 72,
                                 left: `${left}%`,
                                 width: `${colWidth}%`,
                               }}
@@ -925,15 +1009,15 @@ export default function Booking() {
                       venueGroups.set(e.venueId, list)
                     }
                     const layouts = new Map<string, ReturnType<typeof computeEventLayout>>()
+                    const stackTopsMap = new Map<string, ReturnType<typeof computeStackTops>>()
                     for (const [vid, list] of venueGroups) {
                       layouts.set(vid, computeEventLayout(list))
+                      stackTopsMap.set(vid, computeStackTops(list, slotHeight, slotHeight, dayStartHour))
                     }
                     return dayEvents.map((event, idx) => {
                       const cfg = eventTypeConfig[event.type]
                       const EventIcon = cfg.icon
                       const venueIdx = venues.findIndex((v) => v.id === event.venueId)
-                      const top = eventTopOffset(event.startTime)
-                      const height = eventHeightMinutes(event.startTime, event.endTime)
                       const baseColWidth = 100 / 4
                       const baseLeft = venueIdx * baseColWidth
                       const lo = layouts.get(event.venueId)?.get(event.id)
@@ -948,8 +1032,8 @@ export default function Booking() {
                           animate={{ opacity: 1, scaleY: 1 }}
                           transition={{ duration: 0.35, delay: idx * 0.04 }}
                           style={{
-                            top: ((top / 30) * slotHeight) + slotHeight,
-                            height: Math.max((height / 30) * slotHeight, 36),
+                            top: stackTopsMap.get(event.venueId)?.get(event.id) ?? 0,
+                            height: 72,
                             left: `${left}%`,
                             width: `${subWidth}%`,
                           }}
@@ -1258,7 +1342,10 @@ export default function Booking() {
                         const newDate = e.target.value
                         setBookingDate(newDate)
                         if (isSlotPast(modalTime, newDate)) {
-                          const firstAvailable = halfHourSlots.find((t) => !isSlotPast(t, newDate))
+                          const venue = venues.find((v: Venue) => v.id === bookingForm.venue)
+                          const vHours = parseVenueHours(venue)
+                          const vSlots = buildHourSlots(vHours.openH, vHours.closeH)
+                          const firstAvailable = vSlots.find((t) => !isSlotPast(t, newDate))
                           if (firstAvailable) setModalTime(firstAvailable)
                         }
                       }}
@@ -1281,20 +1368,40 @@ export default function Booking() {
                     onChange={(e) => setModalTime(e.target.value)}
                     className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vr-blue cursor-pointer"
                   >
-                    {halfHourSlots
-                      .filter((t) => !isSlotPast(t, bookingDate))
-                      .map((t) => {
-                        const inMaint = isInMaintenanceWindow(
-                          venues.find((v) => v.id === bookingForm.venue),
-                          bookingDate,
-                          t
-                        )
-                        return (
-                          <option key={t} value={t} disabled={inMaint}>
-                            {t} - {add30Minutes(t)} {inMaint ? ' (维护中)' : ''}
-                          </option>
-                        )
-                      })}
+                    {(() => {
+                      const slotDuration = selectedGame?.duration || 30
+                      const venue = venues.find((v: Venue) => v.id === bookingForm.venue)
+                      const vHours = parseVenueHours(venue)
+                      const slots: string[] = []
+                      for (let h = vHours.openH; h <= vHours.closeH; h++) {
+                        slots.push(`${String(h).padStart(2, '0')}:00`)
+                        if (h < vHours.closeH) {
+                          const intervalMins = slotDuration
+                          for (let m = intervalMins; m < 60; m += intervalMins) {
+                            slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+                          }
+                        }
+                      }
+                      return slots
+                        .filter((t) => !isSlotPast(t, bookingDate))
+                        .filter((t) => {
+                          const [th, tm] = t.split(':').map(Number)
+                          return th * 60 + tm + slotDuration <= vHours.closeH * 60
+                        })
+                        .map((t) => {
+                          const inMaint = isInMaintenanceWindow(
+                            venues.find((v) => v.id === bookingForm.venue),
+                            bookingDate,
+                            t,
+                            slotDuration
+                          )
+                          return (
+                            <option key={t} value={t} disabled={inMaint}>
+                              {t} - {addMinutes(t, slotDuration)} {inMaint ? ' (维护中)' : ''}
+                            </option>
+                          )
+                        })
+                    })()}
                   </select>
                 </motion.div>
 
@@ -1439,7 +1546,10 @@ export default function Booking() {
                         </span>
                       </div>
                       <span className="text-vr-body-sm text-vrtext-secondary">
-                        余额 <span className="text-vrtext-primary font-semibold">¥{(matchedUser.balance / 100).toLocaleString()}</span>
+                        余额 <span className="text-vrtext-primary font-semibold">¥{(realBalance / 100).toLocaleString()}</span>
+                        {discountRate < 100 && (
+                          <span className="text-vr-caption text-vraccent-primary ml-1">享{discountRate}折</span>
+                        )}
                       </span>
                     </div>
                   </motion.div>
@@ -1475,9 +1585,9 @@ export default function Booking() {
                         <span className="text-vr-body-sm text-vrtext-primary">余额支付</span>
                       </label>
                     </div>
-                    {useBalancePay && matchedUser.balance < parseInt(estimatedAmount.replace(/,/g, '')) * 100 && (
+                    {useBalancePay && realBalance < estimatedAmountRaw && (
                       <p className="text-vr-caption text-vr-error mt-1.5">
-                        ⚠️ 余额不足（当前余额 ¥{(matchedUser.balance / 100).toLocaleString()}，还需 ¥{(parseInt(estimatedAmount.replace(/,/g, '')) - matchedUser.balance / 100).toLocaleString()}）
+                        ⚠️ 余额不足（当前余额 ¥{(realBalance / 100).toLocaleString()}，还需 ¥{((estimatedAmountRaw - realBalance) / 100).toLocaleString()}）
                       </p>
                     )}
                   </motion.div>
@@ -1544,15 +1654,14 @@ export default function Booking() {
                       return
                     }
                     const selectedVenue = venues.find((v) => v.id === bookingForm.venue)
-                    if (isInMaintenanceWindow(selectedVenue, bookingDate, modalTime)) {
+                    if (isInMaintenanceWindow(selectedVenue, bookingDate, modalTime, selectedGame?.duration || 30)) {
                       setCreateError(`该时段场地正在维护中（${selectedVenue?.maintenanceStartTime}-${selectedVenue?.maintenanceEndTime}），请选择其他场次`)
                       return
                     }
                     // 余额支付校验
                     if (useBalancePay && matchedUser) {
-                      const amount = (selectedGame?.price || 0) * bookingForm.count
-                      if (matchedUser.balance < amount) {
-                        setCreateError(`余额不足，当前余额 ¥${(matchedUser.balance / 100).toLocaleString()}，还需 ¥${((amount - matchedUser.balance) / 100).toLocaleString()}`)
+                      if (realBalance < estimatedAmountRaw) {
+                        setCreateError(`余额不足，当前余额 ¥${(realBalance / 100).toLocaleString()}，还需 ¥${((estimatedAmountRaw - realBalance) / 100).toLocaleString()}`)
                         return
                       }
                     }
@@ -1564,7 +1673,7 @@ export default function Booking() {
                         type: bookingForm.type.toUpperCase(),
                         date: bookingDate,
                         startTime: modalTime,
-                        endTime: add30Minutes(modalTime),
+                        endTime: addMinutes(modalTime, selectedGame?.duration || 30),
                         personName: bookingForm.person,
                         personPhone: bookingForm.phone,
                         personCount: bookingForm.count,
@@ -1580,7 +1689,7 @@ export default function Booking() {
                           venueId: bookingForm.venue,
                           venueName: selectedVenue?.name || '',
                           amount,
-                          bookingTime: `${bookingDate} ${modalTime}-${add30Minutes(modalTime)}`,
+                          bookingTime: `${bookingDate} ${modalTime}-${addMinutes(modalTime, selectedGame?.duration || 30)}`,
                           customer: bookingForm.person,
                           phone: bookingForm.phone,
                           source: 'OFFLINE',
@@ -1598,7 +1707,7 @@ export default function Booking() {
                       setCreateError(err?.response?.data?.message || err?.message || '预约创建失败，请重试')
                     }
                   }}
-                  disabled={createMutation.isPending || !bookingForm.person || !bookingForm.phone || !bookingForm.venue || !modalTime || !bookingForm.gameId || slotStatus?.status === 'full' || slotStatus?.status === 'occupied_by_other_game' || (useBalancePay && !!matchedUser && matchedUser.balance < (selectedGame?.price || 0) * bookingForm.count)}
+                  disabled={createMutation.isPending || !bookingForm.person || !bookingForm.phone || !bookingForm.venue || !modalTime || !bookingForm.gameId || slotStatus?.status === 'full' || slotStatus?.status === 'occupied_by_other_game' || (useBalancePay && !!matchedUser && realBalance < estimatedAmountRaw)}
                   className="h-10 px-5 bg-vraccent-primary text-white text-vr-body-sm font-medium rounded-lg hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
                 >
                   {createMutation.isPending ? '提交中...' : useBalancePay ? '余额支付' : '确定预约'}

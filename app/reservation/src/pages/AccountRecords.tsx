@@ -13,7 +13,8 @@ const typeLabelMap: Record<string, string> = {
   DEDUCT: '余额消费',
   REFUND: '退款到账',
   POINTS_EARN: '积分获取',
-  POINTS_DEDUCT: '积分抵扣',
+  POINTS_DEDUCT: '积分消费',
+  POINTS_GIFT: '积分赠送',
 }
 
 const typeColorMap: Record<string, string> = {
@@ -22,6 +23,7 @@ const typeColorMap: Record<string, string> = {
   REFUND: 'text-blue-400',
   POINTS_EARN: 'text-emerald-400',
   POINTS_DEDUCT: 'text-orange-400',
+  POINTS_GIFT: 'text-emerald-400',
 }
 
 export default function AccountRecords() {
@@ -40,7 +42,7 @@ export default function AccountRecords() {
 
   // 筛选积分相关的流水
   const pointTransactions = transactions?.filter(
-    (t) => t.type === 'POINTS_EARN' || t.type === 'POINTS_DEDUCT'
+    (t) => t.type === 'POINTS_EARN' || t.type === 'POINTS_DEDUCT' || t.type === 'POINTS_GIFT'
   ) || []
 
   return (
@@ -107,9 +109,9 @@ export default function AccountRecords() {
                   className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4 flex items-center gap-3"
                 >
                   <div className={`w-9 h-9 rounded-full flex items-center justify-center ${
-                    tx.type === 'POINTS_EARN' ? 'bg-emerald-500/10' : 'bg-orange-500/10'
+                    tx.type === 'POINTS_EARN' || tx.type === 'POINTS_GIFT' ? 'bg-emerald-500/10' : 'bg-orange-500/10'
                   }`}>
-                    {tx.type === 'POINTS_EARN' ? (
+                    {tx.type === 'POINTS_EARN' || tx.type === 'POINTS_GIFT' ? (
                       <Plus className="w-4 h-4 text-emerald-400" />
                     ) : (
                       <Minus className="w-4 h-4 text-orange-400" />
@@ -121,7 +123,7 @@ export default function AccountRecords() {
                         {typeLabelMap[tx.type] || tx.type}
                       </span>
                       <span className={`text-sm font-bold ${typeColorMap[tx.type] || 'text-[var(--text-primary)]'}`}>
-                        {tx.type === 'POINTS_EARN' ? '+' : ''}{tx.pointsAmount} 积分
+                        {tx.type === 'POINTS_EARN' || tx.type === 'POINTS_GIFT' ? '+' : '-'}{tx.pointsAmount} 积分
                       </span>
                     </div>
                     <p className="text-xs text-[var(--text-muted)] mt-0.5 truncate">{tx.remark}</p>

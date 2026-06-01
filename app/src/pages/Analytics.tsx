@@ -19,7 +19,6 @@ import {
   MapPin,
   ShoppingCart,
   Ticket,
-  Filter,
   Maximize,
   Minimize,
   RefreshCw,
@@ -60,7 +59,6 @@ import { getImageUrl } from '@/lib/imageUrl'
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 type DateRange = 'today' | '7days' | '30days' | '90days' | 'custom'
-type CardRange = 'today' | '7days' | '30days'
 
 /* ------------------------------------------------------------------ */
 /*  Static config                                                      */
@@ -71,12 +69,6 @@ const dateRangeMap: Record<DateRange, string> = {
   '30days': '近30天',
   '90days': '近90天',
   custom: '自定义',
-}
-
-const cardRangeMap: Record<CardRange, string> = {
-  today: '当天',
-  '7days': '7日',
-  '30days': '30日',
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -164,7 +156,7 @@ const AnimatedCounter = memo(function AnimatedCounter({
 /* ------------------------------------------------------------------ */
 /*  CountUp hook                                                       */
 /* ------------------------------------------------------------------ */
-function useCountUp(target: number, duration: number = 800, delay: number = 0) {
+function useCountUp(target: number, duration: number = 800, delay: number = 0, decimals: number = 0) {
   const [value, setValue] = useState(0)
   const startRef = useRef<number | null>(null)
   const rafRef = useRef<number>(0)
@@ -175,7 +167,8 @@ function useCountUp(target: number, duration: number = 800, delay: number = 0) {
         if (startRef.current === null) startRef.current = ts
         const progress = Math.min((ts - startRef.current) / duration, 1)
         const eased = 1 - Math.pow(1 - progress, 3)
-        setValue(Math.round(eased * target))
+        const factor = Math.pow(10, decimals)
+        setValue(Math.round(eased * target * factor) / factor)
         if (progress < 1) {
           rafRef.current = requestAnimationFrame(step)
         }
@@ -187,7 +180,7 @@ function useCountUp(target: number, duration: number = 800, delay: number = 0) {
       clearTimeout(timer)
       cancelAnimationFrame(rafRef.current)
     }
-  }, [target, duration, delay])
+  }, [target, duration, delay, decimals])
 
   return value
 }
@@ -249,14 +242,15 @@ function KPICard({
   subLabel: string
   delay: number
 }) {
-  const numericMatch = value.replace(/[^0-9]/g, '')
+  const numericMatch = value.replace(/[^0-9.]/g, '')
   const prefix = value.startsWith('¥') ? '¥' : ''
   const suffix = value.endsWith('%') ? '%' : ''
-  const numericTarget = numericMatch ? parseInt(numericMatch, 10) : 0
-  const countUpVal = useCountUp(numericTarget, 800, delay + 200)
+  const decimals = (numericMatch.split('.')[1] || '').length
+  const numericTarget = numericMatch ? parseFloat(numericMatch) : 0
+  const countUpVal = useCountUp(numericTarget, 800, delay + 200, decimals)
 
   const displayValue = prefix
-    ? `${prefix}${countUpVal.toLocaleString()}`
+    ? `${prefix}${countUpVal.toLocaleString(undefined, decimals > 0 ? { minimumFractionDigits: decimals, maximumFractionDigits: decimals } : {})}`
     : `${countUpVal.toLocaleString()}${suffix}`
 
   return (
@@ -307,65 +301,7 @@ function KPICard({
   )
 }
 
-/* ------------------------------------------------------------------ */
-/*  Card Date Filter (small inline selector)                           */
-/* ------------------------------------------------------------------ */
-function CardDateFilter({
-  value,
-  onChange,
-}: {
-  value: CardRange
-  onChange: (v: CardRange) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 bg-vrbg-surface/60 hover:bg-vrbg-elevated border border-vrborder-subtle hover:border-vrborder-hover rounded-md px-2 py-1 text-vr-caption text-vrtext-secondary transition-colors"
-      >
-        <Filter className="w-3 h-3" />
-        <span>{cardRangeMap[value]}</span>
-        <ChevronDown className="w-3 h-3" />
-      </button>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0, y: -4, scale: 0.95 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.15 }}
-          className="absolute right-0 top-full mt-1 w-24 bg-vrbg-elevated border border-vrborder-hover rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.5)] z-50 overflow-hidden"
-        >
-          {(['today', '7days', '30days'] as CardRange[]).map((r) => (
-            <button
-              key={r}
-              onClick={() => {
-                onChange(r)
-                setOpen(false)
-              }}
-              className={`w-full text-left px-3 py-1.5 text-vr-caption transition-colors ${
-                value === r
-                  ? 'bg-vrbg-active text-vraccent-primary'
-                  : 'text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary'
-              }`}
-            >
-              {cardRangeMap[r]}
-            </button>
-          ))}
-        </motion.div>
-      )}
-    </div>
-  )
-}
 
 /* ------------------------------------------------------------------ */
 /*  Tooltip styles                                                     */
@@ -512,19 +448,13 @@ export default function Analytics() {
   }, [toggleFullscreen])
 
   /* ─── Global date range ─── */
-  const [dateRange, setDateRange] = useState<DateRange>('7days')
+  const [dateRange, setDateRange] = useState<DateRange>('today')
   const [showDropdown, setShowDropdown] = useState(false)
   const [customStart, setCustomStart] = useState(format(subDays(new Date(), 6), 'yyyy-MM-dd'))
   const [customEnd, setCustomEnd] = useState(format(new Date(), 'yyyy-MM-dd'))
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  /* ─── Per-card date ranges ─── */
-  const [venueRange, setVenueRange] = useState<CardRange>('30days')
-  const [paymentRange, setPaymentRange] = useState<CardRange>('30days')
-  const [timeRange, setTimeRange] = useState<CardRange>('30days')
-  const [statusRange, setStatusRange] = useState<CardRange>('30days')
-  const [repurchaseRange, setRepurchaseRange] = useState<CardRange>('30days')
-  const [gameRange, setGameRange] = useState<CardRange>('30days')
+  /* ─── All cards share the global date range ─── */
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -559,13 +489,19 @@ export default function Analytics() {
   })
 
   const { data: venueRevenueData, isPending: venueRevenuePending } = useQuery({
-    queryKey: ['analytics', 'venue-revenue-ranking', venueRange, refreshKey],
-    queryFn: () => getVenueRevenueRanking(venueRange),
+    queryKey: ['analytics', 'venue-revenue-ranking', dateRange, customStart, customEnd, refreshKey],
+    queryFn: () => {
+      const p = globalParams()
+      return getVenueRevenueRanking(p.range, p.startDate, p.endDate)
+    },
   })
 
   const { data: timeDistributionData, isPending: timeDistributionPending } = useQuery({
-    queryKey: ['analytics', 'time-distribution', timeRange, refreshKey],
-    queryFn: () => getTimeDistribution(timeRange),
+    queryKey: ['analytics', 'time-distribution', dateRange, customStart, customEnd, refreshKey],
+    queryFn: () => {
+      const p = globalParams()
+      return getTimeDistribution(p.range, p.startDate, p.endDate)
+    },
   })
 
   const { data: userGrowthApiData, isPending: userGrowthPending } = useQuery({
@@ -574,23 +510,35 @@ export default function Analytics() {
   })
 
   const { data: paymentMethods, isPending: paymentPending } = useQuery({
-    queryKey: ['analytics', 'payment-methods', paymentRange, refreshKey],
-    queryFn: () => getPaymentMethodDistribution(paymentRange),
+    queryKey: ['analytics', 'payment-methods', dateRange, customStart, customEnd, refreshKey],
+    queryFn: () => {
+      const p = globalParams()
+      return getPaymentMethodDistribution(p.range, p.startDate, p.endDate)
+    },
   })
 
   const { data: orderStatusData, isPending: orderStatusPending } = useQuery({
-    queryKey: ['analytics', 'order-status', statusRange, refreshKey],
-    queryFn: () => getOrderStatusDistribution(statusRange),
+    queryKey: ['analytics', 'order-status', dateRange, customStart, customEnd, refreshKey],
+    queryFn: () => {
+      const p = globalParams()
+      return getOrderStatusDistribution(p.range, p.startDate, p.endDate)
+    },
   })
 
   const { data: repurchaseData, isPending: repurchasePending } = useQuery({
-    queryKey: ['analytics', 'repurchase-rate', repurchaseRange, refreshKey],
-    queryFn: () => getRepurchaseRate(repurchaseRange),
+    queryKey: ['analytics', 'repurchase-rate', dateRange, customStart, customEnd, refreshKey],
+    queryFn: () => {
+      const p = globalParams()
+      return getRepurchaseRate(p.range, p.startDate, p.endDate)
+    },
   })
 
   const { data: gamePopularityData, isPending: gamePopularityPending } = useQuery({
-    queryKey: ['analytics', 'game-popularity', gameRange, refreshKey],
-    queryFn: () => getGamePopularity(gameRange),
+    queryKey: ['analytics', 'game-popularity', dateRange, customStart, customEnd, refreshKey],
+    queryFn: () => {
+      const p = globalParams()
+      return getGamePopularity(p.range, p.startDate, p.endDate)
+    },
   })
 
 
@@ -961,7 +909,7 @@ export default function Analytics() {
               <PanelCard delay={0.5}>
                 <div className="flex items-center justify-between mb-4">
                   <PanelTitle icon={<MapPin className="w-4 h-4" />}>场地营收排行</PanelTitle>
-                  <CardDateFilter value={venueRange} onChange={setVenueRange} />
+
                 </div>
                 <div className="space-y-3">
                   {venueRevenue.map((v: any, i: number) => (
@@ -1020,7 +968,7 @@ export default function Analytics() {
               <PanelCard delay={0.55}>
                 <div className="flex items-center justify-between mb-4">
                   <PanelTitle icon={<CreditCard className="w-4 h-4" />}>支付方式分布</PanelTitle>
-                  <CardDateFilter value={paymentRange} onChange={setPaymentRange} />
+
                 </div>
                 <div className="h-[280px]">
                   <ResponsiveContainer width="100%" height="100%">
@@ -1083,7 +1031,7 @@ export default function Analytics() {
               <PanelCard delay={0.6}>
                 <div className="flex items-center justify-between mb-4">
                   <PanelTitle icon={<Clock className="w-4 h-4" />}>预约时段分布</PanelTitle>
-                  <CardDateFilter value={timeRange} onChange={setTimeRange} />
+
                 </div>
                 <div className="h-[280px]">
                   <ResponsiveContainer width="100%" height="100%">
@@ -1137,7 +1085,7 @@ export default function Analytics() {
             <PanelCard delay={0.4}>
               <div className="flex items-center justify-between mb-4">
                 <PanelTitle icon={<PieChart className="w-4 h-4" />}>订单状态分布</PanelTitle>
-                <CardDateFilter value={statusRange} onChange={setStatusRange} />
+
               </div>
               <div className="h-[280px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1184,7 +1132,7 @@ export default function Analytics() {
             <PanelCard delay={0.7}>
               <div className="flex items-center justify-between mb-1">
                 <PanelTitle icon={<Repeat className="w-4 h-4" />}>复购率</PanelTitle>
-                <CardDateFilter value={repurchaseRange} onChange={setRepurchaseRange} />
+
               </div>
               <p className="text-vr-caption text-vrtext-tertiary mb-4">
                 消费2次以上的顾客占比
@@ -1226,7 +1174,7 @@ export default function Analytics() {
             <PanelCard delay={0.75} className="flex-1">
               <div className="flex items-center justify-between mb-4">
                 <PanelTitle icon={<Gamepad2 className="w-4 h-4" />}>游戏内容热度排行</PanelTitle>
-                <CardDateFilter value={gameRange} onChange={setGameRange} />
+
               </div>
               <div className="space-y-3">
                 {gamePopularity.map((g: any, i: number) => (

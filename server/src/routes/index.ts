@@ -16,6 +16,11 @@ import rechargeRoutes from './recharges'
 import financeRoutes from './finance'
 import notificationRoutes from './notifications'
 import couponRoutes from './coupons'
+import pointsRoutes from './points'
+import giftRoutes from './gift'
+import reconRoutes from './recon'
+import deviceLogRoutes from './deviceLog'
+import debugRoutes from './debug'
 
 const router = Router()
 
@@ -36,5 +41,10 @@ router.use('/recharges', rechargeRoutes)
 router.use('/finance', financeRoutes)
 router.use('/notifications', notificationRoutes)
 router.use('/coupons', couponRoutes)
+router.use('/points', pointsRoutes)
+router.use('/gift', giftRoutes)
+router.use('/recon', reconRoutes)
+router.use('/device-logs', deviceLogRoutes)
+router.use('/debug', debugRoutes)
 
 export default router

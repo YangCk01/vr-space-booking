@@ -10,6 +10,7 @@ import { resolveImageUrl } from '@/api/client'
 const menuItems = [
   { icon: Sparkles, label: '会员权益', path: '/member-benefits' },
   { icon: Receipt, label: '账户明细', path: '/account-records' },
+  { icon: Coins, label: '积分商城', path: '/points-mall' },
   { icon: Ticket, label: '优惠券', path: '/coupons' },
   { icon: HelpCircle, label: '帮助与反馈', path: '/help' },
   { icon: Phone, label: '联系门店', path: '#' },

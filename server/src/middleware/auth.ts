@@ -63,3 +63,5 @@ export function requireRole(...roles: string[]) {
     next()
   }
 }
+
+export const requireAdmin = requireRole('ADMIN', 'SUPER_ADMIN')

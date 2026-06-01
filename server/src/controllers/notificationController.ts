@@ -35,8 +35,46 @@ function mapTypeToSceneKey(type: string): string | null {
     BOOKING_CANCEL: 'scene_booking_cancel',
     PAY_SUCCESS: 'scene_pay_success',
     MARKETING: 'scene_marketing',
+    POINTS_GIFT: 'scene_points_gift',
+    COUPON_GIFT: 'scene_coupon_gift',
+    ADMIN_PRODUCT_SOLD: 'scene_admin_product_sold',
+    ADMIN_LOW_STOCK: 'scene_admin_low_stock',
+    ADMIN_NEW_ORDER: 'scene_admin_new_order',
+    ADMIN_REFUND_REQUEST: 'scene_admin_refund_request',
   }
   return map[type] || null
+}
+
+/* ─── Helper: push notification to all admins ─── */
+export async function pushAdminNotification(
+  type: string,
+  title: string,
+  content: string
+) {
+  try {
+    const sceneKey = mapTypeToSceneKey(type)
+    if (sceneKey) {
+      const setting = await prisma.systemSetting.findUnique({ where: { key: sceneKey } })
+      const raw = setting?.value
+      const enabled = raw !== null && typeof raw === 'object' && 'value' in raw ? (raw as any).value : (raw ?? true)
+      if (!enabled) return
+    }
+
+    const admins = await prisma.user.findMany({
+      where: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'FINANCE'] } },
+      select: { id: true },
+    })
+
+    await Promise.all(
+      admins.map((admin) =>
+        prisma.notification.create({
+          data: { userId: admin.id, type, title, content },
+        })
+      )
+    )
+  } catch {
+    // fail silently
+  }
 }
 
 function isAdmin(req: AuthenticatedRequest): boolean {

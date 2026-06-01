@@ -101,10 +101,18 @@ export default function VenueDetail() {
     const deviceCount = venue?.deviceCount || 1
 
     const slots: SlotInfo[] = []
+    const slotDuration = selectedGame?.duration || 30
 
-    for (let m = 9 * 60; m < 21 * 60; m += 30) {
+    const openMinutes = venue?.openTime ? timeToMinutes(venue.openTime) : 9 * 60
+    const closeMinutes = venue?.closeTime ? timeToMinutes(venue.closeTime) : 21 * 60
+
+    for (let m = openMinutes; m < closeMinutes; m += slotDuration) {
       const t = minutesToTime(m)
-      const e = minutesToTime(m + 30)
+      const e = minutesToTime(m + slotDuration)
+
+      // 过滤超出营业时间的场次
+      if (m + slotDuration > closeMinutes) continue
+
       const isPast = isToday && m <= now.getHours() * 60 + now.getMinutes()
 
       if (isPast) {
@@ -155,7 +163,7 @@ export default function VenueDetail() {
     return slots
   }, [bookingsData, dateStr, venue, selectedGameId])
 
-  const displaySlots = slotInfo.filter((s) => s.status !== 'past')
+  const displaySlots = slotInfo.filter((s) => s.status !== 'past' && s.status !== 'occupied_by_other_game')
 
   const dayLabel = (idx: number, date: Date) => {
     if (idx === 0) return '今天'
@@ -293,30 +301,36 @@ export default function VenueDetail() {
       {activeGames.length > 0 && (
         <div className="mt-5">
           <h3 className="text-sm font-semibold text-[var(--text-primary)] px-4 sm:px-0 mb-2">游戏列表</h3>
-          <div className="flex gap-3 overflow-x-auto px-4 sm:px-0 pb-2 scrollbar-hide">
-            {activeGames.map((game) => {
-              const isSelected = selectedGameId === game.id
-              return (
-                <button
-                  key={game.id}
-                  onClick={() => setSelectedGameId(isSelected ? null : game.id)}
-                  className={cn(
-                    'shrink-0 w-24 rounded-xl overflow-hidden border transition-all',
-                    isSelected
-                      ? 'border-[var(--accent-primary)] shadow-glow-sm'
-                      : 'border-[var(--border-subtle)] opacity-80'
-                  )}
-                >
-                  <div className="aspect-[9/16] relative">
-                    <img
-                      src={game.coverImage ? getImageUrl(game.coverImage) : '/venue-cyber.jpg'}
-                      alt={game.title}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                </button>
-              )
-            })}
+          <div className="relative">
+            {/* 左渐变提示 */}
+            <div className="absolute left-0 top-0 bottom-2 w-5 bg-gradient-to-r from-[var(--bg-primary)] to-transparent z-10 pointer-events-none" />
+            {/* 右渐变提示 */}
+            <div className="absolute right-0 top-0 bottom-2 w-5 bg-gradient-to-l from-[var(--bg-primary)] to-transparent z-10 pointer-events-none" />
+            <div className="flex gap-3 overflow-x-auto px-4 sm:px-0 pb-2 scrollbar-hide snap-x snap-mandatory touch-pan-x scroll-smooth">
+              {activeGames.map((game) => {
+                const isSelected = selectedGameId === game.id
+                return (
+                  <button
+                    key={game.id}
+                    onClick={() => setSelectedGameId(isSelected ? null : game.id)}
+                    className={cn(
+                      'shrink-0 w-24 rounded-xl overflow-hidden border transition-all snap-start',
+                      isSelected
+                        ? 'border-[var(--accent-primary)] shadow-glow-sm'
+                        : 'border-[var(--border-subtle)] opacity-80'
+                    )}
+                  >
+                    <div className="aspect-[9/16] relative">
+                      <img
+                        src={game.coverImage ? getImageUrl(game.coverImage) : '/venue-cyber.jpg'}
+                        alt={game.title}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
           </div>
         </div>
       )}
@@ -362,20 +376,25 @@ export default function VenueDetail() {
       {/* Date Selector */}
       <div className="px-4 sm:px-0 mt-5">
         <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">选择日期</h3>
-        <div className="flex gap-2 overflow-x-auto sm:overflow-visible pb-2 scrollbar-hide">
-          {days.slice(0, 3).map((date, idx) => {
-            const isActive = idx === selectedDay
-            return (
-              <button
-                key={idx}
-                onClick={() => setSelectedDay(idx)}
-                className={cn(
-                  'flex flex-col items-center justify-center min-w-[80px] h-16 rounded-xl border transition-all',
-                  isActive
-                    ? 'bg-gradient-accent text-white border-transparent shadow-glow-sm'
-                    : 'bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-secondary)]'
-                )}
-              >
+        <div className="relative">
+          {/* 左渐变提示 */}
+          <div className="absolute left-0 top-0 bottom-2 w-5 bg-gradient-to-r from-[var(--bg-primary)] to-transparent z-10 pointer-events-none" />
+          {/* 右渐变提示 */}
+          <div className="absolute right-0 top-0 bottom-2 w-5 bg-gradient-to-l from-[var(--bg-primary)] to-transparent z-10 pointer-events-none" />
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide snap-x snap-mandatory touch-pan-x scroll-smooth">
+            {days.slice(0, 7).map((date, idx) => {
+              const isActive = idx === selectedDay
+              return (
+                <button
+                  key={idx}
+                  onClick={() => setSelectedDay(idx)}
+                  className={cn(
+                    'flex flex-col items-center justify-center min-w-[80px] h-16 rounded-xl border transition-all snap-start',
+                    isActive
+                      ? 'bg-gradient-accent text-white border-transparent shadow-glow-sm'
+                      : 'bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-secondary)]'
+                  )}
+                >
                 <span className={cn('text-[11px]', isActive ? 'text-white/80' : 'text-[var(--text-muted)]')}>
                   {dayLabel(idx, date)}
                 </span>
@@ -386,6 +405,7 @@ export default function VenueDetail() {
             )
           })}
         </div>
+      </div>
       </div>
 
       {/* Time Slots */}

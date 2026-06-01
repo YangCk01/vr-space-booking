@@ -29,3 +29,21 @@ export async function useCoupon(id: string) {
   const res = await apiClient.put(`/coupons/${id}/use`)
   return res.data.data as ThirdPartyCoupon
 }
+
+export interface UserCoupon {
+  id: string
+  name: string
+  type: 'EXPERIENCE_FREE' | 'DISCOUNT'
+  discountRate: number | null
+  status: 'UNUSED' | 'USED' | 'EXPIRED'
+  validFrom: string | null
+  validTo: string | null
+  usedAt: string | null
+  source: string | null
+  createdAt: string
+}
+
+export async function getMyUserCoupons() {
+  const res = await apiClient.get('/points/coupons')
+  return res.data.data as UserCoupon[]
+}
