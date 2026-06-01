@@ -8,6 +8,29 @@ import { fetchDeviceLogs } from '../services/deviceLogService'
 import { sendReconAlert } from '../services/notificationService'
 
 /**
+ * 告警阈值（后续从 SystemConfig 读取）
+ */
+const DEFAULT_THRESHOLDS = {
+  absoluteAmount: 100 * 100, // ¥100 = 10000 分
+  relativeRate: 0.01,        // 1%
+}
+
+async function getThresholds() {
+  try {
+    const [absConfig, relConfig] = await Promise.all([
+      prisma.systemConfig.findUnique({ where: { key: 'RECON_ALERT_ABSOLUTE_AMOUNT' } }),
+      prisma.systemConfig.findUnique({ where: { key: 'RECON_ALERT_RELATIVE_RATE' } }),
+    ])
+    return {
+      absoluteAmount: absConfig ? parseInt(absConfig.value, 10) : DEFAULT_THRESHOLDS.absoluteAmount,
+      relativeRate: relConfig ? parseFloat(relConfig.value) : DEFAULT_THRESHOLDS.relativeRate,
+    }
+  } catch {
+    return DEFAULT_THRESHOLDS
+  }
+}
+
+/**
  * 每日凌晨 02:00 自动对账任务
  * Phase 1.5: 已实现系统内部数据交叉核对
  * 待接入真实支付渠道后，追加渠道账/银行账核对
@@ -93,7 +116,10 @@ export async function executeReconciliation(dateStr: string) {
     //   await fetchDeviceLogs(venue.id, dateStr)
     // }
 
-    // ========== 4. 更新批次状态 ==========
+    // ========== 6. 差异阈值告警检查 ==========
+    await checkReconcileAlerts(dateStr, dateGte, dateLte)
+
+    // ========== 7. 更新批次状态 ==========
     await prisma.reconBatch.update({
       where: { id: batch.id },
       data: {
@@ -140,6 +166,168 @@ export async function executeReconciliation(dateStr: string) {
       },
     })
     throw err
+  }
+}
+
+/**
+ * 检查对账差异并触发告警
+ */
+async function checkReconcileAlerts(dateStr: string, dateGte: Date, dateLte: Date) {
+  const thresholds = await getThresholds()
+  const alerts: string[] = []
+
+  // 1. 余额恒等式（总对账）
+  const [users, txSum] = await Promise.all([
+    prisma.user.findMany({
+      select: { principalBalance: true, bonusBalance: true, points: true },
+    }),
+    prisma.balanceTransaction.aggregate({
+      _sum: { principalAmount: true, bonusAmount: true, pointsAmount: true },
+    }),
+  ])
+
+  const totalPrincipal = users.reduce((s, u) => s + u.principalBalance, 0)
+  const totalBonus = users.reduce((s, u) => s + u.bonusBalance, 0)
+  const totalPoints = users.reduce((s, u) => s + u.points, 0)
+  const expectedPrincipal = txSum._sum?.principalAmount || 0
+  const expectedBonus = txSum._sum?.bonusAmount || 0
+  const expectedPoints = txSum._sum?.pointsAmount || 0
+
+  const principalDiff = totalPrincipal - expectedPrincipal
+  const bonusDiff = totalBonus - expectedBonus
+  const pointsDiff = totalPoints - expectedPoints
+
+  if (principalDiff !== 0) alerts.push(`本金余额差异: ${principalDiff} 分`)
+  if (bonusDiff !== 0) alerts.push(`赠送余额差异: ${bonusDiff} 分`)
+  if (pointsDiff !== 0) alerts.push(`积分余额差异: ${pointsDiff} 分`)
+
+  // 2. 充值对账
+  const rechargeSum = await prisma.rechargeRecord.aggregate({
+    where: { status: 'PAID', paidAt: { gte: dateGte, lte: dateLte } },
+    _sum: { amount: true, bonus: true },
+  })
+  const txRechargeSum = await prisma.balanceTransaction.aggregate({
+    where: { type: 'RECHARGE', createdAt: { gte: dateGte, lte: dateLte } },
+    _sum: { principalAmount: true, bonusAmount: true },
+  })
+  const rechargePrincipalDiff = (rechargeSum._sum?.amount || 0) - (txRechargeSum._sum?.principalAmount || 0)
+  const rechargeBonusDiff = (rechargeSum._sum?.bonus || 0) - (txRechargeSum._sum?.bonusAmount || 0)
+  checkDimensionAlert(alerts, '充值本金', rechargePrincipalDiff, txRechargeSum._sum?.principalAmount || 0, thresholds)
+  checkDimensionAlert(alerts, '充值赠送', rechargeBonusDiff, txRechargeSum._sum?.bonusAmount || 0, thresholds)
+
+  // 3. 在线支付对账
+  const paymentSum = await prisma.payment.aggregate({
+    where: { status: 'SUCCESS', method: { in: ['WECHAT', 'ALIPAY'] }, createdAt: { gte: dateGte, lte: dateLte } },
+    _sum: { amount: true },
+  })
+  const orderOnlineSum = await prisma.order.aggregate({
+    where: {
+      status: { in: ['PAID', 'COMPLETED'] },
+      payMethod: { in: ['WECHAT', 'ALIPAY'] },
+      paidAt: { gte: dateGte, lte: dateLte },
+    },
+    _sum: { amount: true },
+  })
+  const onlinePayDiff = (paymentSum._sum?.amount || 0) - (orderOnlineSum._sum?.amount || 0)
+  checkDimensionAlert(alerts, '在线直付', onlinePayDiff, orderOnlineSum._sum?.amount || 0, thresholds)
+
+  // 4. 消费对账
+  const orderConsumeSum = await prisma.order.aggregate({
+    where: {
+      status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
+      paidAt: { gte: dateGte, lte: dateLte },
+    },
+    _sum: { principalDeduction: true, bonusDeduction: true },
+  })
+  const txDeductSum = await prisma.balanceTransaction.aggregate({
+    where: { type: 'DEDUCT', createdAt: { gte: dateGte, lte: dateLte } },
+    _sum: { principalAmount: true, bonusAmount: true },
+  })
+  const consumePrincipalDiff = (orderConsumeSum._sum?.principalDeduction || 0) - Math.abs(txDeductSum._sum?.principalAmount || 0)
+  const consumeBonusDiff = (orderConsumeSum._sum?.bonusDeduction || 0) - Math.abs(txDeductSum._sum?.bonusAmount || 0)
+  checkDimensionAlert(alerts, '消费本金', consumePrincipalDiff, Math.abs(txDeductSum._sum?.principalAmount || 0), thresholds)
+  checkDimensionAlert(alerts, '消费赠送', consumeBonusDiff, Math.abs(txDeductSum._sum?.bonusAmount || 0), thresholds)
+
+  // 5. 退款对账
+  const txRefundSum = await prisma.balanceTransaction.aggregate({
+    where: { type: 'REFUND', createdAt: { gte: dateGte, lte: dateLte } },
+    _sum: { totalAmount: true },
+  })
+  const orderRefundSum = await prisma.order.aggregate({
+    where: { status: 'REFUNDED', updatedAt: { gte: dateGte, lte: dateLte } },
+    _sum: { refundAmount: true },
+  })
+  const refundDiff = (txRefundSum._sum?.totalAmount || 0) - (orderRefundSum._sum?.refundAmount || 0)
+  checkDimensionAlert(alerts, '退款总额', refundDiff, orderRefundSum._sum?.refundAmount || 0, thresholds)
+
+  // 6. 积分对账（兑换消耗）
+  const txPointsExchangeDeductSum = await prisma.balanceTransaction.aggregate({
+    where: {
+      type: 'POINTS_DEDUCT',
+      pointsAmount: { lt: 0 },
+      orderId: null,
+      createdAt: { gte: dateGte, lte: dateLte },
+    },
+    _sum: { pointsAmount: true },
+  })
+  const exchangePointsSum = await prisma.pointsExchange.aggregate({
+    where: { createdAt: { gte: dateGte, lte: dateLte } },
+    _sum: { pointsCost: true },
+  })
+  const orderPointsSum = await prisma.pointsOrder.aggregate({
+    where: { status: { not: 'CANCELLED' }, createdAt: { gte: dateGte, lte: dateLte } },
+    _sum: { pointsCost: true },
+  })
+  const exchangeTotal = (exchangePointsSum._sum?.pointsCost || 0) + (orderPointsSum._sum?.pointsCost || 0)
+  const txExchangeDeductTotal = Math.abs(txPointsExchangeDeductSum._sum?.pointsAmount || 0)
+  const pointsExchangeDiff = exchangeTotal - txExchangeDeductTotal
+  checkDimensionAlert(alerts, '积分兑换消耗', pointsExchangeDiff, txExchangeDeductTotal, thresholds)
+
+  if (alerts.length > 0) {
+    console.log(`[ReconJob] ${dateStr} 触发对账异常告警:`, alerts)
+    await sendReconNotifications(dateStr, alerts)
+  }
+}
+
+function checkDimensionAlert(
+  alerts: string[],
+  name: string,
+  diff: number,
+  expected: number,
+  thresholds: { absoluteAmount: number; relativeRate: number }
+) {
+  if (diff === 0) return
+  // 必告警：余额维度 diff ≠ 0（已在前面处理）
+  // 任一维度差异绝对值 > 阈值
+  if (Math.abs(diff) > thresholds.absoluteAmount) {
+    alerts.push(`${name}差异绝对值超限: ${diff} 分 (阈值: ${thresholds.absoluteAmount} 分)`)
+    return
+  }
+  // 任一维度差异 > expected 的 1%
+  if (expected > 0 && Math.abs(diff) > expected * thresholds.relativeRate) {
+    alerts.push(`${name}差异比例超限: ${diff} 分 / expected=${expected} 分`)
+  }
+}
+
+async function sendReconNotifications(dateStr: string, alerts: string[]) {
+  try {
+    const targetUsers = await prisma.user.findMany({
+      where: { role: { in: ['SUPER_ADMIN', 'FINANCE'] } },
+      select: { id: true },
+    })
+
+    const title = `【对账异常告警】${dateStr}`
+    const content = `日期 ${dateStr} 对账发现以下异常，请关注：\n${alerts.join('\n')}`
+
+    await Promise.all(
+      targetUsers.map((u) =>
+        prisma.notification.create({
+          data: { userId: u.id, type: 'RECON_ALERT', title, content },
+        })
+      )
+    )
+  } catch (err) {
+    console.error('[ReconJob] 创建对账告警通知失败:', err)
   }
 }
 

@@ -8,6 +8,7 @@ export interface AuthenticatedRequest extends Request {
     name: string
     role: UserRole
     managedVenueIds?: string[]
+    permissions?: string[]
   }
 }
 
@@ -17,4 +18,5 @@ export interface TokenPayload {
   role: UserRole
   name: string
   managedVenueIds?: string[]
+  permissions?: string[]
 }

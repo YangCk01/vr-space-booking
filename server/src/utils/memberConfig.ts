@@ -1,4 +1,4 @@
-import { prisma } from './prisma'
+import { getConfig } from '../services/configService'
 
 /* ─── 默认配置（fallback）─── */
 const DEFAULT_TIERS = [
@@ -8,14 +8,8 @@ const DEFAULT_TIERS = [
   { amount: 5000, bonus: 1000, level: 'VIP_PLUS' },
 ]
 
-const DEFAULT_LEVELS = [
-  { key: 'NORMAL', name: '普通会员', discount: 100, threshold: 0 },
-  { key: 'MEMBER', name: '银卡会员', discount: 95, threshold: 1000 },
-  { key: 'VIP', name: '金卡会员', discount: 90, threshold: 2000 },
-  { key: 'VIP_PLUS', name: '钻石会员', discount: 85, threshold: 5000 },
-]
-
-const DEFAULT_POINTS = { earnRate: 1, deductRate: 100 }
+const DEFAULT_LEVEL_NAMES = ['普通会员', '银卡会员', '金卡会员', '钻石会员']
+const DEFAULT_LEVEL_KEYS = ['NORMAL', 'MEMBER', 'VIP', 'VIP_PLUS']
 
 /** 兼容读取：数据库中可能是原始值，也可能是 { value: raw } 包装格式 */
 function unwrap(val: any): any {
@@ -27,6 +21,8 @@ function unwrap(val: any): any {
 
 /* ─── 读取充值档位配置（分）─── */
 export async function getRechargeConfig() {
+  // 保留从 systemSetting 读取，避免影响现有充值逻辑
+  const { prisma } = await import('./prisma')
   const setting = await prisma.systemSetting.findUnique({ where: { key: 'recharge_tiers' } })
   const raw = unwrap(setting?.value)
   const tiers = Array.isArray(raw) && raw.length > 0 ? raw : DEFAULT_TIERS
@@ -40,24 +36,24 @@ export async function getRechargeConfig() {
 
 /* ─── 读取会员等级配置 ── */
 export async function getMemberLevels() {
-  const setting = await prisma.systemSetting.findUnique({ where: { key: 'member_levels' } })
-  const raw = unwrap(setting?.value)
-  const levels = Array.isArray(raw) && raw.length > 0 ? raw : DEFAULT_LEVELS
-  return levels.map((l: any) => ({
-    key: l.key || '',
-    name: l.name || '',
-    discount: Number(l.discount) || 100,
-    threshold: Number(l.threshold) || 0,
+  const thresholds = getConfig<number[]>('member_level_thresholds', [0, 1000, 2000, 5000])!
+  const discounts = getConfig<number[]>('member_discount_rates', [100, 95, 90, 85])!
+
+  return DEFAULT_LEVEL_KEYS.map((key, i) => ({
+    key,
+    name: DEFAULT_LEVEL_NAMES[i] || key,
+    discount: Number(discounts[i]) || 100,
+    threshold: Number(thresholds[i]) || 0,
   }))
 }
 
 /* ─── 读取积分规则 ── */
 export async function getPointsConfig() {
-  const earn = await prisma.systemSetting.findUnique({ where: { key: 'points_earn_rate' } })
-  const deduct = await prisma.systemSetting.findUnique({ where: { key: 'points_deduct_rate' } })
+  const earnRatio = getConfig<number>('points_earn_ratio', 100)!
+  const deductRatio = getConfig<number>('points_deduct_ratio', 100)!
   return {
-    earnRate: Number(unwrap(earn?.value) ?? DEFAULT_POINTS.earnRate),
-    deductRate: Number(unwrap(deduct?.value) ?? DEFAULT_POINTS.deductRate),
+    earnRate: earnRatio > 0 ? 100 / earnRatio : 1,
+    deductRate: deductRatio > 0 ? deductRatio : 100,
   }
 }
 
@@ -80,6 +76,7 @@ export async function getDiscountByLevel(levelKey: string): Promise<number> {
 
 /* ─── 读取单笔最高积分抵扣比例 ── */
 export async function getMaxPointsDeductionRatio(): Promise<number> {
+  const { prisma } = await import('./prisma')
   const setting = await prisma.systemSetting.findUnique({
     where: { key: 'max_points_deduction_ratio' }
   })

@@ -22,6 +22,7 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
       name: decoded.name || '',
       role: decoded.role,
       managedVenueIds: decoded.managedVenueIds,
+      permissions: decoded.permissions,
     }
     next()
   } catch (err) {
@@ -44,6 +45,7 @@ export function optionalAuthenticate(req: AuthenticatedRequest, res: Response, n
         name: decoded.name || '',
         role: decoded.role,
         managedVenueIds: decoded.managedVenueIds,
+        permissions: decoded.permissions,
       }
     } catch {
       // Token invalid or expired, continue as anonymous

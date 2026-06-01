@@ -38,6 +38,7 @@ model User {
   thirdPartyCoupons ThirdPartyCoupon[]
   userCoupons       UserCoupon[]
   managedVenues     VenueManager[]
+  roles             Role[]
 }
 
 model Venue {
@@ -292,6 +293,11 @@ model DailyFinancialReport {
   totalBonusLiability     Int      @default(0)
   pointsLiability         Int      @default(0)
   dormantPrincipal        Int      @default(0)
+  // P0: 收入确认拆分
+  prepaidDirectRevenue    Int      @default(0)
+  confirmedDirectRevenue  Int      @default(0)
+  prepaidMemberRevenue    Int      @default(0)
+  confirmedMemberRevenue  Int      @default(0)
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 }
@@ -716,4 +722,188 @@ enum ReconExceptionStatus {
   FROZEN
   REFUNDED
   IGNORED
+}
+
+// ========== P0: 财务合规 ==========
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  operatorId    String
+  operatorName  String
+  operatorRole  String
+  targetType    String
+  targetId      String
+  targetDesc    String?
+  action        String
+  actionName    String
+  beforeValue   Json?
+  afterValue    Json?
+  diffValue     Json?
+  amount        Int?
+  reason        String
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([operatorId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model DataCheckResult {
+  id           String   @id @default(uuid())
+  checkType    String
+  checkDate    String
+  totalChecked Int
+  errorCount   Int
+  errors       Json?
+  status       String
+  createdAt    DateTime @default(now())
+
+  @@index([checkType, checkDate])
+}
+
+// ========== P1: 运营增长 ==========
+
+model Campaign {
+  id          String   @id @default(uuid())
+  name        String
+  type        String   @default("MANUAL_GIFT") // AUTO_GIFT / MANUAL_GIFT / CONDITIONAL
+  status      String   @default("DRAFT") // DRAFT / RUNNING / PAUSED / ENDED
+  startAt     DateTime?
+  endAt       DateTime?
+  budget      Int?
+  spent       Int      @default(0)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  rewards     CampaignReward[]
+  tracks      CampaignTrack[]
+}
+
+model CampaignReward {
+  id                 String   @id @default(uuid())
+  campaignId         String
+  rewardType         String   // POINTS / COUPON_DISCOUNT / COUPON_EXPERIENCE
+  pointsAmount       Int?
+  couponName         String?
+  couponDiscountRate Int?
+  couponValidDays    Int?
+  maxQuantity        Int      @default(0)
+  issuedCount        Int      @default(0)
+  campaign           Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+}
+
+model CampaignTrack {
+  id         String   @id @default(uuid())
+  campaignId String
+  userId     String
+  step       String   // ISSUED / USED / ORDER_COMPLETED / REORDERED
+  orderId    String?
+  amount     Int?
+  createdAt  DateTime @default(now())
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, userId])
+  @@index([step])
+}
+
+model UserTag {
+  id       String   @id @default(uuid())
+  userId   String
+  tag      String
+  scoredAt DateTime @default(now())
+  expireAt DateTime?
+
+  @@unique([userId, tag])
+  @@index([userId])
+  @@index([tag])
+}
+
+model TriggerRule {
+  id        String   @id @default(uuid())
+  name      String
+  event     String
+  conditions Json?
+  actions   Json
+  enabled   Boolean  @default(true)
+  runOnce   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CouponEffectReport {
+  id                 String @id @default(uuid())
+  date               String
+  couponType         String // DISCOUNT / EXPERIENCE_FREE
+  source             String // MANUAL_GIFT / CAMPAIGN / EXCHANGE / RECHARGE_BONUS
+  giftedCount        Int @default(0)
+  usedCount          Int @default(0)
+  expiredCount       Int @default(0)
+  totalOrderAmount   Int @default(0)
+  avgOrderAmount     Int @default(0)
+  couponDiscountCost Int @default(0)
+  reorderUserCount   Int @default(0)
+  reorderAmount      Int @default(0)
+  createdAt          DateTime @default(now())
+
+  @@unique([date, couponType, source])
+  @@index([date])
+}
+
+// ========== P2: 权限与配置 ==========
+
+model Permission {
+  id            String           @id @default(uuid())
+  code          String           @unique
+  name          String
+  module        String
+  rolePermissions RolePermission[]
+}
+
+model Role {
+  id          String @id @default(uuid())
+  name        String @unique
+  description String?
+  isSystem    Boolean @default(false)
+  permissions RolePermission[]
+  users       User[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model SystemConfig {
+  key         String @id
+  value       String
+  type        String @default("STRING") // STRING / NUMBER / JSON / BOOLEAN
+  description String?
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+}
+
+// ========== P2: 资金池隔离（可选） ==========
+
+model UserStoreBalance {
+  id               String @id @default(uuid())
+  userId           String
+  venueId          String
+  principalBalance Int @default(0)
+  bonusBalance     Int @default(0)
+  totalRecharged   Int @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([userId, venueId])
+  @@index([userId])
+  @@index([venueId])
 }

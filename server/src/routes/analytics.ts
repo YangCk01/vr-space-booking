@@ -9,6 +9,8 @@ import {
   orderStatusDistribution,
   repurchaseRate,
   gamePopularity,
+  venueOccupancy,
+  gamePerformance,
 } from '../controllers/analyticsController'
 import { authenticate, requireRole } from '../middleware/auth'
 
@@ -23,5 +25,7 @@ router.get('/payment-methods', authenticate, requireRole('SUPER_ADMIN','ADMIN','
 router.get('/order-status', authenticate, requireRole('SUPER_ADMIN','ADMIN','OPERATOR','FINANCE','MANAGER'), orderStatusDistribution)
 router.get('/repurchase-rate', authenticate, requireRole('SUPER_ADMIN','ADMIN','OPERATOR','FINANCE','MANAGER'), repurchaseRate)
 router.get('/game-popularity', authenticate, requireRole('SUPER_ADMIN','ADMIN','OPERATOR','FINANCE','MANAGER'), gamePopularity)
+router.get('/venue-occupancy', authenticate, requireRole('SUPER_ADMIN','ADMIN','OPERATOR','FINANCE','MANAGER'), venueOccupancy)
+router.get('/game-performance', authenticate, requireRole('SUPER_ADMIN','ADMIN','OPERATOR','FINANCE','MANAGER'), gamePerformance)
 
 export default router

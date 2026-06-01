@@ -21,6 +21,13 @@ import giftRoutes from './gift'
 import reconRoutes from './recon'
 import deviceLogRoutes from './deviceLog'
 import debugRoutes from './debug'
+import campaignRoutes from './campaign'
+import triggerRuleRoutes from './triggerRules'
+import couponEffectRoutes from './couponEffects'
+import auditLogRoutes from './auditLog'
+import systemRoutes from './system'
+import roleRoutes from './role'
+import systemConfigRoutes from './systemConfig'
 
 const router = Router()
 
@@ -46,5 +53,12 @@ router.use('/gift', giftRoutes)
 router.use('/recon', reconRoutes)
 router.use('/device-logs', deviceLogRoutes)
 router.use('/debug', debugRoutes)
+router.use('/audit-logs', auditLogRoutes)
+router.use('/system', systemRoutes)
+router.use('/campaigns', campaignRoutes)
+router.use('/trigger-rules', triggerRuleRoutes)
+router.use('/coupon-effects', couponEffectRoutes)
+router.use('/roles', roleRoutes)
+router.use('/system-configs', systemConfigRoutes)
 
 export default router

@@ -7,6 +7,8 @@ import { pushNotification, pushAdminNotification } from '../controllers/notifica
 import { format } from 'date-fns'
 import { getDiscountByLevel, getPointsConfig } from '../utils/memberConfig'
 import { getUserWallet, hasEnoughBalance, deductProportional } from '../utils/wallet'
+import { checkBatchLimit } from '../services/riskControlService'
+import { logAudit } from '../middleware/auditLog'
 
 export const createValidators = [
   body('venueId').notEmpty().withMessage('场地不能为空'),
@@ -641,6 +643,17 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
       )
     }
 
+    await logAudit(req, {
+      targetType: 'ORDER',
+      targetId: order.id,
+      targetDesc: `订单 ${order.orderNo}`,
+      action: 'POST',
+      actionName: '取消订单',
+      beforeValue: { status: order.status, amount: order.amount },
+      afterValue: { status: 'CANCELLED' },
+      reason: req.body?.reason || '管理员取消订单',
+    })
+
     return success(res, result, '订单已取消')
   } catch (err) {
     return error(res, (err as Error).message, 500)
@@ -748,8 +761,183 @@ export async function refund(req: AuthenticatedRequest, res: Response) {
       `订单 ${order.orderNo} 已退款 ¥${(actualRefund / 100).toFixed(2)}，场地：${order.venueName}`
     )
 
+    await logAudit(req, {
+      targetType: 'ORDER',
+      targetId: order.id,
+      targetDesc: `订单 ${order.orderNo}`,
+      action: 'POST',
+      actionName: '订单退款',
+      beforeValue: { status: order.status, amount: order.amount, refundAmount: order.refundAmount },
+      afterValue: { status: 'REFUNDED', refundAmount: actualRefund },
+      amount: actualRefund,
+      reason: req.body?.reason || '管理员退款',
+    })
+
     return success(res, result, '退款成功')
   } catch (err) {
     return error(res, (err as Error).message, 500)
+  }
+}
+
+
+export const batchVerifyValidators = [
+  body('ids').isArray({ min: 1 }).withMessage('订单ID列表不能为空'),
+]
+
+export const batchRefundValidators = [
+  body('ids').isArray({ min: 1 }).withMessage('订单ID列表不能为空'),
+  body('reason').notEmpty().withMessage('退款原因不能为空'),
+]
+
+export async function batchVerify(req: AuthenticatedRequest, res: Response) {
+  const errors = validationResult(req)
+  if (!errors.isEmpty()) {
+    return error(res, errors.array()[0].msg, 400)
+  }
+
+  try {
+    const { ids } = req.body
+    checkBatchLimit(ids.length, 50)
+
+    const result = await prisma.$transaction(async (tx) => {
+      const orders = await tx.order.findMany({
+        where: { id: { in: ids } },
+      })
+
+      if (orders.length !== ids.length) {
+        throw new Error('部分订单不存在')
+      }
+
+      const invalidOrders = orders.filter((o) => o.status !== 'PAID')
+      if (invalidOrders.length > 0) {
+        throw new Error(`存在非已支付状态订单，无法核销`)
+      }
+
+      const updated = await tx.order.updateMany({
+        where: { id: { in: ids }, status: 'PAID' },
+        data: { status: 'COMPLETED' },
+      })
+
+      // 同步完成关联排场
+      const bookingIds = orders.map((o) => o.bookingId).filter(Boolean) as string[]
+      if (bookingIds.length > 0) {
+        await tx.booking.updateMany({
+          where: { id: { in: bookingIds } },
+          data: { status: 'COMPLETED' },
+        })
+      }
+
+      return updated.count
+    })
+
+    return success(res, { processed: result }, '批量核销成功')
+  } catch (err) {
+    return error(res, (err as Error).message, 400)
+  }
+}
+
+export async function batchRefund(req: AuthenticatedRequest, res: Response) {
+  const errors = validationResult(req)
+  if (!errors.isEmpty()) {
+    return error(res, errors.array()[0].msg, 400)
+  }
+
+  try {
+    const { ids, reason } = req.body
+    checkBatchLimit(ids.length, 50)
+
+    const { earnRate } = await getPointsConfig()
+
+    const result = await prisma.$transaction(async (tx) => {
+      const orders = await tx.order.findMany({
+        where: { id: { in: ids } },
+      })
+
+      if (orders.length !== ids.length) {
+        throw new Error('部分订单不存在')
+      }
+
+      const invalidOrders = orders.filter((o) => o.status !== 'PAID')
+      if (invalidOrders.length > 0) {
+        throw new Error('存在非已支付状态订单，无法退款')
+      }
+
+      for (const order of orders) {
+        // 恢复优惠券状态
+        if (order.userCouponId) {
+          await tx.userCoupon.update({
+            where: { id: order.userCouponId },
+            data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
+          })
+        }
+
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: 'REFUNDED',
+            refundAmount: order.amount,
+          },
+        })
+
+        if (order.userId && order.payMethod?.startsWith('BALANCE')) {
+          // 恢复双钱包
+          await tx.user.update({
+            where: { id: order.userId },
+            data: {
+              principalBalance: { increment: order.principalDeduction },
+              bonusBalance: { increment: order.bonusDeduction },
+            },
+          })
+
+          await tx.balanceTransaction.create({
+            data: {
+              userId: order.userId,
+              type: 'REFUND',
+              amount: order.amount,
+              principalAmount: order.principalDeduction,
+              bonusAmount: order.bonusDeduction,
+              totalAmount: order.amount,
+              orderId: order.id,
+              remark: `批量退款恢复余额（本金¥${order.principalDeduction / 100}+赠送¥${order.bonusDeduction / 100}）原因：${reason}`,
+            },
+          })
+
+          // 扣除已赠送的积分
+          const earned = Math.floor(order.principalDeduction / 100 * earnRate)
+          const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
+          const deduct = Math.min(earned, user?.points || 0)
+          if (deduct > 0) {
+            await tx.user.update({
+              where: { id: order.userId },
+              data: { points: { decrement: deduct } },
+            })
+            await tx.balanceTransaction.create({
+              data: {
+                userId: order.userId,
+                type: 'POINTS_REVOKE',
+                amount: 0,
+                pointsAmount: -deduct,
+                orderId: order.id,
+                remark: `批量退款收回赠送积分 ${deduct}`,
+              },
+            })
+          }
+        }
+
+        // 同步取消关联排场
+        if (order.bookingId) {
+          await tx.booking.update({
+            where: { id: order.bookingId },
+            data: { status: 'CANCELLED' },
+          })
+        }
+      }
+
+      return orders.length
+    })
+
+    return success(res, { processed: result }, '批量退款成功')
+  } catch (err) {
+    return error(res, (err as Error).message, 400)
   }
 }

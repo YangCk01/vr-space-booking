@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
@@ -12,11 +13,23 @@ import {
   Wallet,
   Shield,
   Gift,
+  FileSearch,
+  ShieldCheck,
+  ChevronDown,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 
-const menuItems = [
+interface MenuItem {
+  key: string
+  label: string
+  icon?: string
+  path?: string
+  children?: MenuItem[]
+  roles?: string[]
+}
+
+const menuItems: MenuItem[] = [
   { key: 'home', label: '首页概览', icon: 'LayoutDashboard', path: '/' },
   { key: 'venues', label: '场地管理', icon: 'Building2', path: '/venues' },
   { key: 'games', label: '内容管理', icon: 'Gamepad2', path: '/games' },
@@ -27,7 +40,18 @@ const menuItems = [
   { key: 'finance', label: '财务管理', icon: 'Wallet', path: '/finance' },
   { key: 'accounts', label: '账号管理', icon: 'Shield', path: '/accounts' },
   { key: 'member-marketing', label: '会员营销', icon: 'Gift', path: '/member-marketing' },
-  { key: 'settings', label: '系统设置', icon: 'Settings', path: '/settings' },
+  { key: 'audit-logs', label: '审计日志', icon: 'FileSearch', path: '/audit-logs', roles: ['SUPER_ADMIN', 'FINANCE'] },
+  { key: 'roles', label: '角色权限', icon: 'ShieldCheck', path: '/roles' },
+  {
+    key: 'settings',
+    label: '系统设置',
+    icon: 'Settings',
+    path: '/settings',
+    children: [
+      { key: 'system-config', label: '业务规则', path: '/system-config' },
+      { key: 'system-health', label: '系统健康', path: '/system-health' },
+    ],
+  },
 ]
 
 const iconMap: Record<string, React.ComponentType<{ className?: string; size?: number }>> = {
@@ -42,15 +66,132 @@ const iconMap: Record<string, React.ComponentType<{ className?: string; size?: n
   Wallet,
   Shield,
   Gift,
+  FileSearch,
+  ShieldCheck,
+}
+
+function isItemVisible(item: MenuItem, user: { role: string; permissions?: string[] } | null): boolean {
+  if (!user) return false
+  // Role-based filtering takes precedence
+  if (item.roles && item.roles.length > 0) {
+    return item.roles.includes(user.role)
+  }
+  // Permission-based filtering
+  if (user.permissions?.includes(item.key)) return true
+  // Fallback: always show if no explicit filtering and user has permission
+  return false
+}
+
+function SubMenu({
+  item,
+  depth = 0,
+}: {
+  item: MenuItem
+  depth?: number
+}) {
+  const location = useLocation()
+  const [expanded, setExpanded] = useState(() => {
+    if (!item.children) return false
+    return item.children.some((c) => location.pathname === c.path) || location.pathname === item.path
+  })
+
+  const Icon = item.icon ? iconMap[item.icon] : null
+  const isParentActive = location.pathname === item.path || item.children?.some((c) => location.pathname === c.path)
+
+  return (
+    <div className="space-y-0.5">
+      <div
+        className={cn(
+          'relative flex items-center gap-1 h-11 px-3 rounded-lg transition-all duration-150 group',
+          isParentActive
+            ? 'bg-vrbg-active text-vraccent-primary'
+            : 'text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary'
+        )}
+        style={{ paddingLeft: depth > 0 ? `${12 + depth * 16}px` : undefined }}
+      >
+        {isParentActive && !depth && (
+          <motion.div
+            layoutId="sidebar-active"
+            className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-vraccent-primary rounded-r-full"
+            transition={{ type: 'spring', stiffness: 350, damping: 30 }}
+          />
+        )}
+        {item.path ? (
+          <Link
+            to={item.path}
+            className="flex-1 flex items-center gap-3 min-w-0"
+          >
+            {Icon && <Icon className="w-5 h-5 shrink-0" />}
+            <span className="text-vr-body-sm font-medium truncate">{item.label}</span>
+          </Link>
+        ) : (
+          <div className="flex-1 flex items-center gap-3 min-w-0">
+            {Icon && <Icon className="w-5 h-5 shrink-0" />}
+            <span className="text-vr-body-sm font-medium truncate">{item.label}</span>
+          </div>
+        )}
+        {item.children && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              e.preventDefault()
+              setExpanded((v) => !v)
+            }}
+            className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors shrink-0"
+          >
+            <ChevronDown
+              className={cn(
+                'w-4 h-4 shrink-0 transition-transform duration-200',
+                expanded && 'rotate-180'
+              )}
+            />
+          </button>
+        )}
+      </div>
+
+      {item.children && expanded && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          className="space-y-0.5"
+        >
+          {item.children.map((child) => {
+            const isActive = location.pathname === child.path
+            return (
+              <Link
+                key={child.key}
+                to={child.path || '#'}
+                className={cn(
+                  'relative flex items-center h-10 px-3 rounded-lg transition-all duration-150 text-vr-body-sm',
+                  isActive
+                    ? 'bg-vrbg-active text-vraccent-primary font-medium'
+                    : 'text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary'
+                )}
+                style={{ paddingLeft: `${12 + (depth + 1) * 16}px` }}
+              >
+                {isActive && (
+                  <motion.div
+                    layoutId="sidebar-sub-active"
+                    className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-vraccent-primary rounded-r-full"
+                    transition={{ type: 'spring', stiffness: 350, damping: 30 }}
+                  />
+                )}
+                <span className="w-1.5 h-1.5 rounded-full mr-2 shrink-0 bg-current opacity-40" />
+                {child.label}
+              </Link>
+            )
+          })}
+        </motion.div>
+      )}
+    </div>
+  )
 }
 
 export default function Sidebar() {
   const location = useLocation()
   const { user } = useAuthStore()
 
-  const visibleItems = menuItems.filter((item) =>
-    user?.permissions?.includes(item.key)
-  )
+  const visibleItems = menuItems.filter((item) => isItemVisible(item, user))
 
   return (
     <div className="h-full flex flex-col">
@@ -71,13 +212,17 @@ export default function Sidebar() {
       {/* Menu Items */}
       <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
         {visibleItems.map((item) => {
-          const Icon = iconMap[item.icon]
+          if (item.children) {
+            return <SubMenu key={item.key} item={item} />
+          }
+
+          const Icon = item.icon ? iconMap[item.icon] : null
           const isActive = location.pathname === item.path
 
           return (
             <Link
               key={item.key}
-              to={item.path}
+              to={item.path || '#'}
               className={cn(
                 'relative flex items-center gap-3 h-11 px-3 rounded-lg transition-all duration-150 group',
                 isActive

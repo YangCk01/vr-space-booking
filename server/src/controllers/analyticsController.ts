@@ -263,6 +263,211 @@ export async function revenue(req: AuthenticatedRequest, res: Response) {
   }
 }
 
+/* ─── Venue occupancy heatmap ─── */
+export async function venueOccupancy(req: AuthenticatedRequest, res: Response) {
+  try {
+    const { venueId, startDate, endDate } = req.query
+    if (!venueId || !startDate || !endDate) {
+      return error(res, 'venueId, startDate, endDate 必填', 400)
+    }
+
+    const venue = await prisma.venue.findUnique({
+      where: { id: venueId as string },
+      select: { capacity: true, name: true },
+    })
+    if (!venue) return error(res, '场地不存在', 404)
+
+    const s = new Date(startDate as string)
+    const e = new Date(endDate as string)
+    e.setHours(23, 59, 59, 999)
+
+    const bookings = await prisma.booking.findMany({
+      where: {
+        venueId: venueId as string,
+        date: { gte: s, lte: e },
+        status: { not: 'CANCELLED' },
+      },
+      select: {
+        date: true,
+        startTime: true,
+        personCount: true,
+      },
+    })
+
+    // 按 date + hour 聚合
+    const hourMap = new Map<string, { bookings: number; totalPlayers: number }>()
+    for (const b of bookings) {
+      const dateStr = format(b.date, 'yyyy-MM-dd')
+      const hour = parseInt(b.startTime.split(':')[0], 10)
+      const key = `${dateStr}_${hour}`
+      const existing = hourMap.get(key) || { bookings: 0, totalPlayers: 0 }
+      existing.bookings += 1
+      existing.totalPlayers += b.personCount
+      hourMap.set(key, existing)
+    }
+
+    const data: {
+      date: string
+      hour: number
+      occupancyRate: number
+      bookings: number
+      totalPlayers: number
+    }[] = []
+
+    for (const [key, val] of hourMap) {
+      const [date, hourStr] = key.split('_')
+      const hour = parseInt(hourStr, 10)
+      const occupancyRate = venue.capacity > 0
+        ? Math.min(1, Number((val.totalPlayers / venue.capacity).toFixed(2)))
+        : 0
+      data.push({
+        date,
+        hour,
+        occupancyRate,
+        bookings: val.bookings,
+        totalPlayers: val.totalPlayers,
+      })
+    }
+
+    data.sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date)
+      return a.hour - b.hour
+    })
+
+    return success(res, data)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+/* ─── Game performance ─── */
+export async function gamePerformance(req: AuthenticatedRequest, res: Response) {
+  try {
+    const { startDate, endDate } = req.query
+    if (!startDate || !endDate) {
+      return error(res, 'startDate, endDate 必填', 400)
+    }
+
+    const s = new Date(startDate as string)
+    const e = new Date(endDate as string)
+    e.setHours(23, 59, 59, 999)
+
+    const games = await prisma.game.findMany({
+      select: { id: true, title: true },
+    })
+
+    const bookings = await prisma.booking.findMany({
+      where: {
+        date: { gte: s, lte: e },
+        status: { not: 'CANCELLED' },
+        gameId: { not: null },
+      },
+      select: {
+        gameId: true,
+        personCount: true,
+        venueId: true,
+        userId: true,
+      },
+    })
+
+    // 获取场地容量
+    const venues = await prisma.venue.findMany({
+      select: { id: true, capacity: true },
+    })
+    const venueCapacityMap = new Map(venues.map((v) => [v.id, v.capacity]))
+
+    // 按 game 聚合
+    const gameMap = new Map<string, {
+      bookingCount: number
+      totalPlayers: number
+      totalCapacity: number
+      userIds: Set<string>
+    }>()
+
+    for (const b of bookings) {
+      if (!b.gameId) continue
+      const g = gameMap.get(b.gameId) || {
+        bookingCount: 0,
+        totalPlayers: 0,
+        totalCapacity: 0,
+        userIds: new Set<string>(),
+      }
+      g.bookingCount += 1
+      g.totalPlayers += b.personCount
+      g.totalCapacity += (venueCapacityMap.get(b.venueId) || 0)
+      if (b.userId) g.userIds.add(b.userId)
+      gameMap.set(b.gameId, g)
+    }
+
+    // 复购率：查询这些用户在此日期范围内是否多次预约同一游戏
+    const gameIds = Array.from(gameMap.keys())
+    let userGameBookings: { gameId: string; userId: string }[] = []
+    if (gameIds.length > 0) {
+      const rows = await prisma.booking.findMany({
+        where: {
+          date: { gte: s, lte: e },
+          status: { not: 'CANCELLED' },
+          gameId: { in: gameIds },
+          userId: { not: null },
+        },
+        select: { gameId: true, userId: true },
+      })
+      userGameBookings = rows
+        .filter((r) => r.gameId !== null && r.userId !== null)
+        .map((r) => ({ gameId: r.gameId as string, userId: r.userId as string }))
+    }
+
+    const userGameCount = new Map<string, number>()
+    for (const b of userGameBookings) {
+      const key = `${b.gameId}_${b.userId}`
+      userGameCount.set(key, (userGameCount.get(key) || 0) + 1)
+    }
+
+    const data = games.map((game) => {
+      const stats = gameMap.get(game.id)
+      if (!stats) {
+        return {
+          id: game.id,
+          title: game.title,
+          bookingCount: 0,
+          avgOccupancyRate: 0,
+          repurchaseRate: 0,
+        }
+      }
+
+      const avgOccupancyRate = stats.totalCapacity > 0
+        ? Math.round((stats.totalPlayers / stats.totalCapacity) * 100)
+        : 0
+
+      let repeatUsers = 0
+      for (const userId of stats.userIds) {
+        const key = `${game.id}_${userId}`
+        if ((userGameCount.get(key) || 0) > 1) {
+          repeatUsers += 1
+        }
+      }
+      const repurchaseRate = stats.userIds.size > 0
+        ? Math.round((repeatUsers / stats.userIds.size) * 100)
+        : 0
+
+      return {
+        id: game.id,
+        title: game.title,
+        bookingCount: stats.bookingCount,
+        avgOccupancyRate,
+        repurchaseRate,
+      }
+    })
+
+    // 按场次排序
+    data.sort((a, b) => b.bookingCount - a.bookingCount)
+
+    return success(res, data)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
 /* ─── Venue revenue ranking ─── */
 export async function venueRevenueRanking(req: AuthenticatedRequest, res: Response) {
   try {

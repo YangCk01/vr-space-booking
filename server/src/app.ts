@@ -4,6 +4,12 @@ import path from 'path'
 import routes from './routes'
 import { errorHandler } from './middleware/errorHandler'
 import { startReconJob } from './jobs/reconciliationJob'
+import { startDataConsistencyJob } from './jobs/dataConsistencyJob'
+import { startUserTagJob } from './jobs/userTagJob'
+import { startTriggerJob } from './jobs/triggerJob'
+import { startCouponEffectJob } from './jobs/couponEffectJob'
+import { loadConfig } from './services/configService'
+import { seedPermissions } from './utils/seedPermissions'
 
 const app = express()
 
@@ -37,5 +43,18 @@ app.use(errorHandler)
 
 // 启动对账定时任务
 startReconJob()
+
+// 启动数据一致性校验定时任务
+startDataConsistencyJob()
+
+// 启动 P1 运营增长定时任务
+startUserTagJob()
+startTriggerJob()
+startCouponEffectJob()
+
+// 启动时加载系统配置并初始化权限
+seedPermissions()
+  .then(() => loadConfig())
+  .catch((err) => console.error('[App] Seed/Config init error:', err))
 
 export default app

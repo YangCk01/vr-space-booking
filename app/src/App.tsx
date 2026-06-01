@@ -14,6 +14,10 @@ import Games from './pages/Games'
 import Accounts from './pages/Accounts'
 import Reservation from './pages/Reservation'
 import Login from './pages/Login'
+import AuditLogs from './pages/AuditLogs'
+import SystemConfig from './pages/SystemConfig'
+import Roles from './pages/Roles'
+import SystemHealth from './pages/SystemHealth'
 
 export default function App() {
   return (
@@ -21,20 +25,24 @@ export default function App() {
       <Toaster position="top-right" />
       <AuthGuard>
         <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/" element={<Home />} />
-        <Route path="/venues" element={<Venues />} />
-        <Route path="/booking" element={<Booking />} />
-        <Route path="/orders" element={<Orders />} />
-        <Route path="/users" element={<Users />} />
-        <Route path="/analytics" element={<Analytics />} />
-        <Route path="/finance" element={<Finance />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/member-marketing" element={<MemberMarketing />} />
-        <Route path="/games" element={<Games />} />
-        <Route path="/accounts" element={<Accounts />} />
-        <Route path="/reservation" element={<Reservation />} />
-      </Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/" element={<Home />} />
+          <Route path="/venues" element={<Venues />} />
+          <Route path="/booking" element={<Booking />} />
+          <Route path="/orders" element={<Orders />} />
+          <Route path="/users" element={<Users />} />
+          <Route path="/analytics" element={<Analytics />} />
+          <Route path="/finance" element={<Finance />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/member-marketing" element={<MemberMarketing />} />
+          <Route path="/games" element={<Games />} />
+          <Route path="/accounts" element={<Accounts />} />
+          <Route path="/reservation" element={<Reservation />} />
+          <Route path="/audit-logs" element={<AuditLogs />} />
+          <Route path="/system-config" element={<SystemConfig />} />
+          <Route path="/roles" element={<Roles />} />
+          <Route path="/system-health" element={<SystemHealth />} />
+        </Routes>
       </AuthGuard>
     </>
   )

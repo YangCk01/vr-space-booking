@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../types'
 import { prisma } from '../utils/prisma'
 import { success, error } from '../utils/response'
 import { startOfDay, endOfDay, subDays, format } from 'date-fns'
+import { logAudit } from '../middleware/auditLog'
 
 /**
  * 获取每日财务报表
@@ -38,6 +39,10 @@ export async function getDailyReport(req: AuthenticatedRequest, res: Response) {
         directRevenue: 0,
         memberPrincipalRevenue: 0,
         totalRecognizedRevenue: 0,
+        prepaidDirectRevenue: 0,
+        confirmedDirectRevenue: 0,
+        prepaidMemberRevenue: 0,
+        confirmedMemberRevenue: 0,
         pointsExchangeCost: 0,
         couponDiscountCost: 0,
         pointsGiftCost: 0,
@@ -500,24 +505,46 @@ export async function runDailyReport(dateStr: string) {
     _sum: { refundAmount: true }
   })
 
-  // 5.2 确权营收表
-  const directRevenue = await prisma.order.aggregate({
+  // 5.2 确权营收表（兼容字段 + 新拆分字段）
+  const prepaidDirectRevenue = await prisma.order.aggregate({
     where: {
-      status: { in: ['PAID', 'COMPLETED'] },
+      status: 'PAID',
       payMethod: { in: ['WECHAT', 'ALIPAY'] },
       paidAt: { gte: start, lte: end }
     },
     _sum: { amount: true }
   })
 
-  const memberPrincipalRevenue = await prisma.order.aggregate({
+  const confirmedDirectRevenue = await prisma.order.aggregate({
     where: {
-      status: { in: ['PAID', 'COMPLETED'] },
+      status: 'COMPLETED',
+      payMethod: { in: ['WECHAT', 'ALIPAY'] },
+      paidAt: { gte: start, lte: end }
+    },
+    _sum: { amount: true }
+  })
+
+  const prepaidMemberRevenue = await prisma.order.aggregate({
+    where: {
+      status: 'PAID',
       principalDeduction: { gt: 0 },
       paidAt: { gte: start, lte: end }
     },
     _sum: { principalDeduction: true }
   })
+
+  const confirmedMemberRevenue = await prisma.order.aggregate({
+    where: {
+      status: 'COMPLETED',
+      principalDeduction: { gt: 0 },
+      paidAt: { gte: start, lte: end }
+    },
+    _sum: { principalDeduction: true }
+  })
+
+  // 兼容字段：prepaid + confirmed
+  const dr = (prepaidDirectRevenue._sum.amount || 0) + (confirmedDirectRevenue._sum.amount || 0)
+  const mpr = (prepaidMemberRevenue._sum.principalDeduction || 0) + (confirmedMemberRevenue._sum.principalDeduction || 0)
 
   const pointsExchangeCost = await prisma.pointsExchange.aggregate({
     where: {
@@ -605,8 +632,10 @@ export async function runDailyReport(dateStr: string) {
   const rpi = rechargePrincipalIn._sum.amount || 0
   const dpi = directPayIn._sum.amount || 0
   const ro = refundOut._sum.refundAmount || 0
-  const dr = directRevenue._sum.amount || 0
-  const mpr = memberPrincipalRevenue._sum.principalDeduction || 0
+  const pdr = prepaidDirectRevenue._sum.amount || 0
+  const cdr = confirmedDirectRevenue._sum.amount || 0
+  const pmr = prepaidMemberRevenue._sum.principalDeduction || 0
+  const cmr = confirmedMemberRevenue._sum.principalDeduction || 0
   const pec = (pointsExchangeCost._sum?.pointsCost || 0) + (pointsOrderCost._sum?.pointsCost || 0)
   const pgc = pointsGiftCost._sum?.pointsAmount || 0
   const cdc = couponDiscountCost._sum.couponDiscount || 0
@@ -624,9 +653,13 @@ export async function runDailyReport(dateStr: string) {
       directPayIn: dpi,
       refundOut: ro,
       netCashFlow: rpi + dpi - ro,
-      directRevenue: dr,
-      memberPrincipalRevenue: mpr,
-      totalRecognizedRevenue: dr + mpr,
+      directRevenue: pdr + cdr,
+      memberPrincipalRevenue: pmr + cmr,
+      totalRecognizedRevenue: pdr + cdr + pmr + cmr,
+      prepaidDirectRevenue: pdr,
+      confirmedDirectRevenue: cdr,
+      prepaidMemberRevenue: pmr,
+      confirmedMemberRevenue: cmr,
       pointsExchangeCost: pec,
       pointsGiftCost: pgc,
       couponDiscountCost: cdc,
@@ -645,9 +678,13 @@ export async function runDailyReport(dateStr: string) {
       directPayIn: dpi,
       refundOut: ro,
       netCashFlow: rpi + dpi - ro,
-      directRevenue: dr,
-      memberPrincipalRevenue: mpr,
-      totalRecognizedRevenue: dr + mpr,
+      directRevenue: pdr + cdr,
+      memberPrincipalRevenue: pmr + cmr,
+      totalRecognizedRevenue: pdr + cdr + pmr + cmr,
+      prepaidDirectRevenue: pdr,
+      confirmedDirectRevenue: cdr,
+      prepaidMemberRevenue: pmr,
+      confirmedMemberRevenue: cmr,
       pointsExchangeCost: pec,
       pointsGiftCost: pgc,
       couponDiscountCost: cdc,
@@ -1367,6 +1404,18 @@ export async function fixReconcileDiff(req: AuthenticatedRequest, res: Response)
         : []),
     ])
 
+    await logAudit(req, {
+      targetType: 'RECONCILE',
+      targetId: targetId,
+      targetDesc: `对账差异修复 - ${type}`,
+      action: 'POST',
+      actionName: '修复对账差异',
+      beforeValue: { diff },
+      afterValue: { txData, userId },
+      amount: Math.abs(diff),
+      reason: `修复对账差异: ${type}, diff=${diff}`,
+    })
+
     return success(res, null, '修复成功，已创建调整流水并同步更新用户余额')
   } catch (err) {
     return error(res, (err as Error).message, 500)
@@ -1401,18 +1450,34 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
       _sum: { refundAmount: true },
     })
 
-    // 2. 确权营收累计
-    const directRevenueSum = await prisma.order.aggregate({
+    // 2. 确权营收累计（含预付/已核销拆分）
+    const prepaidDirectRevenueSum = await prisma.order.aggregate({
       where: {
-        status: { in: ['PAID', 'COMPLETED'] },
+        status: 'PAID',
         payMethod: { in: ['WECHAT', 'ALIPAY'] },
       },
       _sum: { amount: true },
     })
 
-    const memberPrincipalRevenueSum = await prisma.order.aggregate({
+    const confirmedDirectRevenueSum = await prisma.order.aggregate({
       where: {
-        status: { in: ['PAID', 'COMPLETED'] },
+        status: 'COMPLETED',
+        payMethod: { in: ['WECHAT', 'ALIPAY'] },
+      },
+      _sum: { amount: true },
+    })
+
+    const prepaidMemberRevenueSum = await prisma.order.aggregate({
+      where: {
+        status: 'PAID',
+        principalDeduction: { gt: 0 },
+      },
+      _sum: { principalDeduction: true },
+    })
+
+    const confirmedMemberRevenueSum = await prisma.order.aggregate({
+      where: {
+        status: 'COMPLETED',
         principalDeduction: { gt: 0 },
       },
       _sum: { principalDeduction: true },
@@ -1481,8 +1546,10 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
     const rpi = rechargeSum._sum?.amount || 0
     const dpi = directPaySum._sum?.amount || 0
     const ro = refundSum._sum?.refundAmount || 0
-    const dr = directRevenueSum._sum?.amount || 0
-    const mpr = memberPrincipalRevenueSum._sum?.principalDeduction || 0
+    const pdr = prepaidDirectRevenueSum._sum?.amount || 0
+    const cdr = confirmedDirectRevenueSum._sum?.amount || 0
+    const pmr = prepaidMemberRevenueSum._sum?.principalDeduction || 0
+    const cmr = confirmedMemberRevenueSum._sum?.principalDeduction || 0
     const pec = (pointsExchangeCostSum._sum?.pointsCost || 0) + (pointsOrderCostSum._sum?.pointsCost || 0)
     const pgc = pointsGiftCostSum._sum?.pointsAmount || 0
     const cdc = couponDiscountCostSum._sum?.couponDiscount || 0
@@ -1501,9 +1568,13 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
       totalNetCashFlow: rpi + dpi - ro,
 
       // 确权营收累计
-      totalDirectRevenue: dr,
-      totalMemberPrincipalRevenue: mpr,
-      totalRecognizedRevenue: dr + mpr,
+      totalDirectRevenue: pdr + cdr,
+      totalMemberPrincipalRevenue: pmr + cmr,
+      totalRecognizedRevenue: pdr + cdr + pmr + cmr,
+      totalPrepaidDirectRevenue: pdr,
+      totalConfirmedDirectRevenue: cdr,
+      totalPrepaidMemberRevenue: pmr,
+      totalConfirmedMemberRevenue: cmr,
       totalPointsExchangeCost: pec,
       totalPointsGiftCost: pgc,
       totalCouponDiscountCost: cdc,

@@ -20,8 +20,36 @@ export interface RegisterInput {
   role?: UserRole
 }
 
-function generateTokens(userId: string, phone: string, role: UserRole, name: string, managedVenueIds?: string[]) {
-  const payload: any = { userId, phone, role, name }
+async function getUserPermissions(userId: string): Promise<string[]> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      roles: {
+        include: {
+          permissions: {
+            include: { permission: true },
+          },
+        },
+      },
+    },
+  })
+
+  if (!user) return []
+
+  const permissionSet = new Set<string>()
+  for (const role of user.roles) {
+    for (const rp of role.permissions) {
+      if (rp.permission?.code) {
+        permissionSet.add(rp.permission.code)
+      }
+    }
+  }
+  return Array.from(permissionSet)
+}
+
+async function generateTokens(userId: string, phone: string, role: UserRole, name: string, managedVenueIds?: string[]) {
+  const permissions = await getUserPermissions(userId)
+  const payload: any = { userId, phone, role, name, permissions }
   if (managedVenueIds && managedVenueIds.length > 0) {
     payload.managedVenueIds = managedVenueIds
   }
@@ -35,7 +63,7 @@ function generateTokens(userId: string, phone: string, role: UserRole, name: str
     JWT_REFRESH_SECRET,
     { expiresIn: JWT_REFRESH_EXPIRES_IN as jwt.SignOptions['expiresIn'] }
   )
-  return { accessToken, refreshToken }
+  return { accessToken, refreshToken, permissions }
 }
 
 export async function login(input: LoginInput) {
@@ -68,7 +96,7 @@ export async function login(input: LoginInput) {
     managedVenueIds = vms.map((v) => v.venueId)
   }
 
-  const tokens = generateTokens(user.id, user.phone, user.role, user.name, managedVenueIds)
+  const tokens = await generateTokens(user.id, user.phone, user.role, user.name, managedVenueIds)
 
   return {
     user: {
@@ -84,8 +112,10 @@ export async function login(input: LoginInput) {
       balance: user.principalBalance + user.bonusBalance, // 兼容旧前端
       points: user.points,
       managedVenueIds,
+      permissions: tokens.permissions,
     },
-    ...tokens,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
   }
 }
 
@@ -109,7 +139,7 @@ export async function register(input: RegisterInput) {
     },
   })
 
-  const tokens = generateTokens(user.id, user.phone, user.role, user.name)
+  const tokens = await generateTokens(user.id, user.phone, user.role, user.name)
 
   return {
     user: {
@@ -122,8 +152,10 @@ export async function register(input: RegisterInput) {
       bonusBalance: user.bonusBalance,
       balance: user.principalBalance + user.bonusBalance,
       points: user.points,
+      permissions: tokens.permissions,
     },
-    ...tokens,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
   }
 }
 
@@ -154,7 +186,7 @@ export async function refreshToken(refreshToken: string) {
       managedVenueIds = vms.map((v) => v.venueId)
     }
 
-    const tokens = generateTokens(user.id, user.phone, user.role, user.name, managedVenueIds)
+    const tokens = await generateTokens(user.id, user.phone, user.role, user.name, managedVenueIds)
     return tokens
   } catch {
     throw new Error('刷新令牌无效或已过期')

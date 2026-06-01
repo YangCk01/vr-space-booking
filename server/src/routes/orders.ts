@@ -8,9 +8,14 @@ import {
   pay,
   cancel,
   refund,
+  batchVerify,
+  batchRefund,
   createValidators,
+  batchVerifyValidators,
+  batchRefundValidators,
 } from '../controllers/orderController'
 import { authenticate, optionalAuthenticate, requireRole } from '../middleware/auth'
+import { requirePermission } from '../middleware/rbac'
 import { logOperation } from '../middleware/operationLog'
 
 const router = Router()
@@ -23,5 +28,7 @@ router.put('/:id/status', authenticate, logOperation({ type: '修改订单状态
 router.put('/:id/pay', authenticate, logOperation({ type: '订单支付', content: (req) => `订单支付: ${req.params.id}` }), pay)
 router.put('/:id/cancel', authenticate, logOperation({ type: '取消订单', content: (req) => `取消订单: ${req.params.id}` }), cancel)
 router.put('/:id/refund', authenticate, logOperation({ type: '订单退款', content: (req) => `订单退款: ${req.params.id}` }), refund)
+router.post('/batch-verify', authenticate, requirePermission('order:verify'), batchVerifyValidators, logOperation({ type: '批量核销订单', content: (req) => `批量核销 ${req.body.ids?.length || 0} 个订单` }), batchVerify)
+router.post('/batch-refund', authenticate, requirePermission('order:refund'), batchRefundValidators, logOperation({ type: '批量退款订单', content: (req) => `批量退款 ${req.body.ids?.length || 0} 个订单` }), batchRefund)
 
 export default router
