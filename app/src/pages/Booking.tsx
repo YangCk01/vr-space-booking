@@ -289,7 +289,7 @@ export default function Booking() {
   const [modalTime, setModalTime] = useState('')
   const [bookingDate, setBookingDate] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [bookingForm, setBookingForm] = useState({
-    type: 'team' as 'team' | 'individual' | 'corporate' | 'maintenance',
+    type: 'team' as 'team' | 'individual' | 'corporate',
     venue: venues[0]?.id || '',
     gameId: '',
     person: '',
@@ -1276,7 +1276,6 @@ export default function Booking() {
                       { key: 'team', label: '团队预约' },
                       { key: 'individual', label: '散客预约' },
                       { key: 'corporate', label: '企业活动' },
-                      { key: 'maintenance', label: '维护' },
                     ] as const).map((opt) => (
                       <label key={opt.key} className="flex items-center gap-2 cursor-pointer">
                         <input
@@ -1470,11 +1469,11 @@ export default function Booking() {
                 >
                   <div>
                     <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">
-                      {bookingForm.type === 'corporate' ? '企业名称' : bookingForm.type === 'maintenance' ? '维护人员' : '预约人'}
+                      {bookingForm.type === 'corporate' ? '企业名称' : '预约人'}
                     </label>
                     <input
                       type="text"
-                      placeholder={bookingForm.type === 'corporate' ? '请输入企业名称' : bookingForm.type === 'maintenance' ? '请输入维护人员姓名' : '请输入预约人姓名'}
+                      placeholder={bookingForm.type === 'corporate' ? '请输入企业名称' : '请输入预约人姓名'}
                       value={bookingForm.person}
                       onChange={(e) =>
                         setBookingForm((prev) => ({ ...prev, person: e.target.value }))
@@ -1678,7 +1677,7 @@ export default function Booking() {
                         personPhone: bookingForm.phone,
                         personCount: bookingForm.count,
                         note: bookingForm.note,
-                        title: `${bookingForm.type === 'corporate' ? '企业' : bookingForm.type === 'team' ? '团队' : bookingForm.type === 'maintenance' ? '维护' : '散客'}预约`,
+                        title: `${bookingForm.type === 'corporate' ? '企业' : bookingForm.type === 'team' ? '团队' : '散客'}预约`,
                         gameId: bookingForm.gameId,
                       })
                       // 同步创建关联订单

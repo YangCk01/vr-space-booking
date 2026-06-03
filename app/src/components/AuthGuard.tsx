@@ -70,6 +70,17 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     initAuth()
   }, [navigate, location.pathname, setUser, setAuthenticated, setLoading])
 
+  // 检测旧格式 permissions（菜单 key 格式），自动清理并重新登录
+  useEffect(() => {
+    if (isLoading || !isAuthenticated || !user?.permissions) return
+    const oldMenuKeys = ['home', 'venues', 'games', 'booking', 'orders', 'users', 'analytics', 'finance', 'accounts', 'settings', 'audit-logs']
+    const hasOldFormat = user.permissions.some((p) => oldMenuKeys.includes(p))
+    if (hasOldFormat) {
+      useAuthStore.getState().logout()
+      navigate('/login')
+    }
+  }, [isLoading, isAuthenticated, user, navigate])
+
   // 权限路由守卫（用 useEffect 避免渲染期调用 setState）
   useEffect(() => {
     if (isLoading || !isAuthenticated || !user?.permissions) return
