@@ -99,7 +99,48 @@ export async function summary(req: Request, res: Response) {
     discount.avgOrderAmount = discountUsed > 0 ? Math.round(discount.totalOrderAmount / discountUsed) : 0
     experience.avgOrderAmount = experienceUsed > 0 ? Math.round(experience.totalOrderAmount / experienceUsed) : 0
 
-    return success(res, { discount, experience })
+    const totalGifted = discount.giftedCount + experience.giftedCount
+    const totalUsed = discount.usedCount + experience.usedCount
+    const totalDiscountCost = discount.couponDiscountCost + experience.couponDiscountCost
+    const useRate = totalGifted > 0 ? (totalUsed / totalGifted) * 100 : 0
+
+    /* ─── 活动积分发放统计（排除手动赠送/体验赠送）─── */
+    const pointsWhere: any = {
+      type: 'POINTS_GIFT',
+      NOT: { remark: { startsWith: '手动赠送积分' } },
+    }
+    if (startDate || endDate) {
+      pointsWhere.createdAt = {}
+      if (startDate) {
+        const s = new Date(startDate)
+        s.setHours(0, 0, 0, 0)
+        pointsWhere.createdAt.gte = s
+      }
+      if (endDate) {
+        const e = new Date(endDate)
+        e.setHours(23, 59, 59, 999)
+        pointsWhere.createdAt.lte = e
+      }
+    }
+
+    const pointsTxs = await prisma.balanceTransaction.findMany({
+      where: pointsWhere,
+      select: { userId: true, pointsAmount: true },
+    })
+
+    const pointsTotal = pointsTxs.reduce((sum, tx) => sum + (tx.pointsAmount || 0), 0)
+    const pointsRecipients = new Set(pointsTxs.map((tx) => tx.userId)).size
+
+    return success(res, {
+      totalGifted,
+      totalUsed,
+      useRate: Number(useRate.toFixed(1)),
+      totalDiscountCost,
+      discount,
+      experience,
+      pointsTotal,
+      pointsRecipients,
+    })
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }

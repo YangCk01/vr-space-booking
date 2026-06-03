@@ -16,7 +16,11 @@ async function getMemberPublicConfig() {
 
 const LEVEL_ORDER = ['NORMAL', 'MEMBER', 'VIP', 'VIP_PLUS']
 
-const enumToConfigKey: Record<string, string> = { VIP_PLUS: 'VIP+' }
+function normalizeLevelKey(key?: string): string {
+  if (!key) return ''
+  if (key === 'VIP+' || key === 'VIP_PLUS') return 'VIP_PLUS'
+  return key
+}
 
 export default function MemberBenefits() {
   const navigate = useNavigate()
@@ -33,15 +37,15 @@ export default function MemberBenefits() {
   })
 
   const levels = memberConfig?.levels || []
-  const currentLevelKey = enumToConfigKey[user?.level || ''] || user?.level || 'NORMAL'
-  const currentLevel = levels.find((l) => l.key === currentLevelKey)
+  const currentLevelKey = user?.level || 'NORMAL'
+  const currentLevel = levels.find((l) => normalizeLevelKey(l.key) === normalizeLevelKey(currentLevelKey))
   const currentIndex = LEVEL_ORDER.indexOf(currentLevelKey)
   const nextLevelKey = currentIndex < LEVEL_ORDER.length - 1 ? LEVEL_ORDER[currentIndex + 1] : null
-  const nextLevel = nextLevelKey ? levels.find((l) => l.key === (enumToConfigKey[nextLevelKey] || nextLevelKey)) : null
+  const nextLevel = nextLevelKey ? levels.find((l) => normalizeLevelKey(l.key) === normalizeLevelKey(nextLevelKey)) : null
 
   // 计算升级进度：根据充值配置匹配下一档
   const nextConfig = nextLevelKey
-    ? rechargeConfigs?.find((c) => c.level === nextLevelKey || c.level === (enumToConfigKey[nextLevelKey] || nextLevelKey))
+    ? rechargeConfigs?.find((c) => normalizeLevelKey(c.level) === normalizeLevelKey(nextLevelKey))
     : null
 
   // 当前累计充值本金（近似用 totalSpent 作为已消费本金，实际升级看单次充值金额）
@@ -157,9 +161,9 @@ export default function MemberBenefits() {
           <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3">等级体系</h3>
           <div className="space-y-2">
             {LEVEL_ORDER.map((key, idx) => {
-              const level = levels.find((l) => l.key === (enumToConfigKey[key] || key))
+              const level = levels.find((l) => normalizeLevelKey(l.key) === normalizeLevelKey(key))
               const isCurrent = key === currentLevelKey
-              const config = rechargeConfigs?.find((c) => c.level === key || c.level === (enumToConfigKey[key] || key))
+              const config = rechargeConfigs?.find((c) => normalizeLevelKey(c.level) === normalizeLevelKey(key))
               return (
                 <div
                   key={key}

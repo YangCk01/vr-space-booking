@@ -6,7 +6,7 @@ import { success, error, paginated } from '../utils/response'
 /* ─── 1. 创建规则 ─── */
 export async function create(req: AuthenticatedRequest, res: Response) {
   try {
-    const { name, event, conditions, actions, runOnce } = req.body
+    const { name, event, conditions, actions, runOnce, campaignId } = req.body
     if (!name || !event) {
       return error(res, '规则名称和触发事件必填', 400)
     }
@@ -21,6 +21,7 @@ export async function create(req: AuthenticatedRequest, res: Response) {
         conditions: conditions || {},
         actions,
         runOnce: runOnce !== false,
+        campaignId: campaignId || null,
       },
     })
 
@@ -60,7 +61,7 @@ export async function list(req: Request, res: Response) {
 export async function update(req: AuthenticatedRequest, res: Response) {
   try {
     const id = req.params.id as string
-    const { name, event, conditions, actions, runOnce } = req.body
+    const { name, event, conditions, actions, runOnce, campaignId } = req.body
 
     const rule = await prisma.triggerRule.update({
       where: { id },
@@ -70,6 +71,7 @@ export async function update(req: AuthenticatedRequest, res: Response) {
         ...(conditions !== undefined && { conditions }),
         ...(actions !== undefined && { actions }),
         ...(runOnce !== undefined && { runOnce }),
+        ...(campaignId !== undefined && { campaignId: campaignId || null }),
       },
     })
 

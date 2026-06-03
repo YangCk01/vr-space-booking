@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { format } from 'date-fns'
@@ -47,7 +47,7 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from '@/components/ui/alert-dialog'
-import { getUsers, createUser, updateUser, deleteUser } from '@/api/users'
+import { getUsers, createUser, updateUser, deleteUser, batchGiftPoints, batchGiftCoupon } from '@/api/users'
 import type { User as ApiUser } from '@/api/users'
 import { getSettings } from '@/api/settings'
 import { giftPoints, giftCoupon, getPointsGiftRecords, getCouponGiftRecords } from '@/api/gift'
@@ -235,6 +235,7 @@ function UserDetailSheet({
     { label: '真实姓名', value: user.name, icon: <User className="w-4 h-4 text-vrtext-muted" /> },
     { label: '手机号', value: user.phone, icon: <Phone className="w-4 h-4 text-vrtext-muted" /> },
     { label: '邮箱', value: user.email || '-', icon: <Mail className="w-4 h-4 text-vrtext-muted" /> },
+    { label: '生日', value: user.birthday ? formatDate(user.birthday) : '-', icon: <Calendar className="w-4 h-4 text-vrtext-muted" /> },
     { label: '会员等级', value: <LevelBadge level={user.level} levelsConfig={levelsConfig} />, icon: <Crown className="w-4 h-4 text-vrtext-muted" />, isBadge: true },
     { label: '注册时间', value: formatDateTime(user.registerDate), icon: <Calendar className="w-4 h-4 text-vrtext-muted" /> },
     { label: '最近登录', value: formatDateTime(user.lastLogin), icon: <Activity className="w-4 h-4 text-vrtext-muted" /> },
@@ -416,9 +417,11 @@ function UserDetailSheet({
                       <div>
                         <p className="text-vr-body-sm text-vrtext-primary">{record.name}</p>
                         <p className="text-vr-caption text-vrtext-muted">
-                          {record.giftReason === 'COMPLAINT' ? '客诉' :
-                           record.giftReason === 'EQUIPMENT_FAILURE' ? '设备故障' :
-                           record.giftReason === 'ENTERTAIN_CLIENT' ? '招待客户' : '备注'}
+                          {record.source === 'CAMPAIGN'
+                            ? (record.giftReason || '活动发放')
+                            : record.giftReason === 'COMPLAINT' ? '客诉' :
+                              record.giftReason === 'EQUIPMENT_FAILURE' ? '设备故障' :
+                              record.giftReason === 'ENTERTAIN_CLIENT' ? '招待客户' : '备注'}
                           {record.giftRemark ? ` - ${record.giftRemark}` : ''}
                         </p>
                       </div>
@@ -475,16 +478,16 @@ function UserEditSheet({
   const [form, setForm] = useState<Partial<ApiUser>>({})
 
   // Sync form when user changes
-  useMemo(() => {
+  useEffect(() => {
     if (user) {
       setForm({
         name: user.name,
         phone: user.phone,
         email: user.email || '',
-        level: fallbackLevelMap[user.level] || user.level,
+        birthday: user.birthday ? user.birthday.slice(0, 10) : '',
       })
     }
-  }, [user])
+  }, [user?.id])
 
   if (!user) return null
 
@@ -493,18 +496,18 @@ function UserEditSheet({
       name: form.name,
       phone: form.phone,
       email: form.email,
-      level: form.level,
+      birthday: form.birthday || null,
     })
   }
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-[480px] bg-vrbg-card border-l border-vrborder-subtle p-0 sm:max-w-[480px]">
-        <SheetHeader className="p-6 border-b border-vrborder-subtle">
+      <SheetContent side="right" className="w-[480px] bg-vrbg-card border-l border-vrborder-subtle p-0 sm:max-w-[480px] flex flex-col">
+        <SheetHeader className="p-6 border-b border-vrborder-subtle shrink-0">
           <SheetTitle className="text-vr-h3 text-vrtext-primary font-semibold">编辑用户</SheetTitle>
         </SheetHeader>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 overflow-y-auto p-6 space-y-4 min-h-0">
           <div>
             <label className="text-vr-caption text-vrtext-secondary block mb-1.5">姓名</label>
             <input
@@ -529,6 +532,15 @@ function UserEditSheet({
               type="text"
               value={form.email || ''}
               onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
+              className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary transition-all"
+            />
+          </div>
+          <div>
+            <label className="text-vr-caption text-vrtext-secondary block mb-1.5">生日</label>
+            <input
+              type="date"
+              value={form.birthday || ''}
+              onChange={(e) => setForm((prev) => ({ ...prev, birthday: e.target.value }))}
               className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary transition-all"
             />
           </div>
@@ -618,6 +630,7 @@ export default function UsersPage() {
     phone: '',
     password: '',
     email: '',
+    birthday: '',
     level: 'NORMAL',
     status: 'ACTIVE',
   })
@@ -637,6 +650,18 @@ export default function UsersPage() {
   })
   const [giftError, setGiftError] = useState('')
   const [giftLoading, setGiftLoading] = useState(false)
+
+  /* ─── Batch states ─── */
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [batchPointsOpen, setBatchPointsOpen] = useState(false)
+  const [batchCouponOpen, setBatchCouponOpen] = useState(false)
+  const [batchPointsForm, setBatchPointsForm] = useState({ points: '', remark: '' })
+  const [batchCouponForm, setBatchCouponForm] = useState({
+    name: '', type: 'EXPERIENCE_FREE' as 'EXPERIENCE_FREE' | 'DISCOUNT',
+    discountRate: '', validDays: '30', reason: '', remark: '',
+  })
+  const [batchGiftError, setBatchGiftError] = useState('')
+  const [batchGiftLoading, setBatchGiftLoading] = useState(false)
 
   const { levels: memberLevels, levelMap, reverseMap } = useMemberLevels()
   const levelTabs = useDynamicLevelTabs(memberLevels)
@@ -694,6 +719,35 @@ export default function UsersPage() {
       queryClient.invalidateQueries({ queryKey: ['users'] })
     },
   })
+
+  const batchGiftPointsMutation = useMutation({
+    mutationFn: ({ userIds, points, remark }: { userIds: string[]; points: number; remark?: string }) =>
+      batchGiftPoints(userIds, points, remark),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      setSelectedIds([])
+      setBatchPointsOpen(false)
+      setBatchPointsForm({ points: '', remark: '' })
+      setBatchGiftError('')
+    },
+  })
+
+  const batchGiftCouponMutation = useMutation({
+    mutationFn: ({ userIds, data }: { userIds: string[]; data: Parameters<typeof batchGiftCoupon>[1] }) =>
+      batchGiftCoupon(userIds, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      setSelectedIds([])
+      setBatchCouponOpen(false)
+      setBatchCouponForm({ name: '', type: 'EXPERIENCE_FREE', discountRate: '', validDays: '30', reason: '', remark: '' })
+      setBatchGiftError('')
+    },
+  })
+
+  // Clear selection when data changes
+  useEffect(() => {
+    setSelectedIds([])
+  }, [activeTab, searchQuery, currentPage, pageSize])
 
   const handleOpenDetail = (user: ApiUser) => {
     setSelectedUser(user)
@@ -814,7 +868,7 @@ export default function UsersPage() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.3, delay: 0.15 }}
               onClick={() => {
-                setCreateForm({ name: '', phone: '', password: '', email: '', level: 'NORMAL', status: 'ACTIVE' })
+                setCreateForm({ name: '', phone: '', password: '', email: '', birthday: '', level: 'NORMAL', status: 'ACTIVE' })
                 setCreateError('')
                 setCreateSheetOpen(true)
               }}
@@ -889,6 +943,53 @@ export default function UsersPage() {
           </span>
         </div>
 
+        {/* Batch Action Bar */}
+        <AnimatePresence>
+          {selectedIds.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="flex items-center justify-between px-4 py-2.5 mb-3 bg-vrbg-elevated border border-vrborder-subtle rounded-xl"
+            >
+              <span className="text-vr-body-sm text-vrtext-primary font-medium">
+                已选择 {selectedIds.length} 项
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setBatchPointsForm({ points: '', remark: '' })
+                    setBatchGiftError('')
+                    setBatchPointsOpen(true)
+                  }}
+                  className="h-8 px-3 rounded-lg bg-vrsuccess/10 text-vrsuccess text-vr-caption font-medium hover:bg-vrsuccess/20 transition-colors flex items-center gap-1.5"
+                >
+                  <Coins className="w-3.5 h-3.5" />
+                  批量赠送积分
+                </button>
+                <button
+                  onClick={() => {
+                    setBatchCouponForm({ name: '', type: 'EXPERIENCE_FREE', discountRate: '', validDays: '30', reason: '', remark: '' })
+                    setBatchGiftError('')
+                    setBatchCouponOpen(true)
+                  }}
+                  className="h-8 px-3 rounded-lg bg-vraccent-primary/10 text-vraccent-primary text-vr-caption font-medium hover:bg-vraccent-primary/20 transition-colors flex items-center gap-1.5"
+                >
+                  <Ticket className="w-3.5 h-3.5" />
+                  批量赠送优惠券
+                </button>
+                <button
+                  onClick={() => setSelectedIds([])}
+                  className="h-8 px-3 rounded-lg border border-vrborder-subtle text-vrtext-secondary text-vr-caption font-medium hover:bg-vrbg-surface transition-colors"
+                >
+                  清空选择
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* User Table */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -900,6 +1001,20 @@ export default function UsersPage() {
             <table className="w-full">
               <thead>
                 <tr className="bg-vrbg-elevated">
+                  <th className="px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[40px]">
+                    <input
+                      type="checkbox"
+                      checked={filteredUsers.length > 0 && selectedIds.length === filteredUsers.length}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedIds(filteredUsers.map((u) => u.id))
+                        } else {
+                          setSelectedIds([])
+                        }
+                      }}
+                      className="w-4 h-4 accent-vraccent-primary cursor-pointer"
+                    />
+                  </th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">用户</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">手机号</th>
                   <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">会员等级</th>
@@ -919,6 +1034,20 @@ export default function UsersPage() {
                       transition={{ duration: 0.2, delay: Math.min(idx * 0.04, 0.2) }}
                       className="h-[60px] border-t border-vrborder-subtle hover:bg-vrbg-elevated/60 transition-colors"
                     >
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(user.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedIds((prev) => [...prev, user.id])
+                            } else {
+                              setSelectedIds((prev) => prev.filter((id) => id !== user.id))
+                            }
+                          }}
+                          className="w-4 h-4 accent-vraccent-primary cursor-pointer"
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div
@@ -1130,6 +1259,15 @@ export default function UsersPage() {
               />
             </div>
             <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">生日</label>
+              <input
+                type="date"
+                value={createForm.birthday}
+                onChange={(e) => setCreateForm((f) => ({ ...f, birthday: e.target.value }))}
+                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              />
+            </div>
+            <div>
               <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">会员等级</label>
               <select
                 value={createForm.level}
@@ -1170,6 +1308,7 @@ export default function UsersPage() {
                       phone: createForm.phone,
                       password: createForm.password || undefined,
                       email: createForm.email || undefined,
+                      birthday: createForm.birthday || undefined,
                       level: createForm.level,
                       status: createForm.status,
                     })
@@ -1444,6 +1583,193 @@ export default function UsersPage() {
                 className="flex-1 h-10 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
               >
                 {giftLoading ? '赠送中...' : '确认赠送'}
+              </button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* ─── Batch Gift Points Sheet ─── */}
+      <Sheet open={batchPointsOpen} onOpenChange={setBatchPointsOpen}>
+        <SheetContent side="right" className="w-[480px] bg-vrbg-card border-l border-vrborder-subtle p-0 sm:max-w-[480px]">
+          <SheetHeader className="p-6 border-b border-vrborder-subtle">
+            <SheetTitle className="text-vr-h3 text-vrtext-primary font-semibold">批量赠送积分</SheetTitle>
+          </SheetHeader>
+          <div className="p-6 space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 80px)' }}>
+            <div className="flex items-center gap-3 p-3 bg-vrbg-elevated rounded-lg">
+              <div className="w-10 h-10 rounded-full bg-vrsuccess/10 flex items-center justify-center text-vrsuccess font-semibold">
+                <Users className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-vr-body-sm text-vrtext-primary font-medium">共选择 {selectedIds.length} 位用户</p>
+                <p className="text-vr-caption text-vrtext-secondary">积分将赠送给所有选中用户</p>
+              </div>
+            </div>
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">积分数量 <span className="text-vr-error">*</span></label>
+              <input
+                type="number"
+                min={1}
+                value={batchPointsForm.points}
+                onChange={(e) => setBatchPointsForm((f) => ({ ...f, points: e.target.value }))}
+                placeholder="请输入积分数量"
+                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">备注</label>
+              <textarea
+                value={batchPointsForm.remark}
+                onChange={(e) => setBatchPointsForm((f) => ({ ...f, remark: e.target.value }))}
+                placeholder="请输入备注（选填）"
+                rows={3}
+                className="w-full px-3 py-2 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all resize-none"
+              />
+            </div>
+            {batchGiftError && (
+              <p className="text-vr-body-sm text-vr-error">{batchGiftError}</p>
+            )}
+            <div className="pt-4 flex gap-3">
+              <button
+                onClick={() => setBatchPointsOpen(false)}
+                className="flex-1 h-10 rounded-lg border border-vrborder-subtle text-vrtext-secondary text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors"
+              >
+                取消
+              </button>
+              <button
+                disabled={batchGiftLoading || !batchPointsForm.points || parseInt(batchPointsForm.points) < 1}
+                onClick={() => {
+                  batchGiftPointsMutation.mutate({
+                    userIds: selectedIds,
+                    points: parseInt(batchPointsForm.points),
+                    remark: batchPointsForm.remark || undefined,
+                  })
+                }}
+                className="flex-1 h-10 rounded-lg bg-vrsuccess text-white text-vr-body-sm font-medium hover:bg-vrsuccess/90 transition-colors disabled:opacity-50"
+              >
+                {batchGiftLoading ? '赠送中...' : '确认赠送'}
+              </button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* ─── Batch Gift Coupon Sheet ─── */}
+      <Sheet open={batchCouponOpen} onOpenChange={setBatchCouponOpen}>
+        <SheetContent side="right" className="w-[480px] bg-vrbg-card border-l border-vrborder-subtle p-0 sm:max-w-[480px]">
+          <SheetHeader className="p-6 border-b border-vrborder-subtle">
+            <SheetTitle className="text-vr-h3 text-vrtext-primary font-semibold">批量赠送优惠券</SheetTitle>
+          </SheetHeader>
+          <div className="p-6 space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 80px)' }}>
+            <div className="flex items-center gap-3 p-3 bg-vrbg-elevated rounded-lg">
+              <div className="w-10 h-10 rounded-full bg-vraccent-primary/10 flex items-center justify-center text-vraccent-primary font-semibold">
+                <Users className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-vr-body-sm text-vrtext-primary font-medium">共选择 {selectedIds.length} 位用户</p>
+                <p className="text-vr-caption text-vrtext-secondary">优惠券将分别赠送给所有选中用户</p>
+              </div>
+            </div>
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">券类型 <span className="text-vr-error">*</span></label>
+              <select
+                value={batchCouponForm.type}
+                onChange={(e) => setBatchCouponForm((f) => ({ ...f, type: e.target.value as 'EXPERIENCE_FREE' | 'DISCOUNT' }))}
+                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              >
+                <option value="EXPERIENCE_FREE">体验券（免单1人）</option>
+                <option value="DISCOUNT">折扣券</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">券名称 <span className="text-vr-error">*</span></label>
+              <input
+                type="text"
+                value={batchCouponForm.name}
+                onChange={(e) => setBatchCouponForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="例如：VR体验补偿券"
+                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              />
+            </div>
+            {batchCouponForm.type === 'DISCOUNT' && (
+              <div>
+                <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">折扣率（%）<span className="text-vr-error">*</span></label>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={batchCouponForm.discountRate}
+                  onChange={(e) => setBatchCouponForm((f) => ({ ...f, discountRate: e.target.value }))}
+                  placeholder="例如：85 表示85折"
+                  className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                />
+              </div>
+            )}
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">有效天数 <span className="text-vr-error">*</span></label>
+              <input
+                type="number"
+                min={1}
+                value={batchCouponForm.validDays}
+                onChange={(e) => setBatchCouponForm((f) => ({ ...f, validDays: e.target.value }))}
+                placeholder="默认30天"
+                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">赠送原因</label>
+              <input
+                type="text"
+                value={batchCouponForm.reason}
+                onChange={(e) => setBatchCouponForm((f) => ({ ...f, reason: e.target.value }))}
+                placeholder="请输入赠送原因（选填）"
+                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">备注</label>
+              <textarea
+                value={batchCouponForm.remark}
+                onChange={(e) => setBatchCouponForm((f) => ({ ...f, remark: e.target.value }))}
+                placeholder="请输入备注（选填）"
+                rows={3}
+                className="w-full px-3 py-2 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all resize-none"
+              />
+            </div>
+            {batchGiftError && (
+              <p className="text-vr-body-sm text-vr-error">{batchGiftError}</p>
+            )}
+            <div className="pt-4 flex gap-3">
+              <button
+                onClick={() => setBatchCouponOpen(false)}
+                className="flex-1 h-10 rounded-lg border border-vrborder-subtle text-vrtext-secondary text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors"
+              >
+                取消
+              </button>
+              <button
+                disabled={
+                  batchGiftLoading ||
+                  !batchCouponForm.name.trim() ||
+                  !batchCouponForm.validDays ||
+                  parseInt(batchCouponForm.validDays) < 1 ||
+                  (batchCouponForm.type === 'DISCOUNT' && (!batchCouponForm.discountRate || parseInt(batchCouponForm.discountRate) < 1 || parseInt(batchCouponForm.discountRate) > 99))
+                }
+                onClick={() => {
+                  batchGiftCouponMutation.mutate({
+                    userIds: selectedIds,
+                    data: {
+                      name: batchCouponForm.name.trim(),
+                      type: batchCouponForm.type,
+                      discountRate: batchCouponForm.type === 'DISCOUNT' ? parseInt(batchCouponForm.discountRate) : undefined,
+                      validDays: parseInt(batchCouponForm.validDays),
+                      giftReason: batchCouponForm.reason || undefined,
+                      giftRemark: batchCouponForm.remark || undefined,
+                    },
+                  })
+                }}
+                className="flex-1 h-10 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
+              >
+                {batchGiftLoading ? '赠送中...' : '确认赠送'}
               </button>
             </div>
           </div>

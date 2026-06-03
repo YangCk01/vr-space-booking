@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Users,
   BarChart3,
+  Megaphone,
   Settings,
   Gamepad2,
   Wallet,
@@ -16,6 +17,8 @@ import {
   FileSearch,
   ShieldCheck,
   ChevronDown,
+  Table2,
+  Zap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
@@ -35,13 +38,30 @@ const menuItems: MenuItem[] = [
   { key: 'games', label: '内容管理', icon: 'Gamepad2', path: '/games' },
   { key: 'booking', label: '预约排场', icon: 'CalendarDays', path: '/booking' },
   { key: 'orders', label: '订单管理', icon: 'ClipboardList', path: '/orders' },
-  { key: 'users', label: '会员管理', icon: 'Users', path: '/users' },
+  {
+    key: 'users',
+    label: '会员管理',
+    icon: 'Users',
+    path: '/users',
+    children: [
+      { key: 'campaigns', label: '营销活动', path: '/campaigns' },
+      { key: 'member-marketing', label: '会员营销', path: '/member-marketing' },
+    ],
+  },
   { key: 'analytics', label: '数据统计', icon: 'BarChart3', path: '/analytics' },
   { key: 'finance', label: '财务管理', icon: 'Wallet', path: '/finance' },
   { key: 'accounts', label: '账号管理', icon: 'Shield', path: '/accounts' },
-  { key: 'member-marketing', label: '会员营销', icon: 'Gift', path: '/member-marketing' },
   { key: 'audit-logs', label: '审计日志', icon: 'FileSearch', path: '/audit-logs', roles: ['SUPER_ADMIN', 'FINANCE'] },
-  { key: 'roles', label: '角色权限', icon: 'ShieldCheck', path: '/roles' },
+  {
+    key: 'reports',
+    label: '数据报表',
+    icon: 'Table2',
+    path: '/coupon-effects',
+    children: [
+      { key: 'coupon-effects', label: '营销效果', path: '/coupon-effects' },
+      { key: 'venue-analytics', label: '场地运营', path: '/venue-analytics' },
+    ],
+  },
   {
     key: 'settings',
     label: '系统设置',
@@ -68,18 +88,51 @@ const iconMap: Record<string, React.ComponentType<{ className?: string; size?: n
   Gift,
   FileSearch,
   ShieldCheck,
+  Table2,
+  Megaphone,
+  Zap,
+}
+
+// 菜单项 key 到所需权限码的映射
+const keyToPermission: Record<string, string | string[]> = {
+  home: 'order:read',
+  venues: 'venue:read',
+  games: 'venue:read',
+  booking: 'order:read',
+  orders: 'order:read',
+  users: 'user:read',
+  campaigns: 'marketing:campaign',
+  analytics: 'order:read',
+  finance: 'finance:read',
+  accounts: 'user:read',
+  'member-marketing': 'user:gift',
+  'audit-logs': 'audit:read',
+  reports: ['marketing:campaign', 'marketing:rule'],
+  'coupon-effects': 'marketing:campaign',
+  'venue-analytics': 'venue:read',
+  settings: 'setting:read',
+  'system-config': 'setting:write',
+  'system-health': 'setting:read',
 }
 
 function isItemVisible(item: MenuItem, user: { role: string; permissions?: string[] } | null): boolean {
   if (!user) return false
+  // SUPER_ADMIN 拥有所有权限
+  if (user.role === 'SUPER_ADMIN') return true
   // Role-based filtering takes precedence
   if (item.roles && item.roles.length > 0) {
     return item.roles.includes(user.role)
   }
-  // Permission-based filtering
-  if (user.permissions?.includes(item.key)) return true
-  // Fallback: always show if no explicit filtering and user has permission
-  return false
+  // Permission-based filtering with key mapping
+  const required = keyToPermission[item.key]
+  if (required) {
+    if (Array.isArray(required)) {
+      return required.some((p) => user.permissions?.includes(p))
+    }
+    return user.permissions?.includes(required) ?? false
+  }
+  // Fallback: show if user has any permissions
+  return (user.permissions?.length ?? 0) > 0
 }
 
 function SubMenu({

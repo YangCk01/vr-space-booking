@@ -46,11 +46,11 @@ router.post('/:id/roles', requireRole('SUPER_ADMIN', 'ADMIN'), assignRoleValidat
 router.get('/:id/roles', requireRole('SUPER_ADMIN', 'ADMIN'), getUserRoles)
 
 // Existing customer user routes
-router.get('/', controller.list)
-router.post('/', logOperation({ type: '新增用户', content: (req) => `新增用户: ${req.body.name}` }), controller.create)
-router.get('/:id', controller.getById)
-router.put('/:id', controller.updateValidators, logOperation({ type: '编辑用户', content: (req) => `编辑用户: ${req.body.name || req.params.id}` }), controller.update)
-router.delete('/:id', logOperation({ type: '删除用户', content: (req) => `删除用户ID: ${req.params.id}` }), controller.remove)
+router.get('/', requireRole('SUPER_ADMIN','ADMIN','OPERATOR'), controller.list)
+router.post('/', requireRole('SUPER_ADMIN','ADMIN','OPERATOR'), logOperation({ type: '新增用户', content: (req) => `新增用户: ${req.body.name}` }), controller.create)
+router.get('/:id', requireRole('SUPER_ADMIN','ADMIN','OPERATOR'), controller.getById)
+router.put('/:id', requireRole('SUPER_ADMIN','ADMIN','OPERATOR'), controller.updateValidators, logOperation({ type: '编辑用户', content: (req) => `编辑用户: ${req.body.name || req.params.id}` }), controller.update)
+router.delete('/:id', requireRole('SUPER_ADMIN','ADMIN','OPERATOR'), logOperation({ type: '删除用户', content: (req) => `删除用户ID: ${req.params.id}` }), controller.remove)
 
 // 用户标签（P1）
 import * as userTagController from '../controllers/userTagController'

@@ -267,42 +267,60 @@ export async function revenue(req: AuthenticatedRequest, res: Response) {
 export async function venueOccupancy(req: AuthenticatedRequest, res: Response) {
   try {
     const { venueId, startDate, endDate } = req.query
-    if (!venueId || !startDate || !endDate) {
-      return error(res, 'venueId, startDate, endDate 必填', 400)
+    if (!startDate || !endDate) {
+      return error(res, 'startDate, endDate 必填', 400)
     }
-
-    const venue = await prisma.venue.findUnique({
-      where: { id: venueId as string },
-      select: { capacity: true, name: true },
-    })
-    if (!venue) return error(res, '场地不存在', 404)
 
     const s = new Date(startDate as string)
     const e = new Date(endDate as string)
     e.setHours(23, 59, 59, 999)
 
-    const bookings = await prisma.booking.findMany({
-      where: {
+    let capacityMap: Map<string, number>
+    let bookingsWhere: any
+
+    if (venueId) {
+      const venue = await prisma.venue.findUnique({
+        where: { id: venueId as string },
+        select: { capacity: true, name: true },
+      })
+      if (!venue) return error(res, '场地不存在', 404)
+      capacityMap = new Map([[venueId as string, venue.capacity]])
+      bookingsWhere = {
         venueId: venueId as string,
         date: { gte: s, lte: e },
         status: { not: 'CANCELLED' },
-      },
+      }
+    } else {
+      const venues = await prisma.venue.findMany({
+        select: { id: true, capacity: true },
+      })
+      capacityMap = new Map(venues.map((v) => [v.id, v.capacity]))
+      bookingsWhere = {
+        date: { gte: s, lte: e },
+        status: { not: 'CANCELLED' },
+      }
+    }
+
+    const bookings = await prisma.booking.findMany({
+      where: bookingsWhere,
       select: {
         date: true,
         startTime: true,
         personCount: true,
+        venueId: true,
       },
     })
 
     // 按 date + hour 聚合
-    const hourMap = new Map<string, { bookings: number; totalPlayers: number }>()
+    const hourMap = new Map<string, { bookings: number; totalPlayers: number; totalCapacity: number }>()
     for (const b of bookings) {
       const dateStr = format(b.date, 'yyyy-MM-dd')
       const hour = parseInt(b.startTime.split(':')[0], 10)
       const key = `${dateStr}_${hour}`
-      const existing = hourMap.get(key) || { bookings: 0, totalPlayers: 0 }
+      const existing = hourMap.get(key) || { bookings: 0, totalPlayers: 0, totalCapacity: 0 }
       existing.bookings += 1
       existing.totalPlayers += b.personCount
+      existing.totalCapacity += (capacityMap.get(b.venueId) || 0)
       hourMap.set(key, existing)
     }
 
@@ -317,8 +335,8 @@ export async function venueOccupancy(req: AuthenticatedRequest, res: Response) {
     for (const [key, val] of hourMap) {
       const [date, hourStr] = key.split('_')
       const hour = parseInt(hourStr, 10)
-      const occupancyRate = venue.capacity > 0
-        ? Math.min(1, Number((val.totalPlayers / venue.capacity).toFixed(2)))
+      const occupancyRate = val.totalCapacity > 0
+        ? Math.min(100, Math.round((val.totalPlayers / val.totalCapacity) * 100))
         : 0
       data.push({
         date,
@@ -356,11 +374,13 @@ export async function gamePerformance(req: AuthenticatedRequest, res: Response) 
       select: { id: true, title: true },
     })
 
+    const venueIdFilter = req.query.venueId as string | undefined
     const bookings = await prisma.booking.findMany({
       where: {
         date: { gte: s, lte: e },
         status: { not: 'CANCELLED' },
         gameId: { not: null },
+        ...(venueIdFilter ? { venueId: venueIdFilter } : {}),
       },
       select: {
         gameId: true,
@@ -452,7 +472,7 @@ export async function gamePerformance(req: AuthenticatedRequest, res: Response) 
 
       return {
         id: game.id,
-        title: game.title,
+        gameName: game.title,
         bookingCount: stats.bookingCount,
         avgOccupancyRate,
         repurchaseRate,

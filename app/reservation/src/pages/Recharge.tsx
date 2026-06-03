@@ -37,8 +37,7 @@ export default function Recharge() {
   const createMut = useMutation({ mutationFn: createRecharge })
   const confirmMut = useMutation({ mutationFn: confirmRecharge })
 
-  const enumToConfigKey: Record<string, string> = { VIP_PLUS: 'VIP+' }
-  const currentLevel = memberConfig?.levels?.find((l) => l.key === user?.level || l.key === enumToConfigKey[user?.level || ''])
+  const currentLevel = memberConfig?.levels?.find((l) => l.key === user?.level)
 
   const handlePay = async () => {
     if (selectedIdx === null || !configs) return
@@ -121,7 +120,11 @@ export default function Recharge() {
           <div className="grid grid-cols-2 gap-3">
             {configs?.map((cfg, idx) => {
               const isSelected = selectedIdx === idx
-              const levelInfo = memberConfig?.levels?.find((l) => l.key === cfg.level)
+              const levelInfo = memberConfig?.levels?.find((l) =>
+                l.key === cfg.level ||
+                (cfg.level === 'VIP+' && l.key === 'VIP_PLUS') ||
+                (cfg.level === 'VIP_PLUS' && l.key === 'VIP+')
+              )
               const levelLabel = levelInfo?.name || cfg.level
               return (
                 <button

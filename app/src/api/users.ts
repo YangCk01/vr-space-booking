@@ -14,6 +14,7 @@ export interface User {
   bonusBalance: number
   points: number
   status: string
+  birthday: string | null
   registerDate: string
   lastLogin: string | null
   createdAt: string
@@ -45,6 +46,7 @@ export async function createUser(data: {
   name: string
   password?: string
   email?: string
+  birthday?: string
   level?: string
   status?: string
 }) {
@@ -112,4 +114,22 @@ export async function resetStaffPassword(id: string, password: string = '123456'
 export async function assignManagerVenues(id: string, venueIds: string[]) {
   const res = await apiClient.post(`/users/staff/${id}/assign-venues`, { venueIds })
   return res.data.data
+}
+
+export async function batchGiftPoints(userIds: string[], points: number, reason: string, remark?: string) {
+  const res = await apiClient.post('/gift/batch-gift-points', { userIds, points, reason, remark })
+  return res.data
+}
+
+export async function batchGiftCoupon(userIds: string[], couponData: {
+  name: string
+  type: string
+  discountRate?: number
+  validDays: number
+  source?: string
+  giftReason?: string
+  giftRemark?: string
+}) {
+  const res = await apiClient.post('/gift/batch-gift-coupon', { userIds, ...couponData })
+  return res.data
 }

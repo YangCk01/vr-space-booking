@@ -55,3 +55,18 @@ export async function deleteGame(id: string) {
   const res = await apiClient.delete(`/games/${id}`)
   return res.data.data
 }
+
+export async function batchDeleteGames(ids: string[]) {
+  const res = await apiClient.post('/games/batch-delete', { ids })
+  return res.data
+}
+
+export async function batchUpdateGameStatus(ids: string[], status: string) {
+  const res = await apiClient.post('/games/batch-status', { ids, status })
+  return res.data
+}
+
+export async function batchUpdateGamePrice(ids: string[], price: number) {
+  const res = await apiClient.post('/games/batch-price', { ids, price })
+  return res.data
+}

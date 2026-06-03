@@ -15,6 +15,7 @@ const typeLabelMap: Record<string, string> = {
   POINTS_EARN: '积分获取',
   POINTS_DEDUCT: '积分消费',
   POINTS_GIFT: '积分赠送',
+  POINTS_REVOKE: '积分收回',
 }
 
 const typeColorMap: Record<string, string> = {
@@ -24,6 +25,7 @@ const typeColorMap: Record<string, string> = {
   POINTS_EARN: 'text-emerald-400',
   POINTS_DEDUCT: 'text-orange-400',
   POINTS_GIFT: 'text-emerald-400',
+  POINTS_REVOKE: 'text-orange-400',
 }
 
 export default function AccountRecords() {
@@ -40,9 +42,9 @@ export default function AccountRecords() {
     queryFn: getMyRechargeList,
   })
 
-  // 筛选积分相关的流水
+  // 筛选积分相关的流水（包含获取、消费、赠送、收回）
   const pointTransactions = transactions?.filter(
-    (t) => t.type === 'POINTS_EARN' || t.type === 'POINTS_DEDUCT' || t.type === 'POINTS_GIFT'
+    (t) => t.type === 'POINTS_EARN' || t.type === 'POINTS_DEDUCT' || t.type === 'POINTS_GIFT' || t.type === 'POINTS_REVOKE'
   ) || []
 
   return (

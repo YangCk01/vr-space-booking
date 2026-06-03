@@ -9,6 +9,8 @@ import { getDiscountByLevel, getPointsConfig } from '../utils/memberConfig'
 import { getUserWallet, hasEnoughBalance, deductProportional } from '../utils/wallet'
 import { checkBatchLimit } from '../services/riskControlService'
 import { logAudit } from '../middleware/auditLog'
+import { handleEvent } from '../jobs/triggerJob'
+import { onCouponUsed } from '../services/campaignRewardService'
 
 export const createValidators = [
   body('venueId').notEmpty().withMessage('场地不能为空'),
@@ -443,6 +445,23 @@ export async function updateStatus(req: AuthenticatedRequest, res: Response) {
       })
     }
 
+    // 触发条件规则（ORDER_COMPLETED 事件）
+    if (status === 'COMPLETED' && order.userId) {
+      try {
+        await handleEvent('ORDER_COMPLETED', { userId: order.userId, orderId: order.id, amount: order.amount })
+      } catch (e) {
+        console.error('[TriggerJob] 订单完成事件触发失败:', e)
+      }
+      // 更新营销活动券使用追踪
+      if (order.userCouponId) {
+        try {
+          await onCouponUsed(order.userCouponId, order.id, order.amount)
+        } catch (e) {
+          console.error('[Campaign] 券使用追踪失败:', e)
+        }
+      }
+    }
+
     // 取消订单时，同步将关联排场标记为已取消
     if (status === 'CANCELLED' && order.bookingId) {
       await prisma.booking.update({
@@ -599,9 +618,12 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
             remark: `订单取消恢复余额（本金¥${order.principalDeduction / 100}+赠送¥${order.bonusDeduction / 100}）`,
           },
         })
+      }
 
-        // 扣除已赠送的积分（按订单记录的本金扣减计算）
-        const earned = Math.floor(order.principalDeduction / 100 * earnRate)
+      // 已支付订单取消时收回赠送积分（所有支付方式）
+      if (order.userId && order.status === 'PAID') {
+        const baseAmount = order.payMethod?.startsWith('BALANCE') ? order.principalDeduction : order.amount
+        const earned = Math.floor(baseAmount / 100 * earnRate)
         const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
         const deduct = Math.min(earned, user?.points || 0)
         if (deduct > 0) {
@@ -720,9 +742,12 @@ export async function refund(req: AuthenticatedRequest, res: Response) {
             remark: `订单退款恢复余额（本金¥${order.principalDeduction / 100}+赠送¥${order.bonusDeduction / 100}）`,
           },
         })
+      }
 
-        // 扣除已赠送的积分（按订单记录的本金扣减计算）
-        const earned = Math.floor(order.principalDeduction / 100 * earnRate)
+      // 退款时收回赠送积分（所有支付方式）
+      if (order.userId) {
+        const baseAmount = order.payMethod?.startsWith('BALANCE') ? order.principalDeduction : order.amount
+        const earned = Math.floor(baseAmount / 100 * earnRate)
         const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
         const deduct = Math.min(earned, user?.points || 0)
         if (deduct > 0) {
@@ -901,9 +926,12 @@ export async function batchRefund(req: AuthenticatedRequest, res: Response) {
               remark: `批量退款恢复余额（本金¥${order.principalDeduction / 100}+赠送¥${order.bonusDeduction / 100}）原因：${reason}`,
             },
           })
+        }
 
-          // 扣除已赠送的积分
-          const earned = Math.floor(order.principalDeduction / 100 * earnRate)
+        // 批量退款时收回赠送积分（所有支付方式）
+        if (order.userId) {
+          const baseAmount = order.payMethod?.startsWith('BALANCE') ? order.principalDeduction : order.amount
+          const earned = Math.floor(baseAmount / 100 * earnRate)
           const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
           const deduct = Math.min(earned, user?.points || 0)
           if (deduct > 0) {

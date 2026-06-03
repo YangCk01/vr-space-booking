@@ -2,6 +2,8 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { prisma } from '../utils/prisma'
 import { UserRole } from '@prisma/client'
+import { distributeAutoGifts } from './campaignRewardService'
+import { handleEvent } from '../jobs/triggerJob'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'vr-space-secret-key-change-in-production'
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'vr-space-refresh-secret-key-change-in-production'
@@ -18,6 +20,7 @@ export interface RegisterInput {
   password: string
   name: string
   role?: UserRole
+  birthday?: string
 }
 
 async function getUserPermissions(userId: string): Promise<string[]> {
@@ -136,22 +139,40 @@ export async function register(input: RegisterInput) {
       password: hashedPassword,
       name: input.name,
       role: input.role || UserRole.CUSTOMER,
+      birthday: input.birthday ? new Date(input.birthday) : null,
     },
   })
+
+  // 自动发放 AUTO_GIFT 活动奖励
+  try {
+    await distributeAutoGifts(user.id)
+  } catch (e) {
+    console.error('[AutoGift] 注册自动发放失败:', e)
+  }
+
+  // 触发条件规则（USER_REGISTERED 事件）
+  try {
+    await handleEvent('USER_REGISTERED', { userId: user.id })
+  } catch (e) {
+    console.error('[TriggerJob] 注册事件触发失败:', e)
+  }
+
+  // 重新查询用户以获取更新后的积分（如果有发放）
+  const updatedUser = await prisma.user.findUnique({ where: { id: user.id } })
 
   const tokens = await generateTokens(user.id, user.phone, user.role, user.name)
 
   return {
     user: {
-      id: user.id,
-      phone: user.phone,
-      name: user.name,
-      role: user.role,
-      level: user.level,
-      principalBalance: user.principalBalance,
-      bonusBalance: user.bonusBalance,
-      balance: user.principalBalance + user.bonusBalance,
-      points: user.points,
+      id: updatedUser!.id,
+      phone: updatedUser!.phone,
+      name: updatedUser!.name,
+      role: updatedUser!.role,
+      level: updatedUser!.level,
+      principalBalance: updatedUser!.principalBalance,
+      bonusBalance: updatedUser!.bonusBalance,
+      balance: updatedUser!.principalBalance + updatedUser!.bonusBalance,
+      points: updatedUser!.points,
       permissions: tokens.permissions,
     },
     accessToken: tokens.accessToken,
@@ -193,37 +214,6 @@ export async function refreshToken(refreshToken: string) {
   }
 }
 
-// 默认角色权限配置（与前端硬编码保持一致）
-const defaultRolePermissions: Record<string, string[]> = {
-  SUPER_ADMIN: ['home','venues','games','booking','orders','users','analytics','finance','accounts','member-marketing','settings'],
-  ADMIN:       ['home','venues','games','booking','orders','users','analytics','finance','accounts','member-marketing','settings'],
-  OPERATOR:    ['home','venues','booking','orders','users','member-marketing'],
-  FINANCE:     ['home','orders','analytics','finance'],
-  MANAGER:     ['home','venues','booking','orders'],
-}
-
-async function getRolePermissions(): Promise<Record<string, string[]>> {
-  const setting = await prisma.systemSetting.findUnique({ where: { key: 'role_permissions' } })
-  let saved: Record<string, string[]> = {}
-  if (setting?.value) {
-    const raw = setting.value as any
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) saved = raw
-  }
-  // 合并：以数据库保存的为基础，补全新增的默认权限 key（向后兼容）
-  const merged: Record<string, string[]> = {}
-  for (const role of Object.keys(defaultRolePermissions)) {
-    const savedPerms = saved[role] || []
-    const defaultPerms = defaultRolePermissions[role]
-    // 保留用户自定义关闭的权限（saved 中有的），同时补充新增默认权限
-    merged[role] = Array.from(new Set([...savedPerms, ...defaultPerms]))
-  }
-  // 保留数据库中有但默认配置中没有的角色
-  for (const role of Object.keys(saved)) {
-    if (!merged[role]) merged[role] = saved[role]
-  }
-  return merged
-}
-
 export async function getUserById(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -242,6 +232,7 @@ export async function getUserById(userId: string) {
       bonusBalance: true,
       balance: true,       // 兼容旧前端
       points: true,
+      birthday: true,
       registerDate: true,
       lastLogin: true,
     },
@@ -251,8 +242,7 @@ export async function getUserById(userId: string) {
     throw new Error('用户不存在')
   }
 
-  const rolePermissions = await getRolePermissions()
-  const permissions = rolePermissions[user.role] || defaultRolePermissions[user.role] || []
+  const permissions = await getUserPermissions(userId)
 
   return { ...user, permissions }
 }
@@ -278,7 +268,7 @@ export async function changePassword(userId: string, oldPassword: string, newPas
   })
 }
 
-export async function updateProfile(userId: string, data: { name?: string; avatar?: string; email?: string }) {
+export async function updateProfile(userId: string, data: { name?: string; avatar?: string; email?: string; birthday?: string }) {
   const user = await prisma.user.findUnique({ where: { id: userId } })
   if (!user) {
     throw new Error('用户不存在')
@@ -288,6 +278,7 @@ export async function updateProfile(userId: string, data: { name?: string; avata
   if (data.name !== undefined) updateData.name = data.name
   if (data.avatar !== undefined) updateData.avatar = data.avatar
   if (data.email !== undefined) updateData.email = data.email
+  if (data.birthday !== undefined) updateData.birthday = data.birthday ? new Date(data.birthday) : null
 
   const updated = await prisma.user.update({
     where: { id: userId },

@@ -215,7 +215,7 @@ export async function listCouponRecords(req: AuthenticatedRequest, res: Response
     const pageSize = parseInt((req.query.pageSize as string) || '20', 10)
     const userId = req.query.userId as string | undefined
 
-    const where: any = { source: 'MANUAL_GIFT' }
+    const where: any = { source: { in: ['MANUAL_GIFT', 'CAMPAIGN'] } }
     if (userId) where.userId = userId
 
     const [records, total] = await Promise.all([

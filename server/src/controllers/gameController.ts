@@ -120,3 +120,79 @@ export async function remove(req: Request, res: Response) {
     return error(res, (err as Error).message, 500)
   }
 }
+
+/* ─── Batch operations ─── */
+
+export async function batchDelete(req: Request, res: Response) {
+  try {
+    const { ids } = req.body
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return error(res, '请选择要删除的内容', 400)
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 检查是否有未完成预约
+      const gamesWithBookings = await tx.booking.findMany({
+        where: {
+          gameId: { in: ids },
+          status: { not: 'CANCELLED' },
+          date: { gte: new Date() },
+        },
+        select: { gameId: true },
+        distinct: ['gameId'],
+      })
+      if (gamesWithBookings.length > 0) {
+        throw new Error('存在内容有未完成预约，无法删除')
+      }
+
+      await tx.game.deleteMany({ where: { id: { in: ids } } })
+      return ids.length
+    })
+
+    return success(res, { deleted: result }, `已删除 ${result} 个内容`)
+  } catch (err) {
+    return error(res, (err as Error).message, 400)
+  }
+}
+
+export async function batchUpdateStatus(req: Request, res: Response) {
+  try {
+    const { ids, status } = req.body
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return error(res, '请选择要更新的内容', 400)
+    }
+    if (!status) {
+      return error(res, '状态不能为空', 400)
+    }
+
+    const result = await prisma.game.updateMany({
+      where: { id: { in: ids } },
+      data: { status },
+    })
+
+    return success(res, { updated: result.count }, `已更新 ${result.count} 个内容状态`)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+export async function batchUpdatePrice(req: Request, res: Response) {
+  try {
+    const { ids, price } = req.body
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return error(res, '请选择要更新的内容', 400)
+    }
+    if (price === undefined || price < 0) {
+      return error(res, '价格必须为非负数', 400)
+    }
+
+    const result = await prisma.game.updateMany({
+      where: { id: { in: ids } },
+      data: { price: parseInt(price) },
+    })
+
+    return success(res, { updated: result.count }, `已更新 ${result.count} 个内容价格`)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}

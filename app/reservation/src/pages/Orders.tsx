@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronLeft, ClipboardList, LogIn, XCircle } from 'lucide-react'
+import { ChevronLeft, ClipboardList, LogIn, XCircle, MapPin, Clock, Calendar, Users, Ticket, QrCode } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { getOrders, cancelOrder } from '@/api/orders'
 import { useAuth } from '@/providers/AuthProvider'
 import { cn } from '@/lib/utils'
+import { SimpleQRCode } from '@/components/SimpleQRCode'
 
 const tabs = [
   { key: 'all', label: '全部' },
@@ -29,6 +30,8 @@ export default function Orders() {
   const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState('all')
   const [cancelId, setCancelId] = useState<string | null>(null)
+  const [ticketOpen, setTicketOpen] = useState(false)
+  const [ticketOrder, setTicketOrder] = useState<any>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['orders'],
@@ -120,7 +123,8 @@ export default function Orders() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
-                className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4"
+                className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4 cursor-pointer hover:border-[var(--accent-primary)]/40 transition-colors"
+                onClick={() => { setTicketOrder(o); setTicketOpen(true) }}
               >
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-semibold text-[var(--text-primary)]">{o.venueName}</h3>
@@ -137,7 +141,7 @@ export default function Orders() {
                       <span className="text-xs text-[var(--success)]">-¥{(o.couponDiscount / 100).toFixed(2)}</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                     {o.status === 'PENDING' && (
                       <button
                         onClick={() => navigate('/pay/' + o.id)}
@@ -202,6 +206,126 @@ export default function Orders() {
                 >
                   {cancelMutation.isPending ? '取消中...' : '确认取消'}
                 </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 入场券弹窗 */}
+      <AnimatePresence>
+        {ticketOpen && ticketOrder && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4"
+            onClick={() => setTicketOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[var(--bg-card)] rounded-2xl border border-[var(--border-subtle)] shadow-2xl w-full max-w-sm overflow-hidden"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-[var(--accent-primary)]/20 to-[var(--accent-secondary)]/20 px-5 py-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Ticket className="w-5 h-5 text-[var(--accent-primary)]" />
+                    <h3 className="text-base font-bold text-[var(--text-primary)]">入场券</h3>
+                  </div>
+                  <button
+                    onClick={() => setTicketOpen(false)}
+                    className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10 transition-colors"
+                  >
+                    <XCircle className="w-5 h-5" />
+                  </button>
+                </div>
+                <p className="text-xs text-[var(--text-secondary)] mt-1">
+                  订单号：{ticketOrder.orderNo}
+                </p>
+              </div>
+
+              {/* Content */}
+              <div className="p-5 space-y-4">
+                {/* 状态 */}
+                <div className="flex items-center justify-center">
+                  <span className={cn(
+                    'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium',
+                    ticketOrder.status === 'PAID' ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]' :
+                    ticketOrder.status === 'COMPLETED' ? 'bg-emerald-500/10 text-emerald-400' :
+                    'bg-[var(--text-muted)]/10 text-[var(--text-muted)]'
+                  )}>
+                    {ticketOrder.status === 'PAID' ? '待核销' :
+                     ticketOrder.status === 'COMPLETED' ? '已完成' :
+                     ticketOrder.status === 'CANCELLED' ? '已取消' :
+                     ticketOrder.status === 'REFUNDED' ? '已退款' : ticketOrder.status}
+                  </span>
+                </div>
+
+                {/* 订单信息 */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <MapPin className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                    <div>
+                      <p className="text-xs text-[var(--text-muted)]">场地</p>
+                      <p className="text-sm text-[var(--text-primary)]">{ticketOrder.venueName}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Clock className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                    <div>
+                      <p className="text-xs text-[var(--text-muted)]">时间</p>
+                      <p className="text-sm text-[var(--text-primary)]">{ticketOrder.bookingTime}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Calendar className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                    <div>
+                      <p className="text-xs text-[var(--text-muted)]">游戏</p>
+                      <p className="text-sm text-[var(--text-primary)]">{ticketOrder.booking?.game?.title || 'VR体验'}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Users className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                    <div>
+                      <p className="text-xs text-[var(--text-muted)]">人数</p>
+                      <p className="text-sm text-[var(--text-primary)]">{ticketOrder.booking?.personCount || 1}人</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-[var(--border-subtle)] pt-3 flex items-center justify-between">
+                  <span className="text-xs text-[var(--text-muted)]">实付金额</span>
+                  <span className="text-lg font-bold text-[var(--error)]">
+                    ¥{((ticketOrder.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+
+                {/* QR Code */}
+                {ticketOrder.status === 'PAID' || ticketOrder.status === 'COMPLETED' ? (
+                  <div className="flex flex-col items-center pt-2">
+                    <div className="bg-white rounded-xl p-3 shadow-sm">
+                      <SimpleQRCode value={ticketOrder.id} size={160} />
+                    </div>
+                    <p className="text-xs text-[var(--text-muted)] mt-2">出示二维码签到入场</p>
+                    <p className="text-[10px] text-[var(--text-secondary)] mt-0.5 font-mono">{ticketOrder.id.slice(0, 12)}</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center pt-2 py-4">
+                    <div className="w-40 h-40 bg-[var(--bg-elevated)] rounded-xl flex items-center justify-center border border-dashed border-[var(--border-subtle)]">
+                      <QrCode className="w-10 h-10 text-[var(--text-muted)] opacity-30" />
+                    </div>
+                    <p className="text-xs text-[var(--text-muted)] mt-2">
+                      {ticketOrder.status === 'CANCELLED' ? '订单已取消，二维码已失效' :
+                       ticketOrder.status === 'REFUNDED' ? '订单已退款，二维码已失效' :
+                       '二维码未生成'}
+                    </p>
+                  </div>
+                )}
               </div>
             </motion.div>
           </motion.div>

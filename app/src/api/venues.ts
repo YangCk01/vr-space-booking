@@ -61,3 +61,13 @@ export async function deleteVenue(id: string) {
   const res = await apiClient.delete(`/venues/${id}`)
   return res.data.data
 }
+
+export async function batchDeleteVenues(ids: string[]) {
+  const res = await apiClient.post('/venues/batch-delete', { ids })
+  return res.data
+}
+
+export async function batchUpdateVenueStatus(ids: string[], status: string) {
+  const res = await apiClient.post('/venues/batch-status', { ids, status })
+  return res.data
+}

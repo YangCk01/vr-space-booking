@@ -26,12 +26,6 @@ import {
   Bookmark,
   Trash2,
   Gift,
-  LayoutDashboard,
-  Building2,
-  Gamepad2,
-  ClipboardList,
-  BarChart3,
-  Wallet,
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import Layout from '@/components/Layout'
@@ -41,6 +35,7 @@ import { uploadFile } from '@/api/upload'
 import { getLogs, getLogTypes } from '@/api/logs'
 import type { OperationLog } from '@/api/logs'
 import { getImageUrl } from '@/lib/imageUrl'
+import { RolePermissionPanel } from '@/components/RolePermissionPanel'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -717,175 +712,6 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
 }
 
 
-/* ---- Permission Settings ---- */
-function PermissionSettings({ settings }: { settings?: Record<string, any> }) {
-  const queryClient = useQueryClient()
-  const [saved, setSaved] = useState(false)
-
-  const roles = [
-    { key: 'ADMIN', label: '管理员', color: 'text-vraccent-primary' },
-    { key: 'OPERATOR', label: '运营', color: 'text-vrsuccess' },
-    { key: 'FINANCE', label: '财务', color: 'text-vrwarning' },
-    { key: 'MANAGER', label: '店长', color: 'text-vrpurple' },
-  ]
-
-  const items = [
-    { key: 'home', label: '首页概览', icon: LayoutDashboard },
-    { key: 'venues', label: '场地管理', icon: Building2 },
-    { key: 'games', label: '内容管理', icon: Gamepad2 },
-    { key: 'booking', label: '预约排场', icon: CalendarDays },
-    { key: 'orders', label: '订单管理', icon: ClipboardList },
-    { key: 'users', label: '会员管理', icon: Users },
-    { key: 'analytics', label: '数据统计', icon: BarChart3 },
-    { key: 'finance', label: '财务管理', icon: Wallet },
-    { key: 'accounts', label: '账号管理', icon: Shield },
-    { key: 'member-marketing', label: '会员营销', icon: Gift },
-    { key: 'settings', label: '系统设置', icon: SettingsIcon },
-  ]
-
-  const defaultPerms: Record<string, string[]> = {
-    ADMIN:    ['home','venues','games','booking','orders','users','analytics','finance','accounts','member-marketing','settings'],
-    OPERATOR: ['home','venues','booking','orders','users','member-marketing'],
-    FINANCE:  ['home','orders','analytics','finance'],
-    MANAGER:  ['home','venues','booking','orders'],
-  }
-
-  const savedPerms = (settings?.role_permissions?.value as Record<string, string[]>) || {}
-
-  const [perms, setPerms] = useState<Record<string, string[]>>(defaultPerms)
-
-  useEffect(() => {
-    setPerms({ ...defaultPerms, ...savedPerms })
-  }, [JSON.stringify(savedPerms)])
-
-  useEffect(() => {
-    if (saved) {
-      const t = setTimeout(() => setSaved(false), 2000)
-      return () => clearTimeout(t)
-    }
-  }, [saved])
-
-  const mutation = useMutation({
-    mutationFn: () =>
-      bulkSaveSettings([{ key: 'role_permissions', value: perms, category: 'permission' }]),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] })
-      setSaved(true)
-    },
-    onError: (err: any) => {
-      alert('保存失败: ' + (err?.response?.data?.message || err?.message || '未知错误'))
-    },
-  })
-
-  const togglePermission = (role: string, itemKey: string) => {
-    setPerms((prev) => {
-      const current = prev[role] || []
-      const next = current.includes(itemKey)
-        ? current.filter((k) => k !== itemKey)
-        : [...current, itemKey]
-      return { ...prev, [role]: next }
-    })
-  }
-
-  const allChecked = (role: string) => items.every((i) => perms[role]?.includes(i.key))
-  const toggleAll = (role: string) => {
-    setPerms((prev) => ({
-      ...prev,
-      [role]: allChecked(role) ? [] : items.map((i) => i.key),
-    }))
-  }
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-vr-h2 text-vrtext-primary">权限管理</h2>
-        <button
-          onClick={() => mutation.mutate()}
-          disabled={mutation.isPending}
-          className={cn(
-            'flex items-center gap-2 h-10 px-5 rounded-lg text-vr-body-sm font-medium transition-all duration-200',
-            mutation.isPending
-              ? 'bg-vraccent-primary/50 text-white cursor-not-allowed'
-              : saved
-                ? 'bg-vrsuccess text-white hover:bg-vrsuccess/90'
-                : 'bg-vraccent-primary text-white hover:bg-vraccent-primary-hover'
-          )}
-        >
-          {mutation.isPending ? (
-            <><RotateCcw className="w-4 h-4 animate-spin" />保存中...</>
-          ) : saved ? (
-            <><Check className="w-4 h-4" />已保存</>
-          ) : (
-            <><Save className="w-4 h-4" />保存设置</>
-          )}
-        </button>
-      </div>
-
-      <p className="text-vr-caption text-vrtext-tertiary mb-4">
-        勾选各角色可访问的功能模块，保存后即时生效。超级管理员默认拥有全部权限。
-      </p>
-
-      <div className="bg-vrbg-card rounded-xl border border-vrborder-subtle overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-vrborder-subtle bg-vrbg-elevated">
-                <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-48">
-                  功能模块
-                </th>
-                {roles.map((r) => (
-                  <th key={r.key} className="text-center px-4 py-3 text-vr-caption font-medium min-w-[100px]">
-                    <div className="flex flex-col items-center gap-1">
-                      <span className={r.color}>{r.label}</span>
-                      <label className="flex items-center gap-1 text-vr-caption text-vrtext-tertiary cursor-pointer hover:text-vrtext-secondary transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={allChecked(r.key)}
-                          onChange={() => toggleAll(r.key)}
-                          className="w-3 h-3 rounded border-vrborder-subtle text-vraccent-primary focus:ring-vraccent-primary bg-vrbg-elevated cursor-pointer"
-                        />
-                        全选
-                      </label>
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => {
-                const Icon = item.icon
-                return (
-                  <tr
-                    key={item.key}
-                    className="border-b border-vrborder-subtle/50 hover:bg-vrbg-elevated/30 transition-colors"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <Icon className="w-4 h-4 text-vrtext-tertiary" />
-                        <span className="text-vr-body-sm text-vrtext-primary">{item.label}</span>
-                      </div>
-                    </td>
-                    {roles.map((role) => (
-                      <td key={role.key} className="px-4 py-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={perms[role.key]?.includes(item.key) || false}
-                          onChange={() => togglePermission(role.key, item.key)}
-                          className="w-4 h-4 rounded border-vrborder-subtle text-vraccent-primary focus:ring-vraccent-primary focus:ring-offset-0 bg-vrbg-elevated cursor-pointer"
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 /* ─── Log helpers ─── */
 const typeIconMap: Record<string, React.ReactNode> = {
   '新增场地': <Home className="w-3.5 h-3.5" />,
@@ -1167,7 +993,7 @@ function SettingsPanel({ activeKey, settings }: { activeKey: string; settings?: 
     case 'booking': return <BookingSettings settings={settings} />
     case 'payment': return <PaymentApiSettings settings={settings} />
     case 'notification': return <NotificationSettings settings={settings} />
-    case 'permission': return <PermissionSettings settings={settings} />
+    case 'permission': return <RolePermissionPanel />
     case 'log': return <LogSettings />
     default: return <BasicSettings settings={settings} />
   }

@@ -55,6 +55,7 @@ export async function list(req: Request, res: Response) {
           bonusBalance: true,
           points: true,
           status: true,
+          birthday: true,
           registerDate: true,
           lastLogin: true,
           createdAt: true,
@@ -132,6 +133,7 @@ export async function getById(req: Request, res: Response) {
         bonusBalance: true,
         points: true,
         status: true,
+        birthday: true,
         registerDate: true,
         lastLogin: true,
         createdAt: true,
@@ -183,6 +185,7 @@ export async function update(req: Request, res: Response) {
     if (req.body.status) data.status = req.body.status.toUpperCase()
     if (req.body.totalVisits !== undefined) data.totalVisits = parseInt(req.body.totalVisits)
     if (req.body.totalSpent !== undefined) data.totalSpent = parseInt(req.body.totalSpent)
+    if (req.body.birthday !== undefined) data.birthday = req.body.birthday ? new Date(req.body.birthday) : null
 
     const user = await prisma.user.update({
       where: { id: id as string },
@@ -197,6 +200,7 @@ export async function update(req: Request, res: Response) {
         totalVisits: true,
         totalSpent: true,
         status: true,
+        birthday: true,
         registerDate: true,
         lastLogin: true,
         createdAt: true,
@@ -354,6 +358,8 @@ export async function createStaff(req: Request, res: Response) {
     const bcrypt = await import('bcryptjs')
     const hashedPassword = await bcrypt.default.hash(password || '123456', 12)
 
+    const roleRecord = await prisma.role.findUnique({ where: { name: role } })
+
     const user = await prisma.$transaction(async (tx) => {
       const newUser = await tx.user.create({
         data: {
@@ -363,6 +369,7 @@ export async function createStaff(req: Request, res: Response) {
           email: email || null,
           role,
           status: status?.toUpperCase() || 'ACTIVE',
+          ...(roleRecord ? { roles: { connect: { id: roleRecord.id } } } : {}),
         },
       })
 
@@ -435,6 +442,12 @@ export async function updateStaff(req: Request, res: Response) {
       data.password = await bcrypt.default.hash(req.body.password, 12)
     }
 
+    let roleConnect: string | undefined
+    if (role !== undefined) {
+      const newRole = await prisma.role.findUnique({ where: { name: role } })
+      if (newRole) roleConnect = newRole.id
+    }
+
     const updated = await prisma.$transaction(async (tx) => {
       if (user.role === 'MANAGER' && role && role !== 'MANAGER') {
         await tx.venueManager.deleteMany({ where: { userId: id } })
@@ -464,7 +477,14 @@ export async function updateStaff(req: Request, res: Response) {
 
       return tx.user.update({
         where: { id },
-        data,
+        data: {
+          ...data,
+          ...(roleConnect ? {
+            roles: {
+              set: [{ id: roleConnect }],
+            },
+          } : {}),
+        },
         include: {
           managedVenues: {
             include: {

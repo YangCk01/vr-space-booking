@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { CheckCircle2, FileText, Home } from 'lucide-react'
+import { SimpleQRCode } from '@/components/SimpleQRCode'
 
 interface LocationState {
   venueName: string
@@ -141,19 +142,18 @@ export default function OrderSuccess() {
         </div>
       </motion.div>
 
-      {/* QR placeholder */}
+      {/* QR Code */}
       <motion.div
         className="flex flex-col items-center mb-8 mx-auto"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.8, duration: 0.3 }}
       >
-        <div className="w-28 h-28 bg-white rounded-xl flex items-center justify-center mb-2">
-          <div className="w-20 h-20 bg-[var(--bg-primary)] rounded-lg flex items-center justify-center">
-            <span className="text-[8px] text-[var(--text-muted)] text-center">签到二维码</span>
-          </div>
+        <div className="w-32 h-32 bg-white rounded-xl flex items-center justify-center mb-2 p-2">
+          <SimpleQRCode value={orderId} size={112} />
         </div>
         <p className="text-xs text-[var(--text-muted)]">出示二维码签到入场</p>
+        <p className="text-[10px] text-[var(--text-muted)] mt-0.5 font-mono">{orderId.slice(0, 12)}</p>
       </motion.div>
 
       {/* Spacer to push buttons down but not to the very edge */}

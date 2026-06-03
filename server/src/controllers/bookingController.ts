@@ -11,8 +11,8 @@ export const createValidators = [
   body('date').notEmpty().withMessage('日期不能为空'),
   body('startTime').notEmpty().withMessage('开始时间不能为空'),
   body('endTime').notEmpty().withMessage('结束时间不能为空'),
-  body('personName').notEmpty().withMessage('预约人姓名不能为空'),
-  body('personPhone').notEmpty().withMessage('预约人电话不能为空'),
+  body('personName').optional().isString().withMessage('预约人姓名格式错误'),
+  body('personPhone').optional().isString().withMessage('预约人电话格式错误'),
 ]
 
 export async function list(req: Request, res: Response) {

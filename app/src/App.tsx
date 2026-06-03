@@ -18,6 +18,10 @@ import AuditLogs from './pages/AuditLogs'
 import SystemConfig from './pages/SystemConfig'
 import Roles from './pages/Roles'
 import SystemHealth from './pages/SystemHealth'
+import CouponEffects from './pages/CouponEffects'
+import VenueAnalytics from './pages/VenueAnalytics'
+import Campaigns from './pages/Campaigns'
+import TriggerRules from './pages/TriggerRules'
 
 export default function App() {
   return (
@@ -42,6 +46,10 @@ export default function App() {
           <Route path="/system-config" element={<SystemConfig />} />
           <Route path="/roles" element={<Roles />} />
           <Route path="/system-health" element={<SystemHealth />} />
+          <Route path="/coupon-effects" element={<CouponEffects />} />
+          <Route path="/venue-analytics" element={<VenueAnalytics />} />
+          <Route path="/campaigns" element={<Campaigns />} />
+          <Route path="/trigger-rules" element={<TriggerRules />} />
         </Routes>
       </AuthGuard>
     </>

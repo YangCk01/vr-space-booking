@@ -22,7 +22,7 @@ export async function getRoles() {
 }
 
 export async function getPermissions() {
-  const res = await apiClient.get('/permissions')
+  const res = await apiClient.get('/roles/permissions')
   return res.data.data as Permission[]
 }
 
@@ -32,6 +32,11 @@ export async function createRole(data: {
   permissionIds?: string[]
 }) {
   const res = await apiClient.post('/roles', data)
+  return res.data.data
+}
+
+export async function updateRole(roleId: string, data: { name?: string; description?: string }) {
+  const res = await apiClient.put(`/roles/${roleId}`, data)
   return res.data.data
 }
 

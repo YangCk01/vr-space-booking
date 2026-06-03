@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -12,7 +12,7 @@ import {
   Upload,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
-import { getVenues, createVenue, updateVenue, deleteVenue } from '@/api/venues'
+import { getVenues, createVenue, updateVenue, deleteVenue, batchDeleteVenues, batchUpdateVenueStatus } from '@/api/venues'
 import type { Venue } from '@/api/venues'
 import { uploadFile } from '@/api/upload'
 import { cn } from '@/lib/utils'
@@ -127,6 +127,11 @@ export default function Venues() {
 
   const venueList = useMemo(() => venueData?.data || [], [venueData])
 
+  /* ─── Clear selection on filter change ─── */
+  useEffect(() => {
+    setSelectedIds([])
+  }, [activeFilter, searchQuery])
+
   /* ─── Mutations ─── */
   const createMutation = useMutation({
     mutationFn: createVenue,
@@ -162,6 +167,30 @@ export default function Venues() {
     },
   })
 
+  const batchDeleteMutation = useMutation({
+    mutationFn: batchDeleteVenues,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['venues'] })
+      setSelectedIds([])
+      setShowBatchDelete(false)
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.message || '批量删除失败')
+    },
+  })
+
+  const batchUpdateStatusMutation = useMutation({
+    mutationFn: ({ ids, status }: { ids: string[]; status: string }) => batchUpdateVenueStatus(ids, status),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['venues'] })
+      setSelectedIds([])
+      setShowBatchStatus(false)
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.message || '批量变更状态失败')
+    },
+  })
+
   /* Modal states */
   const [showModal, setShowModal] = useState(false)
   const [editingVenue, setEditingVenue] = useState<Venue | null>(null)
@@ -170,6 +199,12 @@ export default function Venues() {
   /* Delete dialog state */
   const [showDelete, setShowDelete] = useState(false)
   const [deletingVenue, setDeletingVenue] = useState<Venue | null>(null)
+
+  /* Batch operations state */
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [showBatchDelete, setShowBatchDelete] = useState(false)
+  const [showBatchStatus, setShowBatchStatus] = useState(false)
+  const [batchStatusValue, setBatchStatusValue] = useState('ACTIVE')
 
   /* ─── Modal handlers ─── */
   const openAdd = () => {
@@ -339,6 +374,44 @@ export default function Venues() {
         ))}
       </motion.div>
 
+      {/* ─── Batch action bar ─── */}
+      <AnimatePresence>
+        {selectedIds.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="flex items-center justify-between bg-vrbg-elevated rounded-xl border border-vraccent-primary/20 px-4 py-3 mb-4"
+          >
+            <div className="flex items-center gap-4">
+              <span className="text-vr-body-sm text-vrtext-primary font-medium">
+                已选择 {selectedIds.length} 项
+              </span>
+              <button
+                onClick={() => setShowBatchDelete(true)}
+                disabled={batchDeleteMutation.isPending}
+                className="h-8 px-3 rounded-lg bg-vrerror text-white text-vr-body-sm font-medium hover:bg-vrerror/90 transition-colors disabled:opacity-50"
+              >
+                {batchDeleteMutation.isPending ? '删除中...' : '批量删除'}
+              </button>
+              <button
+                onClick={() => setShowBatchStatus(true)}
+                disabled={batchUpdateStatusMutation.isPending}
+                className="h-8 px-3 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
+              >
+                {batchUpdateStatusMutation.isPending ? '更新中...' : '批量变更状态'}
+              </button>
+            </div>
+            <button
+              onClick={() => setSelectedIds([])}
+              className="text-vr-body-sm text-vrtext-secondary hover:text-vrtext-primary transition-colors"
+            >
+              清空选择
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ─── Venue table ─── */}
       <motion.div
         initial={{ opacity: 0 }}
@@ -347,7 +420,22 @@ export default function Venues() {
         className="bg-vrbg-card rounded-xl border border-vrborder-DEFAULT overflow-hidden"
       >
         {/* Table header */}
-        <div className="grid grid-cols-[1fr_80px_80px_80px_100px_100px_120px] items-center h-11 px-4 bg-vrbg-elevated border-b border-vrborder-DEFAULT">
+        <div className="grid grid-cols-[40px_1fr_80px_80px_80px_100px_100px_120px] items-center h-11 px-4 bg-vrbg-elevated border-b border-vrborder-DEFAULT">
+          <span className="text-vr-caption text-vrtext-secondary font-medium text-center">
+            <input
+              type="checkbox"
+              checked={venueList.length > 0 && venueList.every(v => selectedIds.includes(v.id))}
+              onChange={() => {
+                const allSelected = venueList.every(v => selectedIds.includes(v.id))
+                if (allSelected) {
+                  setSelectedIds(prev => prev.filter(id => !venueList.some(v => v.id === id)))
+                } else {
+                  setSelectedIds(prev => [...new Set([...prev, ...venueList.map(v => v.id)])])
+                }
+              }}
+              className="w-4 h-4 rounded cursor-pointer"
+            />
+          </span>
           <span className="text-vr-caption text-vrtext-secondary font-medium">场地</span>
           <span className="text-vr-caption text-vrtext-secondary font-medium text-center">面积</span>
           <span className="text-vr-caption text-vrtext-secondary font-medium text-center">容量</span>
@@ -381,8 +469,24 @@ export default function Venues() {
                   key={venue.id}
                   variants={itemVariants}
                   layout
-                  className="grid grid-cols-[1fr_80px_80px_80px_100px_100px_120px] items-center h-16 px-4 border-b border-vrborder-DEFAULT/50 hover:bg-vrbg-hover transition-colors duration-150 group"
+                  className="grid grid-cols-[40px_1fr_80px_80px_80px_100px_100px_120px] items-center h-16 px-4 border-b border-vrborder-DEFAULT/50 hover:bg-vrbg-hover transition-colors duration-150 group"
                 >
+                  {/* Checkbox */}
+                  <div className="flex items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(venue.id)}
+                      onChange={() => {
+                        setSelectedIds(prev =>
+                          prev.includes(venue.id)
+                            ? prev.filter(id => id !== venue.id)
+                            : [...prev, venue.id]
+                        )
+                      }}
+                      className="w-4 h-4 rounded cursor-pointer"
+                    />
+                  </div>
+
                   {/* Venue info */}
                   <div className="flex items-center gap-3">
                     <img
@@ -804,6 +908,115 @@ export default function Venues() {
                   className="h-10 px-5 bg-vrerror text-white text-vr-body-sm font-medium rounded-lg hover:bg-red-600 transition-colors"
                 >
                   删除
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ─── Batch delete confirmation dialog ─── */}
+      <AnimatePresence>
+        {showBatchDelete && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center"
+          >
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ duration: 0.25, ease: [0.34, 1.56, 0.64, 1] as [number, number, number, number] }}
+              className="relative w-[360px] bg-vrbg-elevated rounded-2xl shadow-vr-xl border border-vrborder-DEFAULT p-6 text-center"
+            >
+              <AlertTriangle className="w-12 h-12 text-vr-red mx-auto mb-3" />
+              <h4 className="text-vr-h4 text-vrtext-primary font-medium mb-2">确认批量删除</h4>
+              <p className="text-vr-body text-vrtext-secondary mb-2">
+                确定要删除选中的 {selectedIds.length} 个场地吗？删除后不可恢复。
+              </p>
+              <p className="text-vr-caption text-vrwarning mb-6">
+                存在关联预约的场地将被跳过
+              </p>
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  onClick={() => setShowBatchDelete(false)}
+                  className="h-10 px-5 border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-hover transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => batchDeleteMutation.mutate(selectedIds)}
+                  disabled={batchDeleteMutation.isPending}
+                  className="h-10 px-5 bg-vrerror text-white text-vr-body-sm font-medium rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
+                >
+                  {batchDeleteMutation.isPending ? '删除中...' : '删除'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ─── Batch status modal ─── */}
+      <AnimatePresence>
+        {showBatchStatus && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center"
+          >
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ duration: 0.25, ease: [0.34, 1.56, 0.64, 1] as [number, number, number, number] }}
+              className="relative w-[360px] bg-vrbg-elevated rounded-2xl shadow-vr-xl border border-vrborder-DEFAULT p-6"
+            >
+              <h4 className="text-vr-h4 text-vrtext-primary font-medium mb-4 text-center">批量变更状态</h4>
+              <div className="space-y-3 mb-6">
+                {[
+                  { value: 'ACTIVE', label: '正常运营' },
+                  { value: 'MAINTENANCE', label: '维护中' },
+                  { value: 'INACTIVE', label: '停用' },
+                ].map((opt) => (
+                  <label key={opt.value} className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="batchStatus"
+                      value={opt.value}
+                      checked={batchStatusValue === opt.value}
+                      onChange={(e) => setBatchStatusValue(e.target.value)}
+                      className="w-4 h-4 accent-vr-blue cursor-pointer"
+                    />
+                    <span className={cn(
+                      'text-vr-body-sm',
+                      batchStatusValue === opt.value ? 'text-vrtext-primary' : 'text-vrtext-secondary'
+                    )}>
+                      {opt.label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  onClick={() => { setShowBatchStatus(false); setBatchStatusValue('ACTIVE') }}
+                  className="h-10 px-5 border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-hover transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => batchUpdateStatusMutation.mutate({ ids: selectedIds, status: batchStatusValue })}
+                  disabled={batchUpdateStatusMutation.isPending}
+                  className="h-10 px-5 bg-vraccent-primary text-white text-vr-body-sm font-medium rounded-lg hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
+                >
+                  {batchUpdateStatusMutation.isPending ? '更新中...' : '确定'}
                 </button>
               </div>
             </motion.div>

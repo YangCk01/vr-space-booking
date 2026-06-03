@@ -19,6 +19,19 @@ import { cn } from '@/lib/utils'
 import { getSystemConfigs, updateSystemConfig } from '@/api/systemConfig'
 import type { SystemConfig } from '@/api/systemConfig'
 
+const configMetaMap: Record<string, { label: string; desc: string; category: string }> = {
+  member_level_thresholds: { label: '等级消费阈值', desc: '各会员等级所需的累计消费金额（分），用逗号分隔', category: 'member' },
+  member_discount_rates: { label: '等级折扣率', desc: '各会员等级对应的订单折扣率（%），用逗号分隔', category: 'member' },
+  member_level_names: { label: '等级名称', desc: '各会员等级的显示名称，JSON数组格式', category: 'member' },
+  points_earn_ratio: { label: '积分获取比例', desc: '消费1元可获得的积分数', category: 'points' },
+  points_deduct_ratio: { label: '积分抵扣比例', desc: '多少积分可抵扣1元', category: 'points' },
+  points_gift_daily_limit: { label: '单日积分赠送上限', desc: '单个用户每日最多可被赠送的积分数（分）', category: 'points' },
+  coupon_gift_daily_limit: { label: '单日券赠送上限', desc: '单个用户每日最多可被赠送的券张数', category: 'points' },
+  dormant_days: { label: '沉睡天数阈值', desc: '超过此天数无消费即标记为沉睡用户', category: 'member' },
+  recon_alert_enabled: { label: '对账告警开关', desc: '是否启用对账异常自动推送通知', category: 'recon' },
+  recon_alert_amount_threshold: { label: '对账告警金额阈值', desc: '差异金额超过此值（分）即触发告警', category: 'recon' },
+}
+
 const categoryMeta: Record<string, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
   member: { label: '会员规则', icon: UserCog },
   points: { label: '积分规则', icon: Coins },
@@ -65,12 +78,14 @@ function ConfigGroup({
         </div>
       </div>
       <div className="p-5 space-y-5">
-        {configs.map((cfg) => (
+        {configs.map((cfg) => {
+          const meta = configMetaMap[cfg.key] || { label: cfg.key, desc: '', category: 'other' }
+          return (
           <div key={cfg.key} className="flex flex-col sm:flex-row sm:items-start gap-3 sm:gap-6">
             <div className="sm:w-[200px] shrink-0">
-              <label className="text-vr-body-sm text-vrtext-primary font-medium">{cfg.label}</label>
-              {cfg.description && (
-                <p className="text-vr-caption text-vrtext-tertiary mt-0.5">{cfg.description}</p>
+              <label className="text-vr-body-sm text-vrtext-primary font-medium">{meta.label}</label>
+              {meta.desc && (
+                <p className="text-vr-caption text-vrtext-tertiary mt-0.5">{meta.desc}</p>
               )}
             </div>
             <div className="flex-1">
@@ -108,7 +123,7 @@ function ConfigGroup({
               </div>
             )}
           </div>
-        ))}
+        )})}
       </div>
     </motion.div>
   )
@@ -151,7 +166,8 @@ export default function SystemConfig() {
   }
 
   const grouped = (configs || []).reduce<Record<string, SystemConfig[]>>((acc, cfg) => {
-    const cat = cfg.category || 'other'
+    const meta = configMetaMap[cfg.key]
+    const cat = meta?.category || 'other'
     if (!acc[cat]) acc[cat] = []
     acc[cat].push(cfg)
     return acc

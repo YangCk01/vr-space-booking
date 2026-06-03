@@ -17,7 +17,7 @@ import {
 const router = Router()
 
 router.use(authenticate)
-router.use(requireRole('SUPER_ADMIN', 'ADMIN'))
+router.use(requirePermission('user:gift'))
 
 router.post('/points', requirePermission('user:gift'), giftPointsValidators, giftPoints)
 router.post('/coupon', requirePermission('user:gift'), giftCouponValidators, giftCoupon)

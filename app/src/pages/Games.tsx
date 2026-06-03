@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -14,7 +14,7 @@ import {
   EyeOff,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
-import { getGames, createGame, updateGame, deleteGame } from '@/api/games'
+import { getGames, createGame, updateGame, deleteGame, batchDeleteGames, batchUpdateGameStatus } from '@/api/games'
 import type { Game, GameInput } from '@/api/games'
 import { uploadFile } from '@/api/upload'
 import { getImageUrl } from '@/lib/imageUrl'
@@ -56,6 +56,9 @@ export default function Games() {
   const [uploadingDetailImage, setUploadingDetailImage] = useState(false)
   const [formData, setFormData] = useState<Partial<Game>>({ ...emptyGame })
   const [tagInput, setTagInput] = useState('')
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [showBatchStatus, setShowBatchStatus] = useState(false)
+  const [batchStatusTarget, setBatchStatusTarget] = useState<'ACTIVE' | 'INACTIVE'>('ACTIVE')
 
   const { data: games, isLoading } = useQuery({
     queryKey: ['games'],
@@ -71,6 +74,10 @@ export default function Games() {
       g.tags.some((t) => t.toLowerCase().includes(s))
     )
   })
+
+  useEffect(() => {
+    setSelectedIds([])
+  }, [searchQuery])
 
   const createMutation = useMutation({
     mutationFn: createGame,
@@ -93,6 +100,23 @@ export default function Games() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['games'] })
       setShowDelete(null)
+    },
+  })
+
+  const batchDeleteMutation = useMutation({
+    mutationFn: batchDeleteGames,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['games'] })
+      setSelectedIds([])
+    },
+  })
+
+  const batchUpdateStatusMutation = useMutation({
+    mutationFn: ({ ids, status }: { ids: string[]; status: string }) => batchUpdateGameStatus(ids, status),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['games'] })
+      setSelectedIds([])
+      setShowBatchStatus(false)
     },
   })
 
@@ -194,6 +218,8 @@ export default function Games() {
 
   const isPending = createMutation.isPending || updateMutation.isPending
 
+  const allVisibleSelected = filteredGames && filteredGames.length > 0 && filteredGames.every(g => selectedIds.includes(g.id))
+
   return (
     <Layout breadcrumb={['内容管理']}>
       <motion.div
@@ -229,6 +255,50 @@ export default function Games() {
           </div>
         </div>
 
+        {/* Batch Action Bar */}
+        <AnimatePresence>
+          {selectedIds.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="flex items-center justify-between bg-vrbg-elevated rounded-xl border border-vraccent-primary/20 px-4 py-3"
+            >
+              <div className="flex items-center gap-4">
+                <span className="text-vr-body-sm text-vrtext-primary font-medium">
+                  已选择 {selectedIds.length} 项
+                </span>
+                <button
+                  onClick={() => {
+                    if (!window.confirm(`确定要批量删除 ${selectedIds.length} 个游戏吗？存在关联预约的内容将被跳过。`)) return
+                    batchDeleteMutation.mutate(selectedIds)
+                  }}
+                  disabled={batchDeleteMutation.isPending}
+                  className="h-8 px-3 rounded-lg bg-vrerror text-white text-vr-body-sm font-medium hover:bg-vrerror/90 transition-colors disabled:opacity-50"
+                >
+                  {batchDeleteMutation.isPending ? '删除中...' : '批量删除'}
+                </button>
+                <button
+                  onClick={() => {
+                    setBatchStatusTarget('ACTIVE')
+                    setShowBatchStatus(true)
+                  }}
+                  disabled={batchUpdateStatusMutation.isPending}
+                  className="h-8 px-3 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {batchUpdateStatusMutation.isPending ? '更新中...' : '批量变更状态'}
+                </button>
+              </div>
+              <button
+                onClick={() => setSelectedIds([])}
+                className="text-vr-body-sm text-vrtext-secondary hover:text-vrtext-primary transition-colors"
+              >
+                清空选择
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Table */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -240,6 +310,20 @@ export default function Games() {
             <table className="w-full">
               <thead>
                 <tr className="bg-vrbg-elevated">
+                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[48px]">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={() => {
+                        if (allVisibleSelected) {
+                          setSelectedIds(prev => prev.filter(id => !filteredGames?.some(g => g.id === id)))
+                        } else {
+                          setSelectedIds(prev => [...new Set([...prev, ...(filteredGames?.map(g => g.id) || [])])])
+                        }
+                      }}
+                      className="w-4 h-4 rounded cursor-pointer"
+                    />
+                  </th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">封面</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">标题</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">价格</th>
@@ -253,11 +337,11 @@ export default function Games() {
                 <AnimatePresence mode="wait">
                   {isLoading ? (
                     <tr>
-                      <td colSpan={7} className="text-center py-12 text-vrtext-muted">加载中...</td>
+                      <td colSpan={8} className="text-center py-12 text-vrtext-muted">加载中...</td>
                     </tr>
                   ) : filteredGames?.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-center py-16">
+                      <td colSpan={8} className="text-center py-16">
                         <Gamepad2 className="w-12 h-12 text-vrtext-muted mx-auto mb-3" />
                         <p className="text-vr-body text-vrtext-secondary">暂无游戏内容</p>
                       </td>
@@ -272,6 +356,20 @@ export default function Games() {
                         transition={{ duration: 0.3, delay: idx * 0.05 }}
                         className="h-14 border-t border-vrborder-subtle hover:bg-vrbg-elevated/60 transition-colors"
                       >
+                        <td className="px-4 py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(game.id)}
+                            onChange={() => {
+                              setSelectedIds(prev =>
+                                prev.includes(game.id)
+                                  ? prev.filter(id => id !== game.id)
+                                  : [...prev, game.id]
+                              )
+                            }}
+                            className="w-4 h-4 rounded cursor-pointer"
+                          />
+                        </td>
                         <td className="px-4 py-3">
                           {game.coverImage ? (
                             <img
@@ -639,6 +737,70 @@ export default function Games() {
                     className="flex-1 h-10 bg-vrerror text-white text-vr-body-sm font-medium rounded-lg hover:bg-vrerror/90 transition-colors disabled:opacity-50"
                   >
                     {deleteMutation.isPending ? '删除中...' : '确认删除'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Batch Status Modal */}
+      <AnimatePresence>
+        {showBatchStatus && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              className="bg-vrbg-card border border-vrborder-subtle rounded-2xl w-full max-w-sm p-6"
+            >
+              <div className="flex flex-col items-center text-center">
+                <div className="w-12 h-12 rounded-full bg-vraccent-primary/10 flex items-center justify-center mb-4">
+                  <Eye className="w-6 h-6 text-vraccent-primary" />
+                </div>
+                <h3 className="text-vr-h3 text-vrtext-primary font-semibold mb-1">批量变更状态</h3>
+                <p className="text-vr-body-sm text-vrtext-secondary mb-6">
+                  将 {selectedIds.length} 个游戏的状态变更为：
+                </p>
+                <div className="flex gap-2 w-full mb-6">
+                  {[
+                    { key: 'ACTIVE' as const, label: '上架' },
+                    { key: 'INACTIVE' as const, label: '下架' },
+                  ].map((s) => (
+                    <button
+                      key={s.key}
+                      onClick={() => setBatchStatusTarget(s.key)}
+                      className={cn(
+                        'flex-1 h-10 rounded-lg border text-vr-body-sm font-medium transition-all',
+                        batchStatusTarget === s.key
+                          ? 'border-vraccent-primary bg-vraccent-primary/10 text-vraccent-primary'
+                          : 'border-vrborder-subtle bg-vrbg-surface text-vrtext-secondary hover:border-vrborder-hover'
+                      )}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-3 w-full">
+                  <button
+                    onClick={() => setShowBatchStatus(false)}
+                    className="flex-1 h-10 border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => batchUpdateStatusMutation.mutate({ ids: selectedIds, status: batchStatusTarget })}
+                    disabled={batchUpdateStatusMutation.isPending}
+                    className="flex-1 h-10 bg-vraccent-primary text-white text-vr-body-sm font-medium rounded-lg hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    {batchUpdateStatusMutation.isPending ? '更新中...' : '确认更新'}
                   </button>
                 </div>
               </div>

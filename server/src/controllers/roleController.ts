@@ -74,6 +74,17 @@ export async function listRoles(req: AuthenticatedRequest, res: Response) {
   }
 }
 
+export async function listPermissions(req: AuthenticatedRequest, res: Response) {
+  try {
+    const permissions = await prisma.permission.findMany({
+      orderBy: [{ module: 'asc' }, { name: 'asc' }],
+    })
+    return success(res, permissions)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
 export async function updateRole(req: AuthenticatedRequest, res: Response) {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
@@ -92,6 +103,15 @@ export async function updateRole(req: AuthenticatedRequest, res: Response) {
 
     if (existing.isSystem) {
       return error(res, '系统内置角色不可编辑', 403)
+    }
+
+    if (name !== undefined) {
+      const nameConflict = await prisma.role.findFirst({
+        where: { name, id: { not: id } },
+      })
+      if (nameConflict) {
+        return error(res, '角色名称已存在', 400)
+      }
     }
 
     const data: any = {}
@@ -147,13 +167,20 @@ export async function deleteRole(req: AuthenticatedRequest, res: Response) {
   try {
     const id = req.params.id as string
 
-    const existing = await prisma.role.findUnique({ where: { id } })
+    const existing = await prisma.role.findUnique({
+      where: { id },
+      include: { _count: { select: { users: true } } },
+    })
     if (!existing) {
       return error(res, '角色不存在', 404)
     }
 
     if (existing.isSystem) {
       return error(res, '系统内置角色不可删除', 403)
+    }
+
+    if (existing._count.users > 0) {
+      return error(res, `该角色已分配给 ${existing._count.users} 位用户，请先移除关联用户后再删除`, 400)
     }
 
     await prisma.role.delete({ where: { id } })

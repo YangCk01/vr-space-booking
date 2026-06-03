@@ -183,3 +183,58 @@ export async function remove(req: Request, res: Response) {
     return error(res, (err as Error).message, 500)
   }
 }
+
+/* ─── Batch operations ─── */
+
+export async function batchDelete(req: Request, res: Response) {
+  try {
+    const { ids } = req.body
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return error(res, '请选择要删除的场地', 400)
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 检查是否有未完成预约
+      const venuesWithBookings = await tx.booking.findMany({
+        where: {
+          venueId: { in: ids },
+          status: { not: 'CANCELLED' },
+          date: { gte: new Date() },
+        },
+        select: { venueId: true },
+        distinct: ['venueId'],
+      })
+      if (venuesWithBookings.length > 0) {
+        throw new Error('存在场地有未完成预约，无法删除')
+      }
+
+      await tx.venue.deleteMany({ where: { id: { in: ids } } })
+      return ids.length
+    })
+
+    return success(res, { deleted: result }, `已删除 ${result} 个场地`)
+  } catch (err) {
+    return error(res, (err as Error).message, 400)
+  }
+}
+
+export async function batchUpdateStatus(req: Request, res: Response) {
+  try {
+    const { ids, status } = req.body
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return error(res, '请选择要更新的场地', 400)
+    }
+    if (!status) {
+      return error(res, '状态不能为空', 400)
+    }
+
+    const result = await prisma.venue.updateMany({
+      where: { id: { in: ids } },
+      data: { status },
+    })
+
+    return success(res, { updated: result.count }, `已更新 ${result.count} 个场地状态`)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}

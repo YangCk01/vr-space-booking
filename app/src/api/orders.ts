@@ -90,3 +90,13 @@ export async function completeRefundOrder(id: string) {
   const res = await apiClient.put(`/orders/${id}/status`, { status: 'REFUNDED' })
   return res.data.data
 }
+
+export async function batchVerifyOrders(ids: string[]) {
+  const res = await apiClient.post('/orders/batch-verify', { ids })
+  return res.data
+}
+
+export async function batchRefundOrders(ids: string[], reason: string) {
+  const res = await apiClient.post('/orders/batch-refund', { ids, reason })
+  return res.data
+}

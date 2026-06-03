@@ -1470,7 +1470,7 @@ export default function Booking() {
                 >
                   <div>
                     <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">
-                      {bookingForm.type === 'corporate' ? '企业名称' : bookingForm.type === 'maintenance' ? '维护人员' : '预约人'} <span className="text-vr-red">*</span>
+                      {bookingForm.type === 'corporate' ? '企业名称' : bookingForm.type === 'maintenance' ? '维护人员' : '预约人'}
                     </label>
                     <input
                       type="text"
@@ -1506,7 +1506,7 @@ export default function Booking() {
                   transition={{ delay: 0.25, duration: 0.3 }}
                 >
                   <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">
-                    联系电话 <span className="text-vr-red">*</span>
+                    联系电话
                   </label>
                   <input
                     type="tel"
@@ -1707,7 +1707,7 @@ export default function Booking() {
                       setCreateError(err?.response?.data?.message || err?.message || '预约创建失败，请重试')
                     }
                   }}
-                  disabled={createMutation.isPending || !bookingForm.person || !bookingForm.phone || !bookingForm.venue || !modalTime || !bookingForm.gameId || slotStatus?.status === 'full' || slotStatus?.status === 'occupied_by_other_game' || (useBalancePay && !!matchedUser && realBalance < estimatedAmountRaw)}
+                  disabled={createMutation.isPending || !bookingForm.venue || !modalTime || !bookingForm.gameId || slotStatus?.status === 'full' || slotStatus?.status === 'occupied_by_other_game' || (useBalancePay && !!matchedUser && realBalance < estimatedAmountRaw)}
                   className="h-10 px-5 bg-vraccent-primary text-white text-vr-body-sm font-medium rounded-lg hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
                 >
                   {createMutation.isPending ? '提交中...' : useBalancePay ? '余额支付' : '确定预约'}

@@ -10,7 +10,11 @@ export default defineConfig({
   server: {
     port: 5173,      // 固定端口，不要修改
     strictPort: true, // 若 5173 被占用则直接报错，不要自动换端口
-    host: '0.0.0.0', // 绑定到 127.0.0.1，确保浏览器可访问
+    host: '0.0.0.0', // 绑定到所有网卡，确保局域网可访问
+    hmr: {
+      host: 'localhost',
+      port: 5173,
+    },
   },
   resolve: {
     alias: {

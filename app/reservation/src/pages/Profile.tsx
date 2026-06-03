@@ -40,8 +40,7 @@ export default function Profile() {
     enabled: isLoggedIn,
   })
 
-  const enumToConfigKey: Record<string, string> = { VIP_PLUS: 'VIP+' }
-  const currentLevel = memberConfig?.levels?.find((l) => l.key === user?.level || l.key === enumToConfigKey[user?.level || ''])
+    const currentLevel = memberConfig?.levels?.find((l) => l.key === user?.level)
   const discountLabel = currentLevel && currentLevel.discount < 100
     ? `享${currentLevel.discount}折`
     : ''

@@ -579,7 +579,7 @@ export default function Analytics() {
           value: `¥${((stats.todayRevenue || 0) / 100).toLocaleString()}`,
           trend: `${trendLabel} ${stats.revenueTrend >= 0 ? '+' : ''}${stats.revenueTrend}%`,
           trendUp: stats.revenueTrend >= 0,
-          subLabel: `${subLabelPrefix}预约 ${stats.todayBookings} 场`,
+          subLabel: `${subLabelPrefix}成交 ${stats.todayUsed} 单 · 客均¥${stats.todayUsed > 0 ? ((stats.todayRevenue || 0) / stats.todayUsed / 100).toFixed(0) : 0}`,
         },
         {
           icon: <CalendarCheck className="w-6 h-6 text-vrsuccess" />,
@@ -588,7 +588,7 @@ export default function Analytics() {
           value: String(stats.todayBookings),
           trend: `${trendLabel} ${stats.bookingTrend >= 0 ? '+' : ''}${stats.bookingTrend}%`,
           trendUp: stats.bookingTrend >= 0,
-          subLabel: `${subLabelPrefix}核销 ${stats.todayUsed} 场`,
+          subLabel: `${subLabelPrefix}到场 ${stats.todayPlayers || 0} 人次`,
         },
         {
           icon: <Users className="w-6 h-6 text-vrsuccess" />,
@@ -597,7 +597,7 @@ export default function Analytics() {
           value: String(stats.todayPlayers || 0),
           trend: `${trendLabel} ${stats.playersTrend >= 0 ? '+' : ''}${stats.playersTrend}%`,
           trendUp: stats.playersTrend >= 0,
-          subLabel: `${subLabelPrefix}核销 ${stats.todayUsed} 场`,
+          subLabel: `${subLabelPrefix}人均 ${stats.todayBookings > 0 ? Math.round((stats.todayPlayers || 0) / stats.todayBookings) : 0} 人/场`,
         },
       ]
     : []

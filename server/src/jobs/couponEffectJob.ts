@@ -31,7 +31,7 @@ export async function runCouponEffectReport(dateStr: string) {
   const end = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999))
 
   // 按 couponType + source 分组统计
-  const sources = ['MANUAL_GIFT', 'CAMPAIGN', 'EXCHANGE', 'RECHARGE_BONUS']
+  const sources = ['MANUAL_GIFT', 'CAMPAIGN', '积分兑换', 'RECHARGE_BONUS']
   const types = ['DISCOUNT', 'EXPERIENCE_FREE']
 
   for (const couponType of types) {

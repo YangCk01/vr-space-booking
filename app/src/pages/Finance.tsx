@@ -94,12 +94,14 @@ const reconcileTypeMap: Record<string, string> = {
   '消费本金': 'CONSUME_PRINCIPAL',
   '消费赠送': 'CONSUME_BONUS',
   '退款总额': 'REFUND',
-  '积分发放': 'POINTS_EARN',
-  '积分赠送': 'POINTS_GIFT',
+  '消费赠送积分': 'POINTS_EARN',
+  '管理员赠送积分': 'POINTS_GIFT',
   '积分兑换消耗': 'POINTS_EXCHANGE',
-  '优惠券发放': 'COUPON_GIFT',
-  '体验券发放': 'EXPERIENCE_GIFT',
-  '优惠券核销': 'COUPON_USED',
+  '手动发放折扣券': 'COUPON_GIFT',
+  '手动发放体验券': 'EXPERIENCE_GIFT',
+  '活动发放折扣券': 'COUPON_CAMPAIGN',
+  '活动发放体验券': 'EXPERIENCE_CAMPAIGN',
+  '折扣券核销': 'COUPON_USED',
   '体验券核销': 'EXPERIENCE_USED',
 }
 
@@ -1203,19 +1205,27 @@ export default function Finance() {
                       <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">营销凭证流转（发放 / 核销 / 在途）</h3>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div className="bg-vrbg-surface rounded-lg p-3">
-                          <p className="text-vr-caption text-vrtext-tertiary">赠送折扣券</p>
+                          <p className="text-vr-caption text-vrtext-tertiary">手动发放折扣券</p>
                           <p className="text-vr-body font-semibold text-vrtext-primary">{(dailyReport.couponGiftCount || 0).toLocaleString()} 张</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
-                          <p className="text-vr-caption text-vrtext-tertiary">赠送体验券</p>
+                          <p className="text-vr-caption text-vrtext-tertiary">手动发放体验券</p>
                           <p className="text-vr-body font-semibold text-vrtext-primary">{(dailyReport.experienceGiftCount || 0).toLocaleString()} 张</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
-                          <p className="text-vr-caption text-vrtext-tertiary">核销折扣券</p>
+                          <p className="text-vr-caption text-vrtext-tertiary">活动发放折扣券</p>
+                          <p className="text-vr-body font-semibold text-vrtext-primary">{(dailyReport.couponCampaignCount || 0).toLocaleString()} 张</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">活动发放体验券</p>
+                          <p className="text-vr-body font-semibold text-vrtext-primary">{(dailyReport.experienceCampaignCount || 0).toLocaleString()} 张</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">折扣券核销</p>
                           <p className="text-vr-body font-semibold text-vraccent-primary">{(dailyReport.couponUsedCount || 0).toLocaleString()} 张</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
-                          <p className="text-vr-caption text-vrtext-tertiary">核销体验券</p>
+                          <p className="text-vr-caption text-vrtext-tertiary">体验券核销</p>
                           <p className="text-vr-body font-semibold text-vraccent-primary">{(dailyReport.experienceUsedCount || 0).toLocaleString()} 张</p>
                         </div>
                       </div>
@@ -1310,19 +1320,27 @@ export default function Finance() {
                     <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">累计营销凭证流转</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">累计赠送折扣券</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计手动发放折扣券</p>
                         <p className="text-vr-body font-semibold text-vrtext-primary">{(totalSummary.totalCouponGift || 0).toLocaleString()} 张</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">累计赠送体验券</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计手动发放体验券</p>
                         <p className="text-vr-body font-semibold text-vrtext-primary">{(totalSummary.totalExperienceGift || 0).toLocaleString()} 张</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">累计核销折扣券</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计活动发放折扣券</p>
+                        <p className="text-vr-body font-semibold text-vrtext-primary">{(totalSummary.totalCouponCampaign || 0).toLocaleString()} 张</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">累计活动发放体验券</p>
+                        <p className="text-vr-body font-semibold text-vrtext-primary">{(totalSummary.totalExperienceCampaign || 0).toLocaleString()} 张</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">累计折扣券核销</p>
                         <p className="text-vr-body font-semibold text-vraccent-primary">{(totalSummary.totalCouponUsed || 0).toLocaleString()} 张</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">累计核销体验券</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计体验券核销</p>
                         <p className="text-vr-body font-semibold text-vraccent-primary">{(totalSummary.totalExperienceUsed || 0).toLocaleString()} 张</p>
                       </div>
                     </div>

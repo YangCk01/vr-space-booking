@@ -1,24 +1,24 @@
 import { Router } from 'express'
-import { authenticate, requireAdmin } from '../middleware/auth'
+import { authenticate, requireRole } from '../middleware/auth'
 import * as reconController from '../controllers/reconController'
 import * as reconConfigController from '../controllers/reconConfigController'
 
 const router = Router()
 
-router.get('/batches', authenticate, requireAdmin, reconController.listBatches)
-router.get('/batches/:id', authenticate, requireAdmin, reconController.getBatch)
-router.post('/run', authenticate, requireAdmin, reconController.runRecon)
-router.delete('/clear', authenticate, requireAdmin, reconController.clearReconData)
-router.get('/exceptions', authenticate, requireAdmin, reconController.listExceptions)
-router.get('/exceptions/:id', authenticate, requireAdmin, reconController.getException)
-router.put('/exceptions/:id/handle', authenticate, requireAdmin, reconController.handleException)
-router.get('/summary', authenticate, requireAdmin, reconController.getSummary)
+router.get('/batches', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconController.listBatches)
+router.get('/batches/:id', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconController.getBatch)
+router.post('/run', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconController.runRecon)
+router.delete('/clear', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconController.clearReconData)
+router.get('/exceptions', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconController.listExceptions)
+router.get('/exceptions/:id', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconController.getException)
+router.put('/exceptions/:id/handle', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconController.handleException)
+router.get('/summary', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconController.getSummary)
 
-router.get('/configs', authenticate, requireAdmin, reconConfigController.listConfigs)
-router.get('/configs/:key', authenticate, requireAdmin, reconConfigController.getConfig)
-router.put('/configs', authenticate, requireAdmin, reconConfigController.upsertConfig)
-router.delete('/configs/:key', authenticate, requireAdmin, reconConfigController.deleteConfig)
+router.get('/configs', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconConfigController.listConfigs)
+router.get('/configs/:key', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconConfigController.getConfig)
+router.put('/configs', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconConfigController.upsertConfig)
+router.delete('/configs/:key', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconConfigController.deleteConfig)
 
-router.post('/webhook-test', authenticate, requireAdmin, reconController.testWebhook)
+router.post('/webhook-test', authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'), reconController.testWebhook)
 
 export default router

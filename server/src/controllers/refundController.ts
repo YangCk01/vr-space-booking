@@ -123,7 +123,21 @@ export async function executeRefundClear(req: AuthenticatedRequest, res: Respons
         }
       })
 
-      // 3. 取消所有未完成订单
+      // 3. 恢复所有未完成订单使用的优惠券
+      const pendingOrders = await tx.order.findMany({
+        where: { userId, status: { in: ['PENDING', 'PAID'] } },
+        select: { userCouponId: true }
+      })
+      for (const order of pendingOrders) {
+        if (order.userCouponId) {
+          await tx.userCoupon.update({
+            where: { id: order.userCouponId },
+            data: { status: 'UNUSED', usedAt: null, usedOrderId: null }
+          })
+        }
+      }
+
+      // 4. 取消所有未完成订单
       await tx.order.updateMany({
         where: { userId, status: { in: ['PENDING', 'PAID'] } },
         data: { status: 'CANCELLED', cancelledAt: new Date() }

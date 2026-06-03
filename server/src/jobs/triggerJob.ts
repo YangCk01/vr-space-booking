@@ -1,8 +1,8 @@
 import cron from 'node-cron'
-import { subDays, format } from 'date-fns'
+import { subDays, addDays, format } from 'date-fns'
 import { prisma } from '../utils/prisma'
 import { pushNotification } from '../controllers/notificationController'
-import { addDays } from 'date-fns'
+import { executeCampaign, TriggerContext } from '../services/campaignRewardService'
 
 export type TriggerEvent = 'USER_REGISTERED' | 'ORDER_COMPLETED' | 'DORMANT_DETECTED' | 'BIRTHDAY'
 
@@ -14,9 +14,22 @@ interface TriggerPayload {
 }
 
 /**
- * 启动触发器定时任务（每日 00:20 扫描沉睡用户和生日用户）
+ * 启动触发器定时任务
  */
 export function startTriggerJob() {
+  // 每日 00:15：过期自动结束 + 预算耗尽自动暂停
+  cron.schedule('15 0 * * *', async () => {
+    console.log('[TriggerJob] 开始执行日常维护任务...')
+    try {
+      await autoEndExpiredCampaigns()
+      await autoPauseBudgetExhausted()
+      console.log('[TriggerJob] 日常维护完成')
+    } catch (e) {
+      console.error('[TriggerJob] 日常维护失败:', e)
+    }
+  }, { timezone: 'Asia/Shanghai' })
+
+  // 每日 00:20：扫描沉睡用户和生日用户
   cron.schedule('20 0 * * *', async () => {
     console.log('[TriggerJob] 开始扫描触发事件...')
     try {
@@ -26,66 +39,15 @@ export function startTriggerJob() {
     } catch (e) {
       console.error('[TriggerJob] 扫描失败:', e)
     }
-  }, {
-    timezone: 'Asia/Shanghai',
-  })
+  }, { timezone: 'Asia/Shanghai' })
 
-  console.log('[TriggerJob] 触发器定时任务已启动 (每日 00:20)')
+  console.log('[TriggerJob] 触发器定时任务已启动 (每日 00:15/00:20)')
 }
 
 /* ─── 事件总入口 ─── */
 export async function handleEvent(event: TriggerEvent, payload: TriggerPayload) {
   console.log(`[TriggerJob] 收到事件: ${event}, userId=${payload.userId}`)
-
-  // 1. 执行内置规则
-  await runBuiltinRule(event, payload)
-
-  // 2. 执行动态规则
   await runDynamicRules(event, payload)
-}
-
-/* ─── 内置规则引擎 ─── */
-async function runBuiltinRule(event: TriggerEvent, payload: TriggerPayload) {
-  const { userId, orderId, amount } = payload
-
-  if (event === 'USER_REGISTERED') {
-    // 新客注册：赠送 100 积分 + 体验券
-    await giftPoints(userId, 100, '新客注册礼')
-    await giftCoupon(userId, '新客体验券', 'EXPERIENCE_FREE', 30, 'WELCOME')
-    await createTrack(null, userId, 'ISSUED', null, null)
-    await pushNotification(userId, 'COUPON_GIFT', '欢迎礼', '欢迎加入 VR Space，赠送您 100 积分和一张体验券')
-    return
-  }
-
-  if (event === 'ORDER_COMPLETED') {
-    // 首单礼：如果这是用户第一笔已完成订单
-    const completedCount = await prisma.order.count({
-      where: { userId, status: 'COMPLETED' },
-    })
-    if (completedCount === 1) {
-      await giftPoints(userId, 200, '首单礼')
-      await giftCoupon(userId, '首单折扣券', 'DISCOUNT', 30, 'FIRST_ORDER', 85)
-      await createTrack(null, userId, 'ISSUED', orderId || null, null)
-      await pushNotification(userId, 'COUPON_GIFT', '首单礼', '恭喜完成首单，赠送您 200 积分和一张 85 折券')
-    }
-    return
-  }
-
-  if (event === 'DORMANT_DETECTED') {
-    // 沉睡唤醒：赠送折扣券
-    await giftCoupon(userId, '老客召回券', 'DISCOUNT', 14, 'DORMANT_WAKE', 90)
-    await createTrack(null, userId, 'ISSUED', null, null)
-    await pushNotification(userId, 'COUPON_GIFT', '专属优惠', '好久不见，送您一张 9 折券，期待您的光临')
-    return
-  }
-
-  if (event === 'BIRTHDAY') {
-    // 生日祝福：赠送 500 积分
-    await giftPoints(userId, 500, '生日祝福')
-    await createTrack(null, userId, 'ISSUED', null, null)
-    await pushNotification(userId, 'POINTS_GIFT', '生日快乐', 'VR Space 祝您生日快乐，赠送 500 积分')
-    return
-  }
 }
 
 /* ─── 动态规则引擎 ─── */
@@ -96,92 +58,171 @@ async function runDynamicRules(event: TriggerEvent, payload: TriggerPayload) {
 
   for (const rule of rules) {
     try {
-      // runOnce 检查
-      if (rule.runOnce) {
-        const existing = await prisma.campaignTrack.findFirst({
-          where: {
-            userId: payload.userId,
-            campaignId: rule.id, // 复用 campaignId 字段存储 ruleId
-            step: 'RULE_EXECUTED',
-          },
-        })
-        if (existing) continue
-      }
-
-      // 条件判断（简单实现）
+      // 条件判断
       const conditions = (rule.conditions as any) || {}
       if (conditions.minAmount && (payload.amount || 0) < conditions.minAmount) continue
       if (conditions.maxAmount && (payload.amount || 0) > conditions.maxAmount) continue
 
-      // 执行动作
-      const actions = (rule.actions as any[]) || []
-      for (const action of actions) {
-        if (action.type === 'GIFT_POINTS') {
-          await giftPoints(payload.userId, action.points || 0, `规则:${rule.name}`)
-        } else if (action.type === 'GIFT_COUPON') {
-          await giftCoupon(
-            payload.userId,
-            action.couponName || '优惠券',
-            action.couponType || 'DISCOUNT',
-            action.validityDays || 7,
-            `RULE_${rule.name}`,
-            action.discountRate
-          )
-        } else if (action.type === 'PUSH_NOTIFICATION') {
-          await pushNotification(payload.userId, 'MARKETING', action.title || '通知', action.content || '')
-        }
+      // 所有规则必须关联 Campaign，统一走 executeCampaign 发放
+      if (rule.campaignId) {
+        const result = await executeCampaign(rule.campaignId, payload.userId, {
+          event,
+          source: 'REALTIME',
+          payload,
+        })
+        console.log(
+          `[TriggerJob] Campaign ${rule.campaignId} 执行结果: ${result.status}` +
+            (result.reason ? ` (${result.reason})` : '')
+        )
+      } else {
+        console.warn(`[TriggerJob] 规则 ${rule.id} 未关联 Campaign，已跳过独立执行`)
       }
-
-      // 记录执行
-      await createTrack(rule.id, payload.userId, 'RULE_EXECUTED', payload.orderId || null, null)
     } catch (e) {
       console.error(`[TriggerJob] 规则 ${rule.id} 执行失败:`, e)
     }
   }
 }
 
-/* ─── 扫描沉睡用户 ─── */
+/* ─── 扫描沉睡用户（修复：使用 conditions.dormantDays）─── */
 async function scanDormantUsers() {
-  const thirtyDaysAgo = subDays(new Date(), 30)
-  const ninetyDaysAgo = subDays(new Date(), 90)
-
-  // 找出有 DORMANT 标签但还没触发过唤醒的用户（简化：直接查标签）
-  const dormantTags = await prisma.userTag.findMany({
-    where: { tag: 'DORMANT' },
-    select: { userId: true },
+  const rules = await prisma.triggerRule.findMany({
+    where: { event: 'DORMANT_DETECTED', enabled: true },
   })
 
-  for (const tag of dormantTags) {
-    await handleEvent('DORMANT_DETECTED', { userId: tag.userId })
+  let totalTriggered = 0
+
+  for (const rule of rules) {
+    const days = (rule.conditions as any)?.dormantDays || 30
+    const since = subDays(new Date(), days)
+
+    // 找出 days 天内无付费/完成订单的用户
+    const dormantUsers = await prisma.user.findMany({
+      where: {
+        role: 'CUSTOMER',
+        orders: {
+          none: {
+            createdAt: { gte: since },
+            status: { in: ['PAID', 'COMPLETED'] },
+          },
+        },
+      },
+      select: { id: true },
+    })
+
+    for (const u of dormantUsers) {
+      if (rule.campaignId) {
+        await executeCampaign(rule.campaignId, u.id, {
+          event: 'DORMANT_DETECTED',
+          source: 'CRON',
+          payload: { dormantDays: days },
+        })
+        totalTriggered++
+      }
+    }
+
+    console.log(`[TriggerJob] 沉睡扫描: ${days}天, 规则 ${rule.id}, 触发 ${dormantUsers.length} 人`)
   }
 
-  console.log(`[TriggerJob] 扫描沉睡用户 ${dormantTags.length} 人`)
+  console.log(`[TriggerJob] 沉睡扫描总计触发 ${totalTriggered} 人`)
 }
 
-/* ─── 扫描生日用户（以注册日期的月日作为生日）─── */
+/* ─── 扫描生日用户（修复：使用真实 birthday 字段 + birthdayAdvanceDays）─── */
 async function scanBirthdayUsers() {
-  const today = new Date()
-  const todayMonth = today.getMonth() + 1
-  const todayDate = today.getDate()
-
-  const users = await prisma.user.findMany({
-    where: { role: 'CUSTOMER' },
-    select: { id: true, registerDate: true },
+  const rules = await prisma.triggerRule.findMany({
+    where: { event: 'BIRTHDAY', enabled: true },
   })
 
-  const birthdayUsers = users.filter((u) => {
-    const d = new Date(u.registerDate)
-    return d.getMonth() + 1 === todayMonth && d.getDate() === todayDate
-  })
+  let totalTriggered = 0
 
-  for (const u of birthdayUsers) {
-    await handleEvent('BIRTHDAY', { userId: u.id })
+  for (const rule of rules) {
+    const advanceDays = (rule.conditions as any)?.birthdayAdvanceDays || 0
+    const targetDate = addDays(new Date(), advanceDays)
+    const month = targetDate.getMonth() + 1
+    const day = targetDate.getDate()
+
+    // 使用真实 birthday 字段（而非 registerDate）
+    const allUsers = await prisma.user.findMany({
+      where: {
+        role: 'CUSTOMER',
+        birthday: { not: null },
+      },
+      select: { id: true, birthday: true },
+    })
+
+    const birthdayUsers = allUsers.filter((u) => {
+      const b = new Date(u.birthday!)
+      return b.getMonth() + 1 === month && b.getDate() === day
+    })
+
+    for (const u of birthdayUsers) {
+      if (rule.campaignId) {
+        await executeCampaign(rule.campaignId, u.id, {
+          event: 'BIRTHDAY',
+          source: 'CRON',
+          payload: { advanceDays, targetMonth: month, targetDay: day },
+        })
+        totalTriggered++
+      }
+    }
+
+    console.log(`[TriggerJob] 生日扫描: 提前${advanceDays}天, 规则 ${rule.id}, 触发 ${birthdayUsers.length} 人`)
   }
 
-  console.log(`[TriggerJob] 扫描生日用户 ${birthdayUsers.length} 人`)
+  console.log(`[TriggerJob] 生日扫描总计触发 ${totalTriggered} 人`)
 }
 
-/* ─── Helpers ─── */
+/* ─── 定时任务：过期自动结束 ─── */
+async function autoEndExpiredCampaigns() {
+  const expired = await prisma.campaign.findMany({
+    where: {
+      status: 'RUNNING',
+      endAt: { lt: new Date() },
+      autoEndOnExpire: true,
+    },
+  })
+
+  for (const c of expired) {
+    await prisma.campaign.update({
+      where: { id: c.id },
+      data: { status: 'ENDED' },
+    })
+    console.log(`[TriggerJob] 活动已自动结束: ${c.name} (${c.id})`)
+  }
+
+  if (expired.length > 0) {
+    console.log(`[TriggerJob] 自动结束 ${expired.length} 个过期活动`)
+  }
+}
+
+/* ─── 定时任务：预算耗尽自动暂停 ─── */
+async function autoPauseBudgetExhausted() {
+  const campaigns = await prisma.campaign.findMany({
+    where: {
+      status: 'RUNNING',
+      budget: { not: null },
+      autoPauseOnBudgetExhausted: true,
+    },
+    include: { rewards: true },
+  })
+
+  let pausedCount = 0
+  for (const c of campaigns) {
+    if (c.budget && c.spent >= c.budget) {
+      await prisma.campaign.update({
+        where: { id: c.id },
+        data: { status: 'PAUSED' },
+      })
+      pausedCount++
+      console.log(`[TriggerJob] 活动预算耗尽已自动暂停: ${c.name} (${c.id}), spent=${c.spent}, budget=${c.budget}`)
+    }
+  }
+
+  if (pausedCount > 0) {
+    console.log(`[TriggerJob] 自动暂停 ${pausedCount} 个预算耗尽活动`)
+  }
+}
+
+/* ─── Helpers（保留兼容） ─── */
 async function giftPoints(userId: string, points: number, remark: string) {
   await prisma.$transaction([
     prisma.user.update({
@@ -235,9 +276,10 @@ async function createTrack(
   orderId: string | null,
   amount: number | null
 ) {
+  if (!campaignId) return
   await prisma.campaignTrack.create({
     data: {
-      campaignId: campaignId || 'builtin',
+      campaignId,
       userId,
       step,
       orderId,

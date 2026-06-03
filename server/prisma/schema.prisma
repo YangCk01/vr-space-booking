@@ -19,6 +19,7 @@ model User {
   totalSpent        Int                  @default(0)
   status            UserStatus           @default(ACTIVE)
   registerDate      DateTime             @default(now())
+  birthday          DateTime?            // 用户真实生日
   lastLogin         DateTime?
   role              UserRole             @default(CUSTOMER)
   createdAt         DateTime             @default(now())
@@ -38,6 +39,8 @@ model User {
   thirdPartyCoupons ThirdPartyCoupon[]
   userCoupons       UserCoupon[]
   managedVenues     VenueManager[]
+  campaignTracks    CampaignTrack[]
+  executionLogs     CampaignExecutionLog[]
   roles             Role[]
 }
 
@@ -287,6 +290,8 @@ model DailyFinancialReport {
   couponDiscountCost      Int      @default(0)
   couponGiftCount         Int      @default(0)
   experienceGiftCount     Int      @default(0)
+  couponCampaignCount     Int      @default(0)
+  experienceCampaignCount Int      @default(0)
   couponUsedCount         Int      @default(0)
   experienceUsedCount     Int      @default(0)
   totalPrincipalLiability Int      @default(0)
@@ -767,31 +772,60 @@ model DataCheckResult {
 // ========== P1: 运营增长 ==========
 
 model Campaign {
-  id          String   @id @default(uuid())
-  name        String
-  type        String   @default("MANUAL_GIFT") // AUTO_GIFT / MANUAL_GIFT / CONDITIONAL
-  status      String   @default("DRAFT") // DRAFT / RUNNING / PAUSED / ENDED
-  startAt     DateTime?
-  endAt       DateTime?
-  budget      Int?
-  spent       Int      @default(0)
-  createdBy   String
+  id              String   @id @default(uuid())
+  name            String
+  type            String   @default("MANUAL_GIFT") // AUTO_GIFT / MANUAL_GIFT / CONDITIONAL
+  status          String   @default("DRAFT") // DRAFT / RUNNING / PAUSED / ENDED
+  startAt         DateTime?
+  endAt           DateTime?
+  budget          Int?
+  spent           Int      @default(0)
+  deleted         Boolean  @default(false)
+  createdBy       String
+
+  // 新增：预算与上限控制
+  autoPauseOnBudgetExhausted Boolean @default(true)
+  autoEndOnExpire            Boolean @default(true)
+
+  // 新增：人群定向
+  targetTags      String[]  @default([])
+  excludeTags     String[]  @default([])
+
+  // 新增：优先级与冲突
+  priority        Int       @default(0)
+  exclusiveWith   String[]  @default([])
+  maxPerUserTotal Int?
+
+  // 新增：渠道追踪与效果目标
+  channel         String?
+  targetType      String?
+  targetValue     Int?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   rewards     CampaignReward[]
   tracks      CampaignTrack[]
+  executionLogs CampaignExecutionLog[]
 }
 
 model CampaignReward {
   id                 String   @id @default(uuid())
   campaignId         String
-  rewardType         String   // POINTS / COUPON_DISCOUNT / COUPON_EXPERIENCE
+  rewardType         String   // POINTS / DISCOUNT_COUPON / EXPERIENCE_COUPON
   pointsAmount       Int?
   couponName         String?
   couponDiscountRate Int?
   couponValidDays    Int?
   maxQuantity        Int      @default(0)
   issuedCount        Int      @default(0)
+
+  // 新增：券使用门槛与适用范围
+  usedCount          Int      @default(0)
+  minOrderAmount     Int?
+  applicableVenues   String[] @default([])
+  applicableGames    String[] @default([])
+  applicableWeekdays Int[]    @default([])
+
   campaign           Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
   @@index([campaignId])
@@ -806,6 +840,7 @@ model CampaignTrack {
   amount     Int?
   createdAt  DateTime @default(now())
   campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([campaignId, userId])
   @@index([step])
@@ -823,6 +858,47 @@ model UserTag {
   @@index([tag])
 }
 
+model CampaignExecutionLog {
+  id          String   @id @default(uuid())
+  campaignId  String
+  userId      String
+
+  // 触发信息
+  triggerEvent    String
+  triggerSource   String   // REALTIME / CRON / MANUAL
+  triggerPayload  Json?
+
+  // 执行结果
+  status      String   // SUCCESS / SKIPPED / FAILED
+  reason      String?  // BUDGET_EXHAUSTED / MAX_REACHED / TAG_MISMATCH / ALREADY_ISSUED / EXCLUSIVE_BLOCKED / CAMPAIGN_NOT_RUNNING / NOT_STARTED / ALREADY_ENDED / NO_REWARD
+
+  // 发放的奖励详情
+  rewardType       String?
+  rewardValue      Int?
+  rewardCouponName String?
+
+  // 成本核算
+  costPoints   Int?
+  costCoupon   Int?
+
+  // 转化追踪
+  issuedAt     DateTime @default(now())
+  usedAt       DateTime?
+  usedOrderId  String?
+  usedAmount   Int?
+  gmvGenerated Int?
+
+  createdAt    DateTime @default(now())
+
+  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, userId])
+  @@index([campaignId, status])
+  @@index([userId, createdAt])
+  @@index([triggerEvent, createdAt])
+}
+
 model TriggerRule {
   id        String   @id @default(uuid())
   name      String
@@ -831,6 +907,7 @@ model TriggerRule {
   actions   Json
   enabled   Boolean  @default(true)
   runOnce   Boolean  @default(true)
+  campaignId String?  // 关联 Campaign，条件触发时发放活动奖励
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

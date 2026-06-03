@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { format } from 'date-fns'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -20,7 +20,9 @@ import {
   Gamepad2,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
-import { getOrders, payOrder, cancelOrder, refundOrder, verifyOrder, completeRefundOrder } from '@/api/orders'
+import { getOrders, payOrder, cancelOrder, refundOrder, verifyOrder, completeRefundOrder, batchVerifyOrders, batchRefundOrders } from '@/api/orders'
+import { PaymentMethodModal, ScanBoxSimulator, type PaymentMethod } from '@/components/PaymentModal'
+import { VerifyScanModal } from '@/components/VerifyModal'
 import { cancelBooking } from '@/api/bookings'
 import { apiClient } from '@/api/client'
 import { cn } from '@/lib/utils'
@@ -300,6 +302,21 @@ export default function Orders() {
   const [pageSize, setPageSize] = useState(5)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+
+  // 收款弹窗状态
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false)
+  const [scanBoxOpen, setScanBoxOpen] = useState(false)
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null)
+  const [paymentTargetOrder, setPaymentTargetOrder] = useState<Order | null>(null)
+
+  // 核销扫码弹窗状态
+  const [verifyScanOpen, setVerifyScanOpen] = useState(false)
+  const [verifyTargetOrder, setVerifyTargetOrder] = useState<Order | null>(null)
+
+  useEffect(() => {
+    setSelectedIds([])
+  }, [activeTab, currentPage, searchQuery, startDate, endDate, sourceFilter])
 
   const { data: orderData, isFetching } = useQuery({
     queryKey: ['orders', activeTab, searchQuery, startDate, endDate, sourceFilter, currentPage, pageSize],
@@ -334,10 +351,13 @@ export default function Orders() {
   }
 
   const payMutation = useMutation({
-    mutationFn: (id: string) => payOrder(id, 'CASH'),
+    mutationFn: ({ id, method }: { id: string; method?: string }) => payOrder(id, method || 'CASH'),
     onSuccess: () => {
       invalidateAll()
       setDrawerOpen(false)
+      setPaymentModalOpen(false)
+      setScanBoxOpen(false)
+      setPaymentTargetOrder(null)
     },
   })
 
@@ -402,9 +422,13 @@ export default function Orders() {
     onSuccess: () => {
       invalidateAll()
       setDrawerOpen(false)
+      setVerifyScanOpen(false)
+      setVerifyTargetOrder(null)
     },
     onError: (error: any) => {
       alert('核销失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
+      setVerifyScanOpen(false)
+      setVerifyTargetOrder(null)
     },
   })
 
@@ -413,6 +437,55 @@ export default function Orders() {
     onSuccess: () => {
       invalidateAll()
       setDrawerOpen(false)
+    },
+  })
+
+  const batchVerifyMutation = useMutation({
+    mutationFn: batchVerifyOrders,
+    onSuccess: () => {
+      invalidateAll()
+      setSelectedIds([])
+    },
+    onError: (error: any) => {
+      alert('批量核销失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
+    },
+  })
+
+  const batchRefundMutation = useMutation({
+    mutationFn: ({ ids, reason }: { ids: string[]; reason: string }) => batchRefundOrders(ids, reason),
+    onSuccess: () => {
+      invalidateAll()
+      setSelectedIds([])
+    },
+    onError: (error: any) => {
+      alert('批量退款失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
+    },
+  })
+
+  const batchCancelMutation = useMutation({
+    mutationFn: async (orders: Order[]) => {
+      const results = await Promise.allSettled(
+        orders.map(async (order) => {
+          const result = await cancelOrder(order.id)
+          if (order.bookingId) {
+            try {
+              await cancelBooking(order.bookingId)
+            } catch (e: any) {
+              console.error('取消排场失败:', e)
+            }
+          }
+          return result
+        })
+      )
+      const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+      if (failures.length > 0) {
+        alert(`${failures.length} 个订单取消失败`)
+      }
+      return results
+    },
+    onSuccess: () => {
+      invalidateAll()
+      setSelectedIds([])
     },
   })
 
@@ -491,6 +564,10 @@ export default function Orders() {
 
   const paginatedOrders = apiOrders
 
+  const selectedOrders = useMemo(() => paginatedOrders.filter(o => selectedIds.includes(o.id)), [paginatedOrders, selectedIds])
+  const hasPaidSelected = selectedOrders.some(o => o.status === 'PAID')
+  const hasPendingSelected = selectedOrders.some(o => o.status === 'PENDING')
+
   // 标签计数：优先使用后端返回的 statusCounts（全量统计），否则回退到当前页数据
   const tabCounts = useMemo(() => {
     const backendCounts = orderData?.meta?.statusCounts as Record<string, number> | undefined
@@ -510,6 +587,35 @@ export default function Orders() {
   const handleOpenDetail = (order: Order) => {
     setSelectedOrder(order)
     setDrawerOpen(true)
+  }
+
+  const handleCollect = (order: Order) => {
+    setPaymentTargetOrder(order)
+    setPaymentModalOpen(true)
+  }
+
+  const handleSelectPaymentMethod = (method: PaymentMethod) => {
+    setPaymentMethod(method)
+    setPaymentModalOpen(false)
+
+    if (method === 'CASH') {
+      // 现金直接收款，不走扫码流程
+      if (paymentTargetOrder) {
+        payMutation.mutate({ id: paymentTargetOrder.id, method: 'CASH' })
+      }
+      return
+    }
+
+    // 微信、支付宝、扫码盒 → 打开扫码模拟器
+    setScanBoxOpen(true)
+  }
+
+  const handleScanBoxSuccess = () => {
+    // 模拟支付成功后的真实收款调用
+    // TODO: 接入真实扫码支付 API（轮询支付结果）
+    if (paymentTargetOrder && paymentMethod) {
+      payMutation.mutate({ id: paymentTargetOrder.id, method: paymentMethod === 'SCANBOX' ? undefined : paymentMethod })
+    }
   }
 
   return (
@@ -659,6 +765,69 @@ export default function Orders() {
           </div>
         </div>
 
+        {/* Batch Action Bar */}
+        <AnimatePresence>
+          {selectedIds.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="flex items-center justify-between bg-vrbg-elevated rounded-xl border border-vraccent-primary/20 px-4 py-3"
+            >
+              <div className="flex items-center gap-4">
+                <span className="text-vr-body-sm text-vrtext-primary font-medium">
+                  已选择 {selectedIds.length} 项
+                </span>
+                {hasPaidSelected && (
+                  <>
+                    <button
+                      onClick={() => {
+                        const ids = selectedOrders.filter(o => o.status === 'PAID').map(o => o.id)
+                        if (!window.confirm(`确定要批量核销 ${ids.length} 个订单吗？`)) return
+                        batchVerifyMutation.mutate(ids)
+                      }}
+                      disabled={batchVerifyMutation.isPending}
+                      className="h-8 px-3 rounded-lg bg-vrsuccess text-white text-vr-body-sm font-medium hover:bg-vrsuccess/90 transition-colors disabled:opacity-50"
+                    >
+                      {batchVerifyMutation.isPending ? '核销中...' : '批量核销'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        const ids = selectedOrders.filter(o => o.status === 'PAID').map(o => o.id)
+                        if (!window.confirm(`确定要批量退款 ${ids.length} 个订单吗？`)) return
+                        batchRefundMutation.mutate({ ids, reason: '批量退款' })
+                      }}
+                      disabled={batchRefundMutation.isPending}
+                      className="h-8 px-3 rounded-lg bg-vrerror text-white text-vr-body-sm font-medium hover:bg-vrerror/90 transition-colors disabled:opacity-50"
+                    >
+                      {batchRefundMutation.isPending ? '退款中...' : '批量退款'}
+                    </button>
+                  </>
+                )}
+                {hasPendingSelected && (
+                  <button
+                    onClick={() => {
+                      const orders = selectedOrders.filter(o => o.status === 'PENDING')
+                      if (!window.confirm(`确定要批量取消 ${orders.length} 个订单吗？`)) return
+                      batchCancelMutation.mutate(orders)
+                    }}
+                    disabled={batchCancelMutation.isPending}
+                    className="h-8 px-3 rounded-lg bg-vrwarning text-white text-vr-body-sm font-medium hover:bg-vrwarning/90 transition-colors disabled:opacity-50"
+                  >
+                    {batchCancelMutation.isPending ? '取消中...' : '批量取消'}
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={() => setSelectedIds([])}
+                className="text-vr-body-sm text-vrtext-secondary hover:text-vrtext-primary transition-colors"
+              >
+                清空选择
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Table */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -670,6 +839,21 @@ export default function Orders() {
             <table className="w-full">
               <thead>
                 <tr className="bg-vrbg-elevated">
+                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[48px]">
+                    <input
+                      type="checkbox"
+                      checked={paginatedOrders.length > 0 && paginatedOrders.every(o => selectedIds.includes(o.id))}
+                      onChange={() => {
+                        const allSelected = paginatedOrders.every(o => selectedIds.includes(o.id))
+                        if (allSelected) {
+                          setSelectedIds(prev => prev.filter(id => !paginatedOrders.some(o => o.id === id)))
+                        } else {
+                          setSelectedIds(prev => [...new Set([...prev, ...paginatedOrders.map(o => o.id)])])
+                        }
+                      }}
+                      className="w-4 h-4 rounded cursor-pointer"
+                    />
+                  </th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">订单号</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">用户</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">场地</th>
@@ -694,6 +878,20 @@ export default function Orders() {
                       transition={{ duration: 0.3, delay: idx * 0.06 }}
                       className="h-14 border-t border-vrborder-subtle hover:bg-vrbg-elevated/60 transition-colors"
                     >
+                      <td className="px-4 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(order.id)}
+                          onChange={() => {
+                            setSelectedIds(prev =>
+                              prev.includes(order.id)
+                                ? prev.filter(id => id !== order.id)
+                                : [...prev, order.id]
+                            )
+                          }}
+                          className="w-4 h-4 rounded cursor-pointer"
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <span className="text-vr-body-sm text-vrtext-primary font-mono">{order.orderNo}</span>
                       </td>
@@ -744,7 +942,7 @@ export default function Orders() {
                         <div className="flex items-center justify-end gap-3">
                           {order.status.toLowerCase() === 'pending' && (
                             <button
-                              onClick={() => handleOpenDetail(order)}
+                              onClick={() => handleCollect(order)}
                               className="text-vr-body-sm text-vrwarning hover:underline transition-all"
                             >
                               收款
@@ -753,7 +951,7 @@ export default function Orders() {
                           {order.status.toLowerCase() === 'paid' && (
                             <>
                               <button
-                                onClick={() => { setSelectedOrder(order); verifyMutation.mutate(order.id) }}
+                                onClick={() => { setVerifyTargetOrder(order); setVerifyScanOpen(true) }}
                                 className="text-vr-body-sm text-vrsuccess hover:underline transition-all"
                               >
                                 核销
@@ -854,10 +1052,16 @@ export default function Orders() {
         order={selectedOrder}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
-        onPay={(id) => payMutation.mutate(id)}
+        onPay={(id) => payMutation.mutate({ id, method: 'CASH' })}
         onCancel={(o) => cancelMutation.mutate(o)}
         onRefund={(o) => refundMutation.mutate(o)}
-        onVerify={(id) => verifyMutation.mutate(id)}
+        onVerify={(id) => {
+          const order = selectedOrder
+          if (order) {
+            setVerifyTargetOrder(order)
+            setVerifyScanOpen(true)
+          }
+        }}
         onCompleteRefund={(id) => completeRefundMutation.mutate(id)}
         onDelete={(id) => deleteMutation.mutate(id)}
         payPending={payMutation.isPending}
@@ -866,6 +1070,52 @@ export default function Orders() {
         verifyPending={verifyMutation.isPending}
         completeRefundPending={completeRefundMutation.isPending}
         deletePending={deleteMutation.isPending}
+      />
+
+      {/* Payment Method Selector */}
+      <PaymentMethodModal
+        open={paymentModalOpen}
+        onClose={() => {
+          setPaymentModalOpen(false)
+          setPaymentTargetOrder(null)
+        }}
+        orderNo={paymentTargetOrder?.orderNo || ''}
+        customer={paymentTargetOrder?.customer || paymentTargetOrder?.user?.name || paymentTargetOrder?.booking?.personName}
+        amount={(paymentTargetOrder?.amount || 0) / 100}
+        onSelect={handleSelectPaymentMethod}
+      />
+
+      {/* Scan Box Simulator */}
+      <ScanBoxSimulator
+        open={scanBoxOpen}
+        onClose={() => {
+          setScanBoxOpen(false)
+          setPaymentMethod(null)
+          setPaymentTargetOrder(null)
+        }}
+        method={paymentMethod || 'SCANBOX'}
+        orderNo={paymentTargetOrder?.orderNo || ''}
+        amount={(paymentTargetOrder?.amount || 0) / 100}
+        onSuccess={handleScanBoxSuccess}
+      />
+
+      {/* Verify Scan Modal */}
+      <VerifyScanModal
+        open={verifyScanOpen}
+        onClose={() => {
+          setVerifyScanOpen(false)
+          setVerifyTargetOrder(null)
+        }}
+        order={verifyTargetOrder ? {
+          id: verifyTargetOrder.id,
+          orderNo: verifyTargetOrder.orderNo,
+          customer: verifyTargetOrder.customer || verifyTargetOrder.user?.name || verifyTargetOrder.booking?.personName,
+          venueName: verifyTargetOrder.venueName,
+          bookingTime: verifyTargetOrder.bookingTime,
+          amount: verifyTargetOrder.amount,
+          personCount: verifyTargetOrder.booking?.personCount,
+        } : null}
+        onVerify={(id) => verifyMutation.mutate(id)}
       />
     </Layout>
   )

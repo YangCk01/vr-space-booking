@@ -48,6 +48,8 @@ export async function getDailyReport(req: AuthenticatedRequest, res: Response) {
         pointsGiftCost: 0,
         couponGiftCount: 0,
         experienceGiftCount: 0,
+        couponCampaignCount: 0,
+        experienceCampaignCount: 0,
         couponUsedCount: 0,
         experienceUsedCount: 0,
         totalPrincipalLiability: principalLiability._sum?.principalBalance || 0,
@@ -326,6 +328,22 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
       },
     })
 
+    const couponCampaignSum = await prisma.userCoupon.count({
+      where: {
+        source: 'CAMPAIGN',
+        type: 'DISCOUNT',
+        ...(dateStr ? { createdAt: dateRange } : {}),
+      },
+    })
+
+    const experienceCampaignSum = await prisma.userCoupon.count({
+      where: {
+        source: 'CAMPAIGN',
+        type: 'EXPERIENCE_FREE',
+        ...(dateStr ? { createdAt: dateRange } : {}),
+      },
+    })
+
     const couponUsedSum = await prisma.userCoupon.count({
       where: {
         type: 'DISCOUNT',
@@ -412,15 +430,17 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
     )
 
     items.push(
-      { name: '积分发放', ...pointsEarnCheck, unit: '分' },
-      { name: '积分赠送', ...pointsGiftCheck, unit: '分' },
+      { name: '消费赠送积分', ...pointsEarnCheck, unit: '分' },
+      { name: '管理员赠送积分', ...pointsGiftCheck, unit: '分' },
       { name: '积分兑换消耗', ...pointsExchangeCheck, unit: '分' }
     )
 
     items.push(
-      { name: '优惠券发放', actual: couponGiftSum, expected: couponGiftSum, diff: 0, unit: '张', note: '单边统计（管理员赠送折扣券）' },
-      { name: '体验券发放', actual: experienceGiftSum, expected: experienceGiftSum, diff: 0, unit: '张', note: '单边统计（管理员赠送体验券）' },
-      { name: '优惠券核销', actual: couponUsedSum, expected: couponUsedSum, diff: 0, unit: '张', note: '单边统计（折扣券已使用）' },
+      { name: '手动发放折扣券', actual: couponGiftSum, expected: couponGiftSum, diff: 0, unit: '张', note: '单边统计（管理员手动赠送折扣券）' },
+      { name: '手动发放体验券', actual: experienceGiftSum, expected: experienceGiftSum, diff: 0, unit: '张', note: '单边统计（管理员手动赠送体验券）' },
+      { name: '活动发放折扣券', actual: couponCampaignSum, expected: couponCampaignSum, diff: 0, unit: '张', note: '单边统计（营销活动发放折扣券）' },
+      { name: '活动发放体验券', actual: experienceCampaignSum, expected: experienceCampaignSum, diff: 0, unit: '张', note: '单边统计（营销活动发放体验券）' },
+      { name: '折扣券核销', actual: couponUsedSum, expected: couponUsedSum, diff: 0, unit: '张', note: '单边统计（折扣券已使用）' },
       { name: '体验券核销', actual: experienceUsedSum, expected: experienceUsedSum, diff: 0, unit: '张', note: '单边统计（体验券已使用）' },
     )
 
@@ -594,6 +614,22 @@ export async function runDailyReport(dateStr: string) {
     }
   })
 
+  const couponCampaignCount = await prisma.userCoupon.count({
+    where: {
+      source: 'CAMPAIGN',
+      type: 'DISCOUNT',
+      createdAt: { gte: start, lte: end }
+    }
+  })
+
+  const experienceCampaignCount = await prisma.userCoupon.count({
+    where: {
+      source: 'CAMPAIGN',
+      type: 'EXPERIENCE_FREE',
+      createdAt: { gte: start, lte: end }
+    }
+  })
+
   const couponUsedCount = await prisma.userCoupon.count({
     where: {
       type: 'DISCOUNT',
@@ -665,6 +701,8 @@ export async function runDailyReport(dateStr: string) {
       couponDiscountCost: cdc,
       couponGiftCount,
       experienceGiftCount,
+      couponCampaignCount,
+      experienceCampaignCount,
       couponUsedCount,
       experienceUsedCount,
       totalPrincipalLiability: tpl,
@@ -1512,6 +1550,12 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
     const totalExperienceGift = await prisma.userCoupon.count({
       where: { source: 'MANUAL_GIFT', type: 'EXPERIENCE_FREE' }
     })
+    const totalCouponCampaign = await prisma.userCoupon.count({
+      where: { source: 'CAMPAIGN', type: 'DISCOUNT' }
+    })
+    const totalExperienceCampaign = await prisma.userCoupon.count({
+      where: { source: 'CAMPAIGN', type: 'EXPERIENCE_FREE' }
+    })
     const totalCouponUsed = await prisma.userCoupon.count({
       where: { type: 'DISCOUNT', status: 'USED' }
     })
@@ -1582,6 +1626,8 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
       // 优惠券/体验券累计
       totalCouponGift,
       totalExperienceGift,
+      totalCouponCampaign,
+      totalExperienceCampaign,
       totalCouponUsed,
       totalExperienceUsed,
       totalCouponUnused,
