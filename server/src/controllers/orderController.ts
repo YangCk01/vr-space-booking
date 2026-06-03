@@ -372,39 +372,33 @@ export async function create(req: AuthenticatedRequest, res: Response) {
     }
 
     // 普通订单创建（待支付）—— 在线支付也享受折扣
-    // 使用事务确保订单和优惠券状态一致
-    const [order] = await prisma.$transaction([
-      prisma.order.create({
-        data: {
-          orderNo: generateOrderNo(),
-          bookingId: bookingId || null,
-          userId: currentUserId || null,
-          venueId,
-          venueName: finalVenueName,
-          originalAmount: parsedAmount,
-          amount: remainingAmount,
-          discountRate: discount,
-          discountAmount,
-          couponDiscount,
-          userCouponId: finalUserCouponId,
-          pointsUsed: 0,
-          pointsDeduction: 0,
-          status: 'PENDING',
-          source: source === 'ONLINE' ? 'ONLINE' : 'OFFLINE',
-          bookingTime,
-        },
-        include: {
-          user: { select: { id: true, name: true, phone: true } },
-          booking: true,
-        },
-      }),
-      ...(finalUserCouponId ? [
-        prisma.userCoupon.update({
-          where: { id: finalUserCouponId },
-          data: { status: 'USED', usedAt: new Date() },
-        })
-      ] as any : []),
-    ])
+    // 优惠券不在创建时预占，待支付成功后再扣减
+    const expireAt = new Date(Date.now() + 30 * 60 * 1000)
+    const order = await prisma.order.create({
+      data: {
+        orderNo: generateOrderNo(),
+        bookingId: bookingId || null,
+        userId: currentUserId || null,
+        venueId,
+        venueName: finalVenueName,
+        originalAmount: parsedAmount,
+        amount: remainingAmount,
+        discountRate: discount,
+        discountAmount,
+        couponDiscount,
+        userCouponId: finalUserCouponId,
+        pointsUsed: 0,
+        pointsDeduction: 0,
+        status: 'PENDING',
+        source: source === 'ONLINE' ? 'ONLINE' : 'OFFLINE',
+        bookingTime,
+        expireAt,
+      },
+      include: {
+        user: { select: { id: true, name: true, phone: true } },
+        booking: true,
+      },
+    })
 
     return success(res, order, '订单创建成功', 201)
   } catch (err) {
@@ -503,14 +497,95 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
       return error(res, '订单状态不允许支付', 400)
     }
 
-    // 更新订单状态
-    const updated = await prisma.order.update({
-      where: { id: order.id },
-      data: {
-        status: 'PAID',
-        payMethod: method || 'WECHAT',
-        paidAt: new Date(),
-      },
+    // 检查订单是否已过期
+    if (order.expireAt && new Date() > order.expireAt) {
+      return error(res, '订单已过期，请重新下单', 400)
+    }
+
+    // 余额支付检查
+    if (method === 'BALANCE' && order.userId) {
+      const user = await prisma.user.findUnique({ where: { id: order.userId } })
+      if (!user) return error(res, '用户不存在', 400)
+      const wallet = { principal: user.principalBalance, bonus: user.bonusBalance }
+      const { getUserWallet, hasEnoughBalance, deductProportional } = await import('../utils/wallet')
+      if (!hasEnoughBalance(wallet, order.amount)) {
+        return error(res, `余额不足，当前余额 ¥${(wallet.principal + wallet.bonus) / 100}`, 400)
+      }
+    }
+
+    // 支付成功：更新订单 + 扣优惠券 + 赠积分（事务保护）
+    const updated = await prisma.$transaction(async (tx) => {
+      // 1. 扣减优惠券（支付成功时才扣）
+      if (order.userCouponId) {
+        const coupon = await tx.userCoupon.findUnique({ where: { id: order.userCouponId } })
+        if (coupon && coupon.status === 'UNUSED') {
+          await tx.userCoupon.update({
+            where: { id: order.userCouponId },
+            data: { status: 'USED', usedAt: new Date(), usedOrderId: order.id },
+          })
+        }
+      }
+
+      // 2. 余额支付扣款
+      let principalDeduction = 0
+      let bonusDeduction = 0
+      if (method === 'BALANCE' && order.userId) {
+        const freshUser = await tx.user.findUnique({ where: { id: order.userId } })
+        if (freshUser) {
+          const { hasEnoughBalance, deductProportional } = await import('../utils/wallet')
+          const wallet = { principal: freshUser.principalBalance, bonus: freshUser.bonusBalance }
+          const result = deductProportional(wallet, order.amount)
+          principalDeduction = result.principalDeduction
+          bonusDeduction = result.bonusDeduction
+          await tx.user.update({
+            where: { id: order.userId },
+            data: {
+              principalBalance: { decrement: principalDeduction },
+              bonusBalance: { decrement: bonusDeduction },
+            },
+          })
+          await tx.balanceTransaction.create({
+            data: {
+              userId: order.userId,
+              type: 'DEDUCT',
+              amount: order.amount,
+              principalAmount: -principalDeduction,
+              bonusAmount: -bonusDeduction,
+              totalAmount: -order.amount,
+              orderId: order.id,
+              remark: `订单消费 ${order.venueName}（本金¥${principalDeduction / 100}+赠送¥${bonusDeduction / 100}）`,
+            },
+          })
+          // 更新累计本金消费
+          await tx.user.update({
+            where: { id: order.userId },
+            data: { totalSpent: { increment: principalDeduction } },
+          })
+        }
+      }
+
+      // 3. 更新订单状态（余额支付记录扣款明细）
+      const o = await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: 'PAID',
+          payMethod: method || 'WECHAT',
+          paidAt: new Date(),
+          ...(method === 'BALANCE' ? { principalDeduction, bonusDeduction } : {}),
+        },
+      })
+
+      // 4. 创建支付记录
+      await tx.payment.create({
+        data: {
+          orderId: order.id,
+          amount: order.amount,
+          method: method || 'WECHAT',
+          status: 'SUCCESS',
+        },
+      })
+
+      return o
     })
 
     // 赠送积分（在线支付按 order.amount 计算，全部视为现金收入）
@@ -545,20 +620,21 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
       )
     }
 
-    // 创建支付记录
-    await prisma.payment.create({
-      data: {
-        orderId: order.id,
-        amount: order.amount,
-        method: method || 'WECHAT',
-        status: 'SUCCESS',
-      },
-    })
-
     return success(res, updated, '支付成功')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
+}
+
+/* ─── 阶梯退费比例计算 ─── */
+function calcRefundRate(bookingDate: Date, startTime: string): number {
+  const start = new Date(bookingDate)
+  const [h, m] = startTime.split(':')
+  start.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
+  const diffHours = (start.getTime() - Date.now()) / (1000 * 60 * 60)
+  if (diffHours > 24) return 1
+  if (diffHours >= 2) return 0.5
+  return 0
 }
 
 export async function cancel(req: AuthenticatedRequest, res: Response) {
@@ -567,6 +643,7 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
 
     const order = await prisma.order.findFirst({
       where: { OR: [{ id }, { orderNo: id }] },
+      include: { booking: true },
     })
     if (!order) {
       return error(res, '订单不存在', 404)
@@ -576,16 +653,25 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
       return error(res, '已完成订单不能取消', 400)
     }
 
-    // 余额支付的订单取消时退回余额+积分
+    // 计算阶梯退费比例
+    let refundRate = 1
+    if (order.status === 'PAID' && order.booking) {
+      refundRate = calcRefundRate(order.booking.date, order.booking.startTime)
+    }
+    const refundAmount = order.status === 'PAID' ? Math.floor((order.amount || 0) * refundRate) : 0
+
     const { earnRate } = await getPointsConfig()
 
     const result = await prisma.$transaction(async (tx) => {
-      // 恢复优惠券状态
+      // 恢复优惠券状态（仅当已使用时才恢复）
       if (order.userCouponId) {
-        await tx.userCoupon.update({
-          where: { id: order.userCouponId },
-          data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
-        })
+        const coupon = await tx.userCoupon.findUnique({ where: { id: order.userCouponId } })
+        if (coupon && coupon.status === 'USED') {
+          await tx.userCoupon.update({
+            where: { id: order.userCouponId },
+            data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
+          })
+        }
       }
 
       const updated = await tx.order.update({
@@ -593,16 +679,23 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
         data: {
           status: 'CANCELLED',
           cancelledAt: new Date(),
+          refundAmount: refundAmount > 0 ? refundAmount : null,
         },
       })
 
-      if (order.userId && order.payMethod?.startsWith('BALANCE') && order.status === 'PAID') {
-        // 恢复双钱包
+      // 已支付订单：按阶梯退费规则退回余额
+      if (order.userId && order.payMethod?.startsWith('BALANCE') && order.status === 'PAID' && refundAmount > 0) {
+        // 等比计算退回金额（基于实际扣款明细）
+        const totalDeducted = (order.principalDeduction || 0) + (order.bonusDeduction || 0)
+        const ratio = totalDeducted > 0 ? refundAmount / totalDeducted : 0
+        const refundPrincipal = Math.floor((order.principalDeduction || 0) * ratio)
+        const refundBonus = refundAmount - refundPrincipal
+
         await tx.user.update({
           where: { id: order.userId },
           data: {
-            principalBalance: { increment: order.principalDeduction },
-            bonusBalance: { increment: order.bonusDeduction },
+            principalBalance: { increment: refundPrincipal },
+            bonusBalance: { increment: refundBonus },
           },
         })
 
@@ -610,19 +703,19 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
           data: {
             userId: order.userId,
             type: 'CANCEL_RESTORE',
-            amount: order.amount,
-            principalAmount: order.principalDeduction,
-            bonusAmount: order.bonusDeduction,
-            totalAmount: order.amount,
+            amount: refundAmount,
+            principalAmount: refundPrincipal,
+            bonusAmount: refundBonus,
+            totalAmount: refundAmount,
             orderId: order.id,
-            remark: `订单取消恢复余额（本金¥${order.principalDeduction / 100}+赠送¥${order.bonusDeduction / 100}）`,
+            remark: `订单取消恢复余额（本金¥${refundPrincipal / 100}+赠送¥${refundBonus / 100}）退费比例${(refundRate * 100).toFixed(0)}%`,
           },
         })
       }
 
-      // 已支付订单取消时收回赠送积分（所有支付方式）
+      // 已支付订单取消时收回赠送积分（按实际支付金额计算）
       if (order.userId && order.status === 'PAID') {
-        const baseAmount = order.payMethod?.startsWith('BALANCE') ? order.principalDeduction : order.amount
+        const baseAmount = order.payMethod?.startsWith('BALANCE') ? (order.principalDeduction || 0) : (order.amount || 0)
         const earned = Math.floor(baseAmount / 100 * earnRate)
         const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
         const deduct = Math.min(earned, user?.points || 0)
@@ -657,11 +750,12 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
 
     // Send cancel notification
     if (order.userId) {
+      const refundText = refundAmount > 0 ? `，已退回 ¥${(refundAmount / 100).toFixed(2)}` : ''
       await pushNotification(
         order.userId,
         'BOOKING_CANCEL',
         '预约取消',
-        `您的订单 ${order.orderNo} 已取消`
+        `您的订单 ${order.orderNo} 已取消${refundText}`
       )
     }
 
@@ -671,12 +765,12 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
       targetDesc: `订单 ${order.orderNo}`,
       action: 'POST',
       actionName: '取消订单',
-      beforeValue: { status: order.status, amount: order.amount },
-      afterValue: { status: 'CANCELLED' },
-      reason: req.body?.reason || '管理员取消订单',
+      beforeValue: { status: order.status, amount: order.amount, refundRate },
+      afterValue: { status: 'CANCELLED', refundAmount },
+      reason: req.body?.reason || '用户取消订单',
     })
 
-    return success(res, result, '订单已取消')
+    return success(res, { ...result, refundRate, refundAmount }, '订单已取消')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -720,26 +814,31 @@ export async function refund(req: AuthenticatedRequest, res: Response) {
         },
       })
 
-      if (order.userId && order.payMethod?.startsWith('BALANCE')) {
-        // 恢复双钱包
-        await tx.user.update({
-          where: { id: order.userId },
-          data: {
-            principalBalance: { increment: order.principalDeduction },
-            bonusBalance: { increment: order.bonusDeduction },
-          },
-        })
+      if (order.userId) {
+        if (order.payMethod?.startsWith('BALANCE')) {
+          // 恢复双钱包
+          await tx.user.update({
+            where: { id: order.userId },
+            data: {
+              principalBalance: { increment: order.principalDeduction },
+              bonusBalance: { increment: order.bonusDeduction },
+            },
+          })
+        }
 
+        // 所有支付方式都创建退款流水
         await tx.balanceTransaction.create({
           data: {
             userId: order.userId,
             type: 'REFUND',
             amount: order.amount,
-            principalAmount: order.principalDeduction,
-            bonusAmount: order.bonusDeduction,
+            principalAmount: order.payMethod?.startsWith('BALANCE') ? order.principalDeduction : 0,
+            bonusAmount: order.payMethod?.startsWith('BALANCE') ? order.bonusDeduction : 0,
             totalAmount: order.amount,
             orderId: order.id,
-            remark: `订单退款恢复余额（本金¥${order.principalDeduction / 100}+赠送¥${order.bonusDeduction / 100}）`,
+            remark: order.payMethod?.startsWith('BALANCE')
+              ? `订单退款恢复余额（本金¥${order.principalDeduction / 100}+赠送¥${order.bonusDeduction / 100}）`
+              : `订单在线支付退款（${order.payMethod} ¥${order.amount / 100}）`,
           },
         })
       }
@@ -904,26 +1003,31 @@ export async function batchRefund(req: AuthenticatedRequest, res: Response) {
           },
         })
 
-        if (order.userId && order.payMethod?.startsWith('BALANCE')) {
-          // 恢复双钱包
-          await tx.user.update({
-            where: { id: order.userId },
-            data: {
-              principalBalance: { increment: order.principalDeduction },
-              bonusBalance: { increment: order.bonusDeduction },
-            },
-          })
+        if (order.userId) {
+          if (order.payMethod?.startsWith('BALANCE')) {
+            // 恢复双钱包
+            await tx.user.update({
+              where: { id: order.userId },
+              data: {
+                principalBalance: { increment: order.principalDeduction },
+                bonusBalance: { increment: order.bonusDeduction },
+              },
+            })
+          }
 
+          // 所有支付方式都创建退款流水
           await tx.balanceTransaction.create({
             data: {
               userId: order.userId,
               type: 'REFUND',
               amount: order.amount,
-              principalAmount: order.principalDeduction,
-              bonusAmount: order.bonusDeduction,
+              principalAmount: order.payMethod?.startsWith('BALANCE') ? order.principalDeduction : 0,
+              bonusAmount: order.payMethod?.startsWith('BALANCE') ? order.bonusDeduction : 0,
               totalAmount: order.amount,
               orderId: order.id,
-              remark: `批量退款恢复余额（本金¥${order.principalDeduction / 100}+赠送¥${order.bonusDeduction / 100}）原因：${reason}`,
+              remark: order.payMethod?.startsWith('BALANCE')
+                ? `批量退款恢复余额（本金¥${order.principalDeduction / 100}+赠送¥${order.bonusDeduction / 100}）原因：${reason}`
+                : `批量在线支付退款（${order.payMethod} ¥${order.amount / 100}）原因：${reason}`,
             },
           })
         }

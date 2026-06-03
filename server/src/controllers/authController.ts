@@ -143,11 +143,12 @@ export async function changePassword(req: AuthenticatedRequest, res: Response) {
 
 export async function updateProfile(req: AuthenticatedRequest, res: Response) {
   try {
-    const { name, avatar, email } = req.body
-    const data: { name?: string; avatar?: string; email?: string } = {}
+    const { name, avatar, email, birthday } = req.body
+    const data: { name?: string; avatar?: string; email?: string; birthday?: string } = {}
     if (name !== undefined) data.name = name
     if (avatar !== undefined) data.avatar = avatar
     if (email !== undefined) data.email = email
+    if (birthday !== undefined) data.birthday = birthday
 
     const user = await authService.updateProfile(req.user!.id, data)
     return success(res, user, '资料更新成功')

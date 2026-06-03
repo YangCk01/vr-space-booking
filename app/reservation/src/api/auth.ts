@@ -9,6 +9,7 @@ export interface RegisterInput {
   phone: string
   password: string
   name: string
+  birthday?: string
 }
 
 export interface AuthUser {
@@ -17,6 +18,7 @@ export interface AuthUser {
   name: string
   email: string | null
   avatar: string | null
+  birthday: string | null
   role: string
   level: string
   balance: number          // 总余额 = principal + bonus（兼容）
@@ -47,7 +49,7 @@ export async function getMe(): Promise<AuthUser> {
   return res.data.data
 }
 
-export async function updateProfile(data: { name?: string; avatar?: string; email?: string }) {
+export async function updateProfile(data: { name?: string; avatar?: string; email?: string; birthday?: string }) {
   const res = await apiClient.put('/auth/profile', data)
   return res.data.data as AuthUser
 }

@@ -4,7 +4,7 @@ import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { ChevronLeft, MapPin, Clock, AlertCircle, Coins, Ticket, Check } from 'lucide-react'
 import { createBooking, checkConflict } from '@/api/bookings'
-import { createOrder, payOrder } from '@/api/orders'
+import { createOrder } from '@/api/orders'
 import { getImageUrl } from '@/lib/imageUrl'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/providers/AuthProvider'
@@ -51,7 +51,6 @@ export default function OrderConfirm() {
   const [personCount, setPersonCount] = useState(1)
   const [personName, setPersonName] = useState('')
   const [personPhone, setPersonPhone] = useState('')
-  const [paymentMethod, setPaymentMethod] = useState<'wechat' | 'alipay' | 'balance'>('wechat')
   const [errorMsg, setErrorMsg] = useState('')
   const [slotInfo, setSlotInfo] = useState<{ status: string; currentCount: number; remainingCount: number; maxCount: number } | null>(null)
   const [selectedCoupon, setSelectedCoupon] = useState<any | null>(null)
@@ -152,16 +151,6 @@ export default function OrderConfirm() {
       return
     }
 
-    // 余额支付检查
-    if (paymentMethod === 'balance') {
-      const balance = user?.balance || 0
-      const need = remainingFen
-      if (balance < need) {
-        setErrorMsg(`余额不足，当前余额 ¥${balance / 100}，还需 ¥${(need - balance) / 100}`)
-        return
-      }
-    }
-
     setErrorMsg('')
     setIsSubmitting(true)
 
@@ -208,19 +197,14 @@ export default function OrderConfirm() {
           customer: personName,
           phone: personPhone,
           source: 'ONLINE',
-          payMethod: paymentMethod === 'balance' ? 'BALANCE' : undefined,
           userCouponId: selectedCoupon?.id,
         })
-        // 非余额支付：完成支付流程
-        if (paymentMethod !== 'balance' && order?.id && remainingFen > 0) {
-          await payOrder(order.id, paymentMethod === 'wechat' ? 'WECHAT' : 'ALIPAY')
+        if (order?.id) {
+          queryClient.invalidateQueries({ queryKey: ['bookings'], exact: false })
+          queryClient.invalidateQueries({ queryKey: ['orders'] })
+          navigate(`/pay/${order.id}`, { replace: true })
+          return
         }
-        queryClient.invalidateQueries({ queryKey: ['bookings'], exact: false })
-        queryClient.invalidateQueries({ queryKey: ['orders'] })
-        await queryClient.invalidateQueries({ queryKey: ['rechargeConfig'] })
-        queryClient.invalidateQueries({ queryKey: ['usable-coupons'] })
-        queryClient.invalidateQueries({ queryKey: ['points-coupons'] })
-        navigate('/success', { state: { venueName, date, startTime, endTime, durationMin, totalPrice, finalPrice: finalPrice.toFixed(2), originalPrice: totalPrice.toFixed(2), personName, personCount, orderId: booking.id, couponName: selectedCoupon?.name, couponDiscount: couponDiscountFen } })
       }
     } catch (err: any) {
       const msg = err?.response?.data?.message || '预约提交失败，请稍后重试'
@@ -380,48 +364,6 @@ export default function OrderConfirm() {
             )}
           </div>
         )}
-
-        {/* Payment */}
-        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4">
-          <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3">支付方式</h3>
-          <div className="space-y-2">
-            {[
-              { key: 'wechat' as const, label: '微信支付', sub: '使用微信支付' },
-              { key: 'alipay' as const, label: '支付宝', sub: '使用支付宝支付' },
-              ...(isLoggedIn && user ? [{
-                key: 'balance' as const,
-                label: '余额支付',
-                sub: `当前余额 ¥${(user.balance || 0) / 100}${discount < 100 ? ` · 享${discount}折` : ''}`,
-                disabled: (user.balance || 0) < remainingFen,
-              }] : []),
-            ].map((m: any) => (
-              <button
-                key={m.key}
-                onClick={() => !m.disabled && setPaymentMethod(m.key)}
-                disabled={m.disabled}
-                className={cn(
-                  'w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all',
-                  m.disabled
-                    ? 'border-[var(--border-subtle)] bg-transparent opacity-50 cursor-not-allowed'
-                    : paymentMethod === m.key
-                      ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/5'
-                      : 'border-[var(--border-subtle)] bg-transparent hover:border-[var(--border-hover)]',
-                )}
-              >
-                <div className={cn(
-                  'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0',
-                  paymentMethod === m.key ? 'border-[var(--accent-primary)]' : 'border-[var(--text-muted)]',
-                )}>
-                  {paymentMethod === m.key && <div className="w-2.5 h-2.5 rounded-full bg-[var(--accent-primary)]" />}
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm text-[var(--text-primary)]">{m.label}</p>
-                  <p className="text-xs text-[var(--text-muted)]">{m.sub}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
 
         {/* Price summary */}
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4 space-y-2">

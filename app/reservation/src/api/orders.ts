@@ -15,6 +15,7 @@ export interface Order {
   cancelledAt: string | null
   refundAmount: number | null
   bookingTime: string
+  expireAt: string | null
   createdAt: string
   updatedAt: string
 }

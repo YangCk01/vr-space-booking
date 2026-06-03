@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronLeft, Coins, Gift, Ticket, Package, Tag, MapPin, Store, ClipboardList, X } from 'lucide-react'
+import { ChevronLeft, Coins, Gift, Ticket, Package, Tag, MapPin, Store, ClipboardList, X, Search, ChevronRight } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
 import { useAuth } from '@/providers/AuthProvider'
 import { useToast } from '@/hooks/useToast'
 import { cn } from '@/lib/utils'
+import { getVenues } from '@/api/venues'
 
 interface PointsProduct {
   id: string
@@ -37,6 +38,7 @@ async function createPointsOrder(data: {
   recipientName?: string
   recipientPhone?: string
   address?: string
+  venueId?: string
 }) {
   const res = await apiClient.post('/points/orders', data)
   return res.data
@@ -57,6 +59,9 @@ export default function PointsMall() {
   const [recipientName, setRecipientName] = useState('')
   const [recipientPhone, setRecipientPhone] = useState('')
   const [address, setAddress] = useState('')
+  const [selectedVenue, setSelectedVenue] = useState<any>(null)
+  const [showVenuePicker, setShowVenuePicker] = useState(false)
+  const [venueSearch, setVenueSearch] = useState('')
 
   useEffect(() => {
     if (isLoggedIn) refreshUser()
@@ -66,6 +71,17 @@ export default function PointsMall() {
     queryKey: ['points-products'],
     queryFn: getProducts,
   })
+
+  const { data: venuesData } = useQuery({
+    queryKey: ['venues'],
+    queryFn: () => getVenues({ status: 'FREE' }),
+    enabled: confirmType === 'physical',
+  })
+
+  const venues = (venuesData?.data || []) as any[]
+  const filteredVenues = venueSearch
+    ? venues.filter((v) => v.name.includes(venueSearch) || (v.address && v.address.includes(venueSearch)))
+    : venues
 
   const exchangeMutation = useMutation({
     mutationFn: exchangeProduct,
@@ -142,12 +158,17 @@ export default function PointsMall() {
       toastError('请填写完整的收货信息')
       return
     }
+    if (deliveryType === 'PICKUP' && !selectedVenue) {
+      toastError('请选择领取门店')
+      return
+    }
     orderMutation.mutate({
       productId: selectedProduct.id,
       deliveryType,
       recipientName: deliveryType === 'DELIVERY' ? recipientName : undefined,
       recipientPhone: deliveryType === 'DELIVERY' ? recipientPhone : undefined,
       address: deliveryType === 'DELIVERY' ? address : undefined,
+      venueId: deliveryType === 'PICKUP' ? selectedVenue?.id : undefined,
     })
   }
 
@@ -355,6 +376,46 @@ export default function PointsMall() {
                       </button>
                     </div>
 
+                    {deliveryType === 'PICKUP' && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        className="space-y-2"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-[var(--text-primary)]">领取门店</span>
+                          <button
+                            onClick={() => setShowVenuePicker(true)}
+                            className="text-xs text-[var(--accent-primary)]"
+                          >
+                            {selectedVenue ? '更换' : '选择门店'}
+                          </button>
+                        </div>
+                        {selectedVenue ? (
+                          <div className="bg-[var(--bg-elevated)] rounded-xl p-3 border border-[var(--accent-primary)]/30">
+                            <div className="flex items-center gap-2">
+                              <MapPin className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-[var(--text-primary)]">{selectedVenue.name}</p>
+                                <p className="text-xs text-[var(--text-muted)]">
+                                  营业中 {selectedVenue.openTime || '09:00'}-{selectedVenue.closeTime || '22:00'}
+                                </p>
+                                <p className="text-xs text-[var(--text-muted)] truncate">{selectedVenue.address || ''}</p>
+                              </div>
+                              <span className="px-2 py-0.5 rounded-full bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] text-[10px]">已选</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setShowVenuePicker(true)}
+                            className="w-full bg-[var(--bg-elevated)] rounded-xl p-3 border border-dashed border-[var(--border-subtle)] text-center text-sm text-[var(--text-muted)] hover:border-[var(--accent-primary)]/50 transition-colors"
+                          >
+                            请选择领取门店
+                          </button>
+                        )}
+                      </motion.div>
+                    )}
+
                     {deliveryType === 'DELIVERY' && (
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
@@ -406,6 +467,92 @@ export default function PointsMall() {
                     ? `确认兑换（-${selectedProduct.pointsCost}积分）`
                     : `确认下单（-${selectedProduct.pointsCost}积分）`}
                 </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 门店选择弹窗 */}
+      <AnimatePresence>
+        {showVenuePicker && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center"
+            onClick={() => setShowVenuePicker(false)}
+          >
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="w-full max-w-lg bg-[var(--bg-primary)] rounded-t-2xl sm:rounded-2xl max-h-[80vh] overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-4 border-b border-[var(--border-subtle)] flex items-center justify-between shrink-0">
+                <h3 className="text-base font-semibold text-[var(--text-primary)]">选择领取门店</h3>
+                <button
+                  onClick={() => setShowVenuePicker(false)}
+                  className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* 搜索 */}
+              <div className="px-4 pt-3 shrink-0">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
+                  <input
+                    value={venueSearch}
+                    onChange={(e) => setVenueSearch(e.target.value)}
+                    placeholder="搜索门店名称或地址"
+                    className="w-full bg-[var(--bg-elevated)] rounded-lg pl-9 pr-3 py-2.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] border border-[var(--border-subtle)] focus:border-[var(--accent-primary)] outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* 门店列表 */}
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+                {filteredVenues.length === 0 ? (
+                  <p className="text-center text-sm text-[var(--text-muted)] py-8">暂无可用门店</p>
+                ) : (
+                  filteredVenues.map((venue: any) => {
+                    const isSelected = selectedVenue?.id === venue.id
+                    return (
+                      <button
+                        key={venue.id}
+                        onClick={() => {
+                          setSelectedVenue(venue)
+                          setShowVenuePicker(false)
+                        }}
+                        className={cn(
+                          'w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all',
+                          isSelected
+                            ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/10'
+                            : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--border-hover)]'
+                        )}
+                      >
+                        <MapPin className={cn('w-5 h-5 shrink-0', isSelected ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)]')} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-medium text-[var(--text-primary)]">{venue.name}</p>
+                            {isSelected && (
+                              <span className="px-2 py-0.5 rounded-full bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] text-[10px]">已选</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-[var(--text-muted)]">
+                            营业中 {venue.openTime || '09:00'}-{venue.closeTime || '22:00'}
+                          </p>
+                          <p className="text-xs text-[var(--text-muted)] truncate">{venue.address || ''}</p>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                      </button>
+                    )
+                  })
+                )}
               </div>
             </motion.div>
           </motion.div>

@@ -35,6 +35,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   // 初始化认证状态
   useEffect(() => {
     const initAuth = async () => {
+      setLoading(true)
+
       // Development bypass for testing
       if (import.meta.env.DEV && localStorage.getItem('devBypassAuth') === '1') {
         setUser({ id: '1', phone: '13800000000', name: '管理员', email: null, avatar: null, role: 'ADMIN', level: 'VIP', permissions: ['order:read','order:refund','order:verify','order:export','finance:read','finance:adjust','finance:report','user:read','user:edit','user:gift','user:export','venue:read','venue:manage','marketing:campaign','marketing:rule','setting:read','setting:write','audit:read'] })
@@ -58,7 +60,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         setUser(user)
         setAuthenticated(true)
       } catch {
-        setAuthenticated(false)
+        useAuthStore.getState().logout()
         if (location.pathname !== '/login' && location.pathname !== '/reservation') {
           navigate('/login')
         }
@@ -69,17 +71,6 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
     initAuth()
   }, [navigate, location.pathname, setUser, setAuthenticated, setLoading])
-
-  // 检测旧格式 permissions（菜单 key 格式），自动清理并重新登录
-  useEffect(() => {
-    if (isLoading || !isAuthenticated || !user?.permissions) return
-    const oldMenuKeys = ['home', 'venues', 'games', 'booking', 'orders', 'users', 'analytics', 'finance', 'accounts', 'settings', 'audit-logs']
-    const hasOldFormat = user.permissions.some((p) => oldMenuKeys.includes(p))
-    if (hasOldFormat) {
-      useAuthStore.getState().logout()
-      navigate('/login')
-    }
-  }, [isLoading, isAuthenticated, user, navigate])
 
   // 权限路由守卫（用 useEffect 避免渲染期调用 setState）
   useEffect(() => {

@@ -51,6 +51,7 @@ import { getUsers, createUser, updateUser, deleteUser, batchGiftPoints, batchGif
 import type { User as ApiUser } from '@/api/users'
 import { getSettings } from '@/api/settings'
 import { giftPoints, giftCoupon, getPointsGiftRecords, getCouponGiftRecords } from '@/api/gift'
+import { getUserRechargeRecords } from '@/api/finance'
 
 function useDynamicLevelTabs(levels: Array<{ key: string; name: string }>) {
   return [
@@ -207,18 +208,24 @@ function UserDetailSheet({
 
   const avatarColor = getAvatarColor(user.name)
   const [level, setLevel] = useState(user.level)
-  const [activeTab, setActiveTab] = useState<'info' | 'gifts'>('info')
+  const [activeTab, setActiveTab] = useState<'info' | 'finance'>('info')
 
   const { data: pointsRecords } = useQuery({
     queryKey: ['gift-points-records', user.id],
     queryFn: () => getPointsGiftRecords({ userId: user.id, pageSize: 20 }),
-    enabled: open && activeTab === 'gifts',
+    enabled: open && activeTab === 'finance',
   })
 
   const { data: couponRecords } = useQuery({
     queryKey: ['gift-coupon-records', user.id],
     queryFn: () => getCouponGiftRecords({ userId: user.id, pageSize: 20 }),
-    enabled: open && activeTab === 'gifts',
+    enabled: open && activeTab === 'finance',
+  })
+
+  const { data: rechargeRecords } = useQuery({
+    queryKey: ['user-recharge-records', user.id],
+    queryFn: () => getUserRechargeRecords(user.id),
+    enabled: open && activeTab === 'finance',
   })
 
   // Sync level when user changes
@@ -332,14 +339,14 @@ function UserDetailSheet({
               用户信息
             </button>
             <button
-              onClick={() => setActiveTab('gifts')}
+              onClick={() => setActiveTab('finance')}
               className={`flex-1 h-8 rounded-md text-vr-caption font-medium transition-colors ${
-                activeTab === 'gifts'
+                activeTab === 'finance'
                   ? 'bg-vraccent-primary text-white'
                   : 'text-vrtext-secondary hover:text-vrtext-primary'
               }`}
             >
-              赠送记录
+              财务记录
             </button>
           </div>
 
@@ -376,57 +383,87 @@ function UserDetailSheet({
           </motion.div>
           )}
 
-          {activeTab === 'gifts' && (
+          {activeTab === 'finance' && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1, duration: 0.3 }}
-            className="space-y-4"
+            className="grid grid-cols-2 gap-4"
           >
-            {/* Points Gift Records */}
-            <div className="bg-vrbg-elevated rounded-xl p-5">
-              <h4 className="text-vr-body-sm text-vrtext-secondary font-medium mb-3">积分赠送</h4>
-              {(pointsRecords?.data?.data || []).length === 0 ? (
-                <p className="text-vr-caption text-vrtext-muted">暂无积分赠送记录</p>
-              ) : (
-                <div className="space-y-2">
-                  {(pointsRecords?.data?.data || []).map((record: any) => (
-                    <div key={record.id} className="flex items-center justify-between py-2 border-b border-vrborder-subtle last:border-0">
-                      <div>
-                        <p className="text-vr-body-sm text-vrtext-primary">+{record.pointsAmount} 积分</p>
-                        <p className="text-vr-caption text-vrtext-muted">{record.remark}</p>
+            {/* Left: 赠送记录 */}
+            <div className="space-y-3">
+              {/* Points Gift Records */}
+              <div className="bg-vrbg-elevated rounded-xl p-4">
+                <h4 className="text-vr-caption text-vrtext-secondary font-medium mb-2">积分赠送</h4>
+                {(pointsRecords?.data?.data || []).length === 0 ? (
+                  <p className="text-vr-caption text-vrtext-muted">暂无记录</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {(pointsRecords?.data?.data || []).map((record: any) => (
+                      <div key={record.id} className="flex items-center justify-between py-1.5 border-b border-vrborder-subtle last:border-0">
+                        <div className="min-w-0">
+                          <p className="text-vr-body-sm text-vrtext-primary truncate">+{record.pointsAmount} 积分</p>
+                          <p className="text-[10px] text-vrtext-muted truncate">{record.remark}</p>
+                        </div>
+                        <span className="text-[10px] text-vrtext-muted shrink-0 ml-2">
+                          {new Date(record.createdAt).toLocaleDateString()}
+                        </span>
                       </div>
-                      <span className="text-vr-caption text-vrtext-muted">
-                        {new Date(record.createdAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Coupon Gift Records */}
+              <div className="bg-vrbg-elevated rounded-xl p-4">
+                <h4 className="text-vr-caption text-vrtext-secondary font-medium mb-2">优惠券赠送</h4>
+                {(couponRecords?.data?.data || []).length === 0 ? (
+                  <p className="text-vr-caption text-vrtext-muted">暂无记录</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {(couponRecords?.data?.data || []).map((record: any) => (
+                      <div key={record.id} className="flex items-center justify-between py-1.5 border-b border-vrborder-subtle last:border-0">
+                        <div className="min-w-0">
+                          <p className="text-vr-body-sm text-vrtext-primary truncate">{record.name}</p>
+                          <p className="text-[10px] text-vrtext-muted truncate">
+                            {record.source === 'CAMPAIGN'
+                              ? (record.giftReason || '活动发放')
+                              : record.giftReason === 'COMPLAINT' ? '客诉' :
+                                record.giftReason === 'EQUIPMENT_FAILURE' ? '设备故障' :
+                                record.giftReason === 'ENTERTAIN_CLIENT' ? '招待客户' : '备注'}
+                            {record.giftRemark ? ` - ${record.giftRemark}` : ''}
+                          </p>
+                        </div>
+                        <span className="text-[10px] text-vrtext-muted shrink-0 ml-2">
+                          {new Date(record.createdAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Coupon Gift Records */}
-            <div className="bg-vrbg-elevated rounded-xl p-5">
-              <h4 className="text-vr-body-sm text-vrtext-secondary font-medium mb-3">优惠券赠送</h4>
-              {(couponRecords?.data?.data || []).length === 0 ? (
-                <p className="text-vr-caption text-vrtext-muted">暂无优惠券赠送记录</p>
+            {/* Right: 充值记录 */}
+            <div className="bg-vrbg-elevated rounded-xl p-4">
+              <h4 className="text-vr-caption text-vrtext-secondary font-medium mb-2">充值记录</h4>
+              {(rechargeRecords || []).length === 0 ? (
+                <p className="text-vr-caption text-vrtext-muted">暂无记录</p>
               ) : (
-                <div className="space-y-2">
-                  {(couponRecords?.data?.data || []).map((record: any) => (
-                    <div key={record.id} className="flex items-center justify-between py-2 border-b border-vrborder-subtle last:border-0">
-                      <div>
-                        <p className="text-vr-body-sm text-vrtext-primary">{record.name}</p>
-                        <p className="text-vr-caption text-vrtext-muted">
-                          {record.source === 'CAMPAIGN'
-                            ? (record.giftReason || '活动发放')
-                            : record.giftReason === 'COMPLAINT' ? '客诉' :
-                              record.giftReason === 'EQUIPMENT_FAILURE' ? '设备故障' :
-                              record.giftReason === 'ENTERTAIN_CLIENT' ? '招待客户' : '备注'}
-                          {record.giftRemark ? ` - ${record.giftRemark}` : ''}
+                <div className="space-y-1.5 max-h-[340px] overflow-y-auto">
+                  {(rechargeRecords || []).map((record: any) => (
+                    <div key={record.id} className="flex items-center justify-between py-1.5 border-b border-vrborder-subtle last:border-0">
+                      <div className="min-w-0">
+                        <p className="text-vr-body-sm text-vrtext-primary">
+                          ¥{(record.amount / 100).toFixed(0)}
+                          {record.bonus > 0 && <span className="text-vrsuccess text-[10px] ml-1">+赠¥{(record.bonus / 100).toFixed(0)}</span>}
+                        </p>
+                        <p className="text-[10px] text-vrtext-muted">
+                          {record.payMethod === 'WECHAT' ? '微信支付' : record.payMethod === 'ALIPAY' ? '支付宝' : record.payMethod}
                         </p>
                       </div>
-                      <span className="text-vr-caption text-vrtext-muted">
-                        {new Date(record.createdAt).toLocaleDateString()}
+                      <span className="text-[10px] text-vrtext-muted shrink-0 ml-2">
+                        {record.paidAt ? new Date(record.paidAt).toLocaleDateString() : new Date(record.createdAt).toLocaleDateString()}
                       </span>
                     </div>
                   ))}
@@ -939,7 +976,7 @@ export default function UsersPage() {
             ))}
           </div>
           <span className="text-vr-caption text-vrtext-tertiary">
-            {filteredUsers.length} 位用户
+            {totalUsers} 位用户
           </span>
         </div>
 
@@ -1138,7 +1175,7 @@ export default function UsersPage() {
                   <option value={20}>20</option>
                 </select>
                 <span className="text-vr-caption text-vrtext-tertiary">条</span>
-                <span className="text-vr-caption text-vrtext-tertiary ml-2">共 {filteredUsers.length} 条</span>
+                <span className="text-vr-caption text-vrtext-tertiary ml-2">共 {totalUsers} 条</span>
               </div>
 
               <div className="flex items-center gap-1">

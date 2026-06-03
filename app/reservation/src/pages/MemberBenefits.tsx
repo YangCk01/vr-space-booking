@@ -125,7 +125,7 @@ export default function MemberBenefits() {
               <div>
                 <p className="text-sm text-[var(--text-primary)]">消费折扣</p>
                 <p className="text-xs text-[var(--text-muted)]">
-                  {currentLevel && currentLevel.discount < 100
+                  {currentLevel && currentLevel.discount !== 100
                     ? `全场享 ${currentLevel.discount} 折`
                     : '暂无折扣'}
                 </p>
@@ -175,12 +175,21 @@ export default function MemberBenefits() {
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-[var(--text-muted)] w-5">{idx + 1}</span>
-                    <span className={`text-sm font-medium ${isCurrent ? 'text-[var(--accent-primary)]' : 'text-[var(--text-primary)]'}`}>
-                      {level?.name || key}
-                    </span>
-                    {isCurrent && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-primary)]/20 text-[var(--accent-primary)]">当前</span>}
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm font-medium ${isCurrent ? 'text-[var(--accent-primary)]' : 'text-[var(--text-primary)]'}`}>
+                          {level?.name || key}
+                        </span>
+                        {isCurrent && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-primary)]/20 text-[var(--accent-primary)]">当前</span>}
+                      </div>
+                      <span className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                        {level && level.discount !== 100
+                          ? `全场享 ${level.discount} 折`
+                          : '暂无折扣'}
+                      </span>
+                    </div>
                   </div>
-                  <span className="text-xs text-[var(--text-muted)]">
+                  <span className="text-xs text-[var(--text-muted)] shrink-0">
                     {config ? `充值 ¥${(config.amount / 100).toLocaleString()}` : '默认等级'}
                   </span>
                 </div>

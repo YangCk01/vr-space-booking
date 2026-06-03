@@ -87,7 +87,7 @@ export async function executeReconciliation(dateStr: string) {
     const bizOrders = await prisma.order.count({
       where: {
         paidAt: { gte: dateGte, lte: dateLte },
-        status: { in: ['PAID', 'COMPLETED', 'REFUNDED'] },
+        status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
       },
     })
     const bizRecharges = await prisma.rechargeRecord.count({
@@ -222,14 +222,14 @@ async function checkReconcileAlerts(dateStr: string, dateGte: Date, dateLte: Dat
   })
   const orderOnlineSum = await prisma.order.aggregate({
     where: {
-      status: { in: ['PAID', 'COMPLETED'] },
+      status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
       payMethod: { in: ['WECHAT', 'ALIPAY'] },
       paidAt: { gte: dateGte, lte: dateLte },
     },
     _sum: { amount: true },
   })
   const onlinePayDiff = (paymentSum._sum?.amount || 0) - (orderOnlineSum._sum?.amount || 0)
-  checkDimensionAlert(alerts, '在线直付', onlinePayDiff, orderOnlineSum._sum?.amount || 0, thresholds)
+  checkDimensionAlert(alerts, '在线支付金额', onlinePayDiff, orderOnlineSum._sum?.amount || 0, thresholds)
 
   // 4. 消费对账
   const orderConsumeSum = await prisma.order.aggregate({
@@ -254,7 +254,10 @@ async function checkReconcileAlerts(dateStr: string, dateGte: Date, dateLte: Dat
     _sum: { totalAmount: true },
   })
   const orderRefundSum = await prisma.order.aggregate({
-    where: { status: 'REFUNDED', updatedAt: { gte: dateGte, lte: dateLte } },
+    where: {
+      status: { in: ['REFUNDED', 'CANCELLED'] },
+      updatedAt: { gte: dateGte, lte: dateLte }
+    },
     _sum: { refundAmount: true },
   })
   const refundDiff = (txRefundSum._sum?.totalAmount || 0) - (orderRefundSum._sum?.refundAmount || 0)
@@ -264,7 +267,6 @@ async function checkReconcileAlerts(dateStr: string, dateGte: Date, dateLte: Dat
   const txPointsExchangeDeductSum = await prisma.balanceTransaction.aggregate({
     where: {
       type: 'POINTS_DEDUCT',
-      pointsAmount: { lt: 0 },
       orderId: null,
       createdAt: { gte: dateGte, lte: dateLte },
     },

@@ -179,3 +179,19 @@ export async function getTotalSummary() {
   const res = await apiClient.get('/finance/total-summary')
   return res.data.data as TotalSummary
 }
+
+export interface RechargeRecord {
+  id: string
+  amount: number
+  bonus: number
+  total: number
+  payMethod: string
+  status: string
+  paidAt: string | null
+  createdAt: string
+}
+
+export async function getUserRechargeRecords(userId: string) {
+  const res = await apiClient.get('/recharges', { params: { userId } })
+  return res.data.data as RechargeRecord[]
+}

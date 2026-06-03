@@ -107,7 +107,7 @@ export async function create(req: AuthenticatedRequest, res: Response) {
       type: dbType,
       startAt: startAt ? new Date(startAt) : null,
       endAt: endAt ? new Date(endAt) : null,
-      budget: budget ? parseInt(budget) * 100 : null,
+      budget: budget ? parseInt(budget) : null,
       createdBy: req.user?.id || '',
       status: 'DRAFT',
       rewards: { create: rewardData },
@@ -487,6 +487,7 @@ export async function remove(req: AuthenticatedRequest, res: Response) {
 
 /* ─── 11. 编辑活动 ─── */
 export async function update(req: AuthenticatedRequest, res: Response) {
+  let updateData: any = {}
   try {
     const id = req.params.id as string
     const {
@@ -514,11 +515,11 @@ export async function update(req: AuthenticatedRequest, res: Response) {
       return error(res, '只有暂停或草稿状态的活动可以编辑', 400)
     }
 
-    const updateData: any = {
+    updateData = {
       ...(name && { name: name.trim() }),
       ...(startAt !== undefined && { startAt: startAt ? new Date(startAt) : null }),
       ...(endAt !== undefined && { endAt: endAt ? new Date(endAt) : null }),
-      ...(budget !== undefined && { budget: budget ? parseInt(budget) * 100 : null }),
+      ...(budget !== undefined && { budget: budget ? parseInt(budget) : null }),
       // 新增字段
       ...(targetTags !== undefined && { targetTags: targetTags || [] }),
       ...(excludeTags !== undefined && { excludeTags: excludeTags || [] }),

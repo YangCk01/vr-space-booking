@@ -3,20 +3,22 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   ChevronLeft,
+  ChevronRight,
   Camera,
   User,
   Phone,
   Lock,
   Mail,
-  Eye,
-  EyeOff,
+  Calendar,
   AlertCircle,
   CheckCircle2,
+  Info,
 } from 'lucide-react'
 import { useAuth } from '@/providers/AuthProvider'
-import { updateProfile, updatePhone, changePassword, uploadAvatar } from '@/api/auth'
+import { updateProfile, uploadAvatar } from '@/api/auth'
 import { resolveImageUrl } from '@/api/client'
 import { useMutation } from '@tanstack/react-query'
+import { cn } from '@/lib/utils'
 
 /* ─── Form row component ─── */
 function FormRow({
@@ -51,34 +53,32 @@ function FormRow({
   )
 }
 
-/* ─── Password input with toggle ─── */
-function PasswordInput({
-  value,
-  onChange,
-  placeholder,
+/* ─── Alert Banner ─── */
+function AlertBanner({
+  type,
+  message,
 }: {
-  value: string
-  onChange: (v: string) => void
-  placeholder: string
+  type: 'error' | 'success'
+  message: string
 }) {
-  const [show, setShow] = useState(false)
   return (
-    <div className="relative">
-      <input
-        type={show ? 'text' : 'password'}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full h-10 pr-10 bg-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
-      />
-      <button
-        type="button"
-        onClick={() => setShow(!show)}
-        className="absolute right-0 top-1/2 -translate-y-1/2 p-1 text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
-      >
-        {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-      </button>
-    </div>
+    <motion.div
+      initial={{ opacity: 0, y: -5 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={cn(
+        'flex items-center gap-2 px-4 py-3 rounded-lg text-sm border',
+        type === 'error'
+          ? 'bg-red-500/15 text-red-400 border-red-500/30'
+          : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+      )}
+    >
+      {type === 'error' ? (
+        <AlertCircle className="w-4 h-4 shrink-0" />
+      ) : (
+        <CheckCircle2 className="w-4 h-4 shrink-0" />
+      )}
+      {message}
+    </motion.div>
   )
 }
 
@@ -92,23 +92,29 @@ export default function AccountSettings() {
   /* Local states */
   const [name, setName] = useState(user?.name || '')
   const [email, setEmail] = useState(user?.email || '')
+  const [birthday, setBirthday] = useState('')
   const [avatarUrl, setAvatarUrl] = useState(user?.avatar || '')
 
   useEffect(() => {
     if (user) {
       setName(user.name || '')
       setEmail(user.email || '')
+      // 将 ISO 日期格式转为 YYYY-MM-DD
+      const rawBirthday = user.birthday
+      if (rawBirthday) {
+        const date = new Date(rawBirthday)
+        const yyyy = date.getFullYear()
+        const mm = String(date.getMonth() + 1).padStart(2, '0')
+        const dd = String(date.getDate()).padStart(2, '0')
+        setBirthday(`${yyyy}-${mm}-${dd}`)
+      } else {
+        setBirthday('')
+      }
       setAvatarUrl(user.avatar || '')
     }
   }, [user])
 
-  const [newPhone, setNewPhone] = useState('')
-  const [phonePassword, setPhonePassword] = useState('')
-
-  const [oldPassword, setOldPassword] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-
+  /* Global messages (profile / avatar) */
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -135,33 +141,11 @@ export default function AccountSettings() {
 
   const updateProfileMut = useMutation({
     mutationFn: updateProfile,
-    onSuccess: (data) => {
+    onSuccess: () => {
       refreshUser()
       showSuccess('资料更新成功')
     },
     onError: (err: any) => showError(err?.response?.data?.message || '更新失败'),
-  })
-
-  const updatePhoneMut = useMutation({
-    mutationFn: () => updatePhone(newPhone, phonePassword),
-    onSuccess: (data) => {
-      refreshUser()
-      setNewPhone('')
-      setPhonePassword('')
-      showSuccess('手机号修改成功')
-    },
-    onError: (err: any) => showError(err?.response?.data?.message || '修改失败'),
-  })
-
-  const changePasswordMut = useMutation({
-    mutationFn: () => changePassword(oldPassword, newPassword),
-    onSuccess: () => {
-      setOldPassword('')
-      setNewPassword('')
-      setConfirmPassword('')
-      showSuccess('密码修改成功')
-    },
-    onError: (err: any) => showError(err?.response?.data?.message || '修改失败'),
   })
 
   const handleAvatarClick = () => {
@@ -190,42 +174,16 @@ export default function AccountSettings() {
       showError('昵称不能为空')
       return
     }
-    updateProfileMut.mutate({ name: name.trim(), email: email.trim() || undefined })
-  }
-
-  const handleSavePhone = () => {
-    if (!newPhone.trim() || newPhone.length !== 11) {
-      showError('请输入正确的11位手机号')
-      return
-    }
-    if (!phonePassword) {
-      showError('请输入密码验证')
-      return
-    }
-    updatePhoneMut.mutate()
-  }
-
-  const handleSavePassword = () => {
-    if (!oldPassword) {
-      showError('请输入原密码')
-      return
-    }
-    if (newPassword.length < 6) {
-      showError('新密码至少6位')
-      return
-    }
-    if (newPassword !== confirmPassword) {
-      showError('两次输入的新密码不一致')
-      return
-    }
-    changePasswordMut.mutate()
+    updateProfileMut.mutate({
+      name: name.trim(),
+      email: email.trim() || undefined,
+      birthday: birthday || undefined,
+    })
   }
 
   const isLoading =
     uploadMut.isPending ||
-    updateProfileMut.isPending ||
-    updatePhoneMut.isPending ||
-    changePasswordMut.isPending
+    updateProfileMut.isPending
 
   return (
     <motion.div
@@ -256,7 +214,11 @@ export default function AccountSettings() {
             className="relative w-20 h-20 rounded-full overflow-hidden bg-[var(--bg-elevated)] border-2 border-[var(--border-subtle)] hover:border-[var(--accent-primary)] transition-colors"
           >
             {avatarUrl ? (
-              <img src={resolveImageUrl(avatarUrl)} alt="avatar" className="w-full h-full object-cover" />
+              <img
+                src={resolveImageUrl(avatarUrl)}
+                alt="avatar"
+                className="w-full h-full object-cover"
+              />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)]">
                 <User className="w-8 h-8" />
@@ -276,27 +238,9 @@ export default function AccountSettings() {
           <p className="mt-2 text-xs text-[var(--text-muted)]">点击设置头像</p>
         </div>
 
-        {/* ─── Messages ─── */}
-        {error && (
-          <motion.div
-            initial={{ opacity: 0, y: -5 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-2 px-4 py-3 rounded-lg bg-[var(--error)]/10 text-[var(--error)] text-sm"
-          >
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            {error}
-          </motion.div>
-        )}
-        {success && (
-          <motion.div
-            initial={{ opacity: 0, y: -5 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-2 px-4 py-3 rounded-lg bg-[var(--success)]/10 text-[var(--success)] text-sm"
-          >
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            {success}
-          </motion.div>
-        )}
+        {/* ─── Global Messages ─── */}
+        {error && <AlertBanner type="error" message={error} />}
+        {success && <AlertBanner type="success" message={success} />}
 
         {/* ─── Basic Info ─── */}
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] px-4">
@@ -320,6 +264,27 @@ export default function AccountSettings() {
             />
           </FormRow>
 
+          <FormRow icon={<Calendar className="w-4 h-4" />} label="生日">
+            {birthday ? (
+              <span className="text-sm text-[var(--text-primary)]">{birthday}</span>
+            ) : (
+              <input
+                type="date"
+                value={birthday}
+                onChange={(e) => setBirthday(e.target.value)}
+                placeholder="请选择生日（选填）"
+                className="w-full h-10 bg-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
+              />
+            )}
+          </FormRow>
+
+          {birthday && (
+            <div className="flex items-center gap-1.5 px-4 py-2 -mt-2 mb-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+              <Info className="w-3.5 h-3.5 shrink-0" />
+              生日已设置，不可修改
+            </div>
+          )}
+
           <button
             onClick={handleSaveProfile}
             disabled={isLoading}
@@ -329,74 +294,32 @@ export default function AccountSettings() {
           </button>
         </div>
 
-        {/* ─── Phone ─── */}
-        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] px-4">
-          <p className="pt-4 text-sm font-medium text-[var(--text-primary)]">修改手机号</p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">
-            当前手机号：{user?.phone || '-'}
-          </p>
-
-          <FormRow icon={<Phone className="w-4 h-4" />} label="新手机号">
-            <input
-              type="tel"
-              value={newPhone}
-              onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, '').slice(0, 11))}
-              placeholder="请输入新手机号"
-              className="w-full h-10 bg-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
-            />
-          </FormRow>
-
-          <FormRow icon={<Lock className="w-4 h-4" />} label="密码验证">
-            <PasswordInput
-              value={phonePassword}
-              onChange={setPhonePassword}
-              placeholder="请输入当前密码"
-            />
-          </FormRow>
-
+        {/* ─── Security Settings ─── */}
+        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] overflow-hidden">
           <button
-            onClick={handleSavePhone}
-            disabled={isLoading}
-            className="w-full py-3 mt-2 mb-4 rounded-lg bg-[var(--accent-primary)] text-white text-sm font-medium hover:bg-[var(--accent-hover)] disabled:opacity-40 transition-colors"
+            onClick={() => navigate('/change-phone')}
+            className="w-full flex items-center justify-between px-4 py-4 border-b border-[var(--border-subtle)] hover:bg-[var(--bg-elevated)]/50 transition-colors"
           >
-            {updatePhoneMut.isPending ? '修改中...' : '修改手机号'}
+            <div className="flex items-center gap-3">
+              <Phone className="w-4 h-4 text-[var(--text-muted)]" />
+              <span className="text-sm text-[var(--text-primary)]">修改手机号</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-[var(--text-muted)]">
+                {user?.phone || '-'}
+              </span>
+              <ChevronRight className="w-4 h-4 text-[var(--text-muted)]" />
+            </div>
           </button>
-        </div>
-
-        {/* ─── Password ─── */}
-        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] px-4">
-          <p className="pt-4 text-sm font-medium text-[var(--text-primary)]">修改密码</p>
-
-          <FormRow icon={<Lock className="w-4 h-4" />} label="原密码">
-            <PasswordInput
-              value={oldPassword}
-              onChange={setOldPassword}
-              placeholder="请输入原密码"
-            />
-          </FormRow>
-
-          <FormRow icon={<Lock className="w-4 h-4" />} label="新密码">
-            <PasswordInput
-              value={newPassword}
-              onChange={setNewPassword}
-              placeholder="新密码至少6位"
-            />
-          </FormRow>
-
-          <FormRow icon={<Lock className="w-4 h-4" />} label="确认新密码" error={confirmPassword && newPassword !== confirmPassword ? '两次输入不一致' : undefined}>
-            <PasswordInput
-              value={confirmPassword}
-              onChange={setConfirmPassword}
-              placeholder="请再次输入新密码"
-            />
-          </FormRow>
-
           <button
-            onClick={handleSavePassword}
-            disabled={isLoading}
-            className="w-full py-3 mt-2 mb-4 rounded-lg bg-[var(--accent-primary)] text-white text-sm font-medium hover:bg-[var(--accent-hover)] disabled:opacity-40 transition-colors"
+            onClick={() => navigate('/change-password')}
+            className="w-full flex items-center justify-between px-4 py-4 hover:bg-[var(--bg-elevated)]/50 transition-colors"
           >
-            {changePasswordMut.isPending ? '修改中...' : '修改密码'}
+            <div className="flex items-center gap-3">
+              <Lock className="w-4 h-4 text-[var(--text-muted)]" />
+              <span className="text-sm text-[var(--text-primary)]">修改密码</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-[var(--text-muted)]" />
           </button>
         </div>
       </div>

@@ -8,6 +8,7 @@ import { startDataConsistencyJob } from './jobs/dataConsistencyJob'
 import { startUserTagJob } from './jobs/userTagJob'
 import { startTriggerJob } from './jobs/triggerJob'
 import { startCouponEffectJob } from './jobs/couponEffectJob'
+import { startOrderTimeoutJob } from './jobs/orderTimeoutJob'
 import { loadConfig } from './services/configService'
 import { seedPermissions } from './utils/seedPermissions'
 
@@ -51,6 +52,9 @@ startDataConsistencyJob()
 startUserTagJob()
 startTriggerJob()
 startCouponEffectJob()
+
+// 启动订单超时自动取消任务
+startOrderTimeoutJob()
 
 // 启动时加载系统配置并初始化权限
 seedPermissions()

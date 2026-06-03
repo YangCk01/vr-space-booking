@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronLeft, ClipboardList, LogIn, XCircle, MapPin, Clock, Calendar, Users, Ticket, QrCode } from 'lucide-react'
+import { ChevronLeft, ClipboardList, LogIn, XCircle, MapPin, Clock, Calendar, Users, Ticket, QrCode, Timer } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { getOrders, cancelOrder } from '@/api/orders'
 import { useAuth } from '@/providers/AuthProvider'
@@ -24,6 +24,44 @@ const statusMap: Record<string, { label: string; color: string }> = {
   REFUNDED: { label: '已退款', color: 'text-[var(--text-muted)]' },
 }
 
+/* ─── 阶梯退费计算 ─── */
+function getRefundInfo(order: any) {
+  const booking = order?.booking
+  if (!booking?.date || !booking?.startTime) {
+    return { rate: 0, refundAmount: 0, refundText: '¥0.00', canCancel: true, deadlineText: '', isExpired: false }
+  }
+  const startDate = new Date(booking.date)
+  const [h, m] = booking.startTime.split(':')
+  startDate.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
+  const now = new Date()
+  const diffMs = startDate.getTime() - now.getTime()
+  const diffHours = diffMs / (1000 * 60 * 60)
+
+  let rate = 0
+  if (diffHours > 24) rate = 1
+  else if (diffHours >= 2) rate = 0.5
+  else rate = 0
+
+  const refundAmount = Math.floor((order.amount || 0) * rate)
+  const refundText = `¥${(refundAmount / 100).toFixed(2)}`
+
+  // 最迟取消提示
+  let deadlineText = ''
+  if (diffHours > 24) {
+    const d = new Date(startDate.getTime() - 24 * 60 * 60 * 1000)
+    deadlineText = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前可取消`
+  } else if (diffHours >= 2) {
+    const d = new Date(startDate.getTime() - 2 * 60 * 60 * 1000)
+    deadlineText = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前可取消`
+  } else if (diffHours > 0) {
+    deadlineText = '开场前2小时内不可取消'
+  } else {
+    deadlineText = '已开场，不可取消'
+  }
+
+  return { rate, refundAmount, refundText, canCancel: diffHours > 2 || order.status === 'PENDING', deadlineText, isExpired: diffHours <= 0 }
+}
+
 export default function Orders() {
   const navigate = useNavigate()
   const { isLoggedIn, refreshUser } = useAuth()
@@ -32,6 +70,13 @@ export default function Orders() {
   const [cancelId, setCancelId] = useState<string | null>(null)
   const [ticketOpen, setTicketOpen] = useState(false)
   const [ticketOrder, setTicketOrder] = useState<any>(null)
+
+  // 全局 tick 用于倒计时刷新
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
 
   const { data, isLoading } = useQuery({
     queryKey: ['orders'],
@@ -117,6 +162,20 @@ export default function Orders() {
         ) : (
           orders.map((o: any, i: number) => {
             const s = statusMap[o.status] || { label: o.status, color: 'text-[var(--text-muted)]' }
+            // 倒计时计算
+            let countdownText = ''
+            let isExpired = false
+            if (o.status === 'PENDING' && o.expireAt) {
+              const diff = new Date(o.expireAt).getTime() - Date.now()
+              if (diff <= 0) {
+                countdownText = '已过期'
+                isExpired = true
+              } else {
+                const m = Math.floor(diff / 60000)
+                const s = Math.floor((diff % 60000) / 1000)
+                countdownText = `${m}分${s.toString().padStart(2, '0')}秒后过期`
+              }
+            }
             return (
               <motion.div
                 key={o.id}
@@ -128,7 +187,15 @@ export default function Orders() {
               >
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-semibold text-[var(--text-primary)]">{o.venueName}</h3>
-                  <span className={cn('text-xs font-medium', s.color)}>{s.label}</span>
+                  <div className="flex items-center gap-2">
+                    {countdownText && (
+                      <span className={cn('text-[10px] font-medium flex items-center gap-0.5', isExpired ? 'text-[var(--error)]' : 'text-[var(--warning)]')}>
+                        <Timer className="w-3 h-3" />
+                        {countdownText}
+                      </span>
+                    )}
+                    <span className={cn('text-xs font-medium', s.color)}>{s.label}</span>
+                  </div>
                 </div>
                 <p className="text-xs text-[var(--text-muted)] mb-1">{o.bookingTime}</p>
                 <p className="text-xs text-[var(--text-muted)] mb-2">
@@ -142,7 +209,7 @@ export default function Orders() {
                     )}
                   </div>
                   <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                    {o.status === 'PENDING' && (
+                    {o.status === 'PENDING' && !isExpired && (
                       <button
                         onClick={() => navigate('/pay/' + o.id)}
                         className="px-3 py-1 rounded-lg text-xs font-medium text-white bg-gradient-accent"
@@ -178,35 +245,123 @@ export default function Orders() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+            className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-4 pb-6 sm:pb-0"
             onClick={() => setCancelId(null)}
           >
             <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
+              initial={{ y: 120, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 120, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-[var(--bg-card)] rounded-2xl p-5 max-w-sm w-full border border-[var(--border-subtle)] shadow-2xl"
+              className="bg-[var(--bg-card)] rounded-2xl max-w-sm w-full border border-[var(--border-subtle)] shadow-2xl overflow-hidden"
             >
-              <h3 className="text-base font-semibold text-[var(--text-primary)] mb-2">确认取消订单？</h3>
-              <p className="text-sm text-[var(--text-secondary)] mb-5">
-                取消后{data?.data?.find((o: any) => o.id === cancelId)?.payMethod === 'BALANCE' ? '，已支付的金额将退回余额' : ''}
-              </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setCancelId(null)}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)] hover:bg-[var(--border-subtle)] transition-colors"
-                >
-                  保留订单
-                </button>
-                <button
-                  onClick={() => cancelMutation.mutate(cancelId)}
-                  disabled={cancelMutation.isPending}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-[var(--error)] hover:bg-red-600 transition-colors disabled:opacity-60"
-                >
-                  {cancelMutation.isPending ? '取消中...' : '确认取消'}
-                </button>
-              </div>
+              {(() => {
+                const o = data?.data?.find((oo: any) => oo.id === cancelId)
+                if (!o) return null
+                const info = getRefundInfo(o)
+                const isPaid = o.status === 'PAID'
+                return (
+                  <div className="p-5 space-y-4">
+                    {/* 订单摘要 */}
+                    <div>
+                      <h3 className="text-base font-bold text-[var(--text-primary)] mb-1">{o.venueName}</h3>
+                      <p className="text-xs text-[var(--text-muted)]">{o.bookingTime}</p>
+                      <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                        {o.booking?.game?.title || 'VR体验'} · {o.booking?.personCount || 1}人
+                      </p>
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-sm font-bold text-[var(--error)]">¥{((o.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <button
+                          onClick={() => setCancelId(null)}
+                          className="px-3 py-1 rounded-full text-xs font-medium text-[var(--error)] border border-[var(--error)]/40 hover:bg-[var(--error)]/10 transition-colors flex items-center gap-1"
+                        >
+                          <XCircle className="w-3 h-3" />
+                          取消订单
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 最迟取消 */}
+                    {isPaid && (
+                      <div className="bg-[var(--bg-elevated)] rounded-xl p-3 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-[var(--warning)] font-medium">最迟取消</span>
+                          <span className="text-xs text-[var(--text-primary)] font-medium">{info.deadlineText}</span>
+                        </div>
+                        <p className="text-[10px] text-[var(--text-muted)]">{info.isExpired ? '已开场，超过后不可取消' : info.rate === 0 ? '开场前2小时内不可取消' : '按申请取消时间计算退费比例'}</p>
+                      </div>
+                    )}
+
+                    {/* 阶梯式退费规则 */}
+                    {isPaid && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium text-[var(--text-primary)]">阶梯式退费规则</span>
+                          <span className="text-[10px] text-[var(--text-muted)]">按申请取消时间计算</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className={cn('rounded-lg p-2 text-center border', info.rate === 1 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border-subtle)]')}>
+                            <p className={cn('text-sm font-bold', info.rate === 1 ? 'text-emerald-400' : 'text-[var(--text-muted)]')}>退100%</p>
+                            <p className="text-[10px] text-[var(--text-muted)] mt-0.5">开场24小时前</p>
+                          </div>
+                          <div className={cn('rounded-lg p-2 text-center border', info.rate === 0.5 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border-subtle)]')}>
+                            <p className={cn('text-sm font-bold', info.rate === 0.5 ? 'text-amber-400' : 'text-[var(--text-muted)]')}>退50%</p>
+                            <p className="text-[10px] text-[var(--text-muted)] mt-0.5">开场2-24小时</p>
+                          </div>
+                          <div className={cn('rounded-lg p-2 text-center border', info.rate === 0 ? 'bg-red-500/10 border-red-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border-subtle)]')}>
+                            <p className={cn('text-sm font-bold', info.rate === 0 ? 'text-red-400' : 'text-[var(--text-muted)]')}>不退款</p>
+                            <p className="text-[10px] text-[var(--text-muted)] mt-0.5">开场2小时内</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 退费金额确认 */}
+                    {isPaid && (
+                      <div className="bg-[var(--bg-elevated)] rounded-xl p-3 space-y-1">
+                        <p className="text-xs font-medium text-[var(--text-primary)]">取消前请确认退费金额</p>
+                        <p className="text-[10px] text-[var(--text-muted)]">
+                          系统已按当前时间自动计算可退金额，确认取消后将退回 <span className={cn('font-bold', info.rate === 0 ? 'text-[var(--error)]' : 'text-emerald-400')}>{info.refundText}</span>
+                          {info.rate === 0 ? '（开场前2小时内取消不予退款）' : ''}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* 待支付取消提示 */}
+                    {!isPaid && (
+                      <p className="text-sm text-[var(--text-secondary)]">
+                        取消后订单将被关闭，优惠券将自动返还。
+                      </p>
+                    )}
+
+                    {/* 按钮 */}
+                    <div className="flex gap-3 pt-1">
+                      <button
+                        onClick={() => setCancelId(null)}
+                        className="flex-1 py-2.5 rounded-xl text-sm font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)] hover:bg-[var(--border-subtle)] transition-colors"
+                      >
+                        保留订单
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (isPaid && !info.canCancel) return
+                          cancelMutation.mutate(cancelId)
+                        }}
+                        disabled={cancelMutation.isPending || (isPaid && !info.canCancel)}
+                        className={cn(
+                          'flex-1 py-2.5 rounded-xl text-sm font-medium text-white transition-colors disabled:opacity-50',
+                          isPaid && !info.canCancel
+                            ? 'bg-[var(--text-muted)] cursor-not-allowed'
+                            : 'bg-[var(--error)] hover:bg-red-600'
+                        )}
+                      >
+                        {cancelMutation.isPending ? '取消中...' : isPaid && !info.canCancel ? '不可取消' : '确认取消'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })()}
             </motion.div>
           </motion.div>
         )}
@@ -304,6 +459,21 @@ export default function Orders() {
                     ¥{((ticketOrder.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
+
+                {/* 支付方式 */}
+                {ticketOrder.payMethod && (
+                  <div className="flex items-center justify-between py-2">
+                    <span className="text-xs text-[var(--text-muted)]">支付方式</span>
+                    <span className="text-xs text-[var(--text-primary)]">
+                      {ticketOrder.payMethod === 'BALANCE' ? '余额支付'
+                        : ticketOrder.payMethod === 'WECHAT' ? '微信支付'
+                        : ticketOrder.payMethod === 'ALIPAY' ? '支付宝'
+                        : ticketOrder.payMethod === 'CASH' ? '现金'
+                        : ticketOrder.payMethod === 'SCANBOX' ? '扫码盒'
+                        : ticketOrder.payMethod}
+                    </span>
+                  </div>
+                )}
 
                 {/* QR Code */}
                 {ticketOrder.status === 'PAID' || ticketOrder.status === 'COMPLETED' ? (

@@ -127,15 +127,8 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
   }
 
   const handleRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ['dashboard'] })
-    queryClient.invalidateQueries({ queryKey: ['venues'] })
-    queryClient.invalidateQueries({ queryKey: ['orders'] })
-    queryClient.invalidateQueries({ queryKey: ['bookings'] })
-    queryClient.invalidateQueries({ queryKey: ['users'] })
-    queryClient.invalidateQueries({ queryKey: ['logs'] })
-    queryClient.invalidateQueries({ queryKey: ['analytics'] })
-    queryClient.invalidateQueries({ queryKey: ['monitor'] })
-    queryClient.invalidateQueries({ queryKey: ['settings'] })
+    // 全局刷新：使所有活跃查询失效并重新获取
+    queryClient.invalidateQueries()
   }
 
   const doSearch = async (q: string) => {

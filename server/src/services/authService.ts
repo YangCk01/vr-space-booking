@@ -47,7 +47,8 @@ async function getUserPermissions(userId: string): Promise<string[]> {
       }
     }
   }
-  return Array.from(permissionSet)
+  // 过滤掉旧格式权限（兜底保护，确保只返回 code 包含 : 的新格式权限）
+  return Array.from(permissionSet).filter((p) => p.includes(':'))
 }
 
 async function generateTokens(userId: string, phone: string, role: UserRole, name: string, managedVenueIds?: string[]) {

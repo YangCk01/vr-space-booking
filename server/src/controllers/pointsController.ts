@@ -266,11 +266,14 @@ export async function createPointsOrder(req: AuthenticatedRequest, res: Response
   if (!userId) return error(res, '请先登录', 401)
 
   try {
-    const { productId, deliveryType, recipientName, recipientPhone, address } = req.body
+    const { productId, deliveryType, recipientName, recipientPhone, address, venueId } = req.body
     if (!productId) return error(res, '请选择商品', 400)
     if (!deliveryType) return error(res, '请选择收货方式', 400)
     if (deliveryType === 'DELIVERY' && (!recipientName || !recipientPhone || !address)) {
       return error(res, '邮寄订单请填写完整的收货信息', 400)
+    }
+    if (deliveryType === 'PICKUP' && !venueId) {
+      return error(res, '线下领取请选择领取门店', 400)
     }
 
     const result = await prisma.$transaction(async (tx) => {
@@ -303,6 +306,7 @@ export async function createPointsOrder(req: AuthenticatedRequest, res: Response
           recipientName: recipientName || null,
           recipientPhone: recipientPhone || null,
           address: address || null,
+          venueId: venueId || null,
           status: 'PENDING',
         },
       })
@@ -660,6 +664,17 @@ export async function approveReturn(req: AuthenticatedRequest, res: Response) {
           amount: 0,
           pointsAmount: order.pointsCost,
           remark: `积分商城退货退款「${order.productName}」退回 ${order.pointsCost} 积分`,
+        },
+      })
+
+      // 冲正原始 POINTS_DEDUCT 流水
+      await tx.balanceTransaction.create({
+        data: {
+          userId: order.userId,
+          type: 'POINTS_DEDUCT',
+          amount: 0,
+          pointsAmount: order.pointsCost,
+          remark: `积分商城退货冲正「${order.productName}」${order.pointsCost} 积分`,
         },
       })
 

@@ -119,14 +119,16 @@ export async function confirm(req: Request, res: Response) {
   }
 }
 
-/** 查询充值记录 */
+/** 查询充值记录（管理端支持按 userId 筛选） */
 export async function list(req: Request, res: Response) {
   try {
     const userId = (req as any).user?.id
     if (!userId) return error(res, '未登录', 401)
 
+    const targetUserId = (req.query.userId as string) || userId
+
     const records = await prisma.rechargeRecord.findMany({
-      where: { userId, status: 'PAID' },
+      where: { userId: targetUserId, status: 'PAID' },
       orderBy: { createdAt: 'desc' },
     })
 

@@ -90,7 +90,7 @@ const reconcileTypeMap: Record<string, string> = {
   '积分余额': 'BALANCE_POINTS',
   '充值本金': 'RECHARGE_PRINCIPAL',
   '充值赠送': 'RECHARGE_BONUS',
-  '在线直付': 'DIRECT_PAY',
+  '在线支付金额': 'DIRECT_PAY',
   '消费本金': 'CONSUME_PRINCIPAL',
   '消费赠送': 'CONSUME_BONUS',
   '退款总额': 'REFUND',
@@ -1148,18 +1148,18 @@ export default function Finance() {
                   <div className="space-y-4">
                     {/* 5.1 现金解缴表 */}
                     <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
-                      <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">每日现金解缴表（收付实现制）</h3>
+                      <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">每日现金收支表（按实际收付）</h3>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div className="bg-vrbg-surface rounded-lg p-3">
                           <p className="text-vr-caption text-vrtext-tertiary">充值本金</p>
                           <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.rechargePrincipalIn / 100).toLocaleString()}</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
-                          <p className="text-vr-caption text-vrtext-tertiary">在线直付</p>
+                          <p className="text-vr-caption text-vrtext-tertiary">在线支付金额</p>
                           <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.directPayIn / 100).toLocaleString()}</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
-                          <p className="text-vr-caption text-vrtext-tertiary">退款流出</p>
+                          <p className="text-vr-caption text-vrtext-tertiary">退款金额</p>
                           <p className="text-vr-body font-semibold text-vrerror">¥{(dailyReport.refundOut / 100).toLocaleString()}</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
@@ -1171,14 +1171,14 @@ export default function Finance() {
 
                     {/* 5.2 确权营收表 */}
                     <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
-                      <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">每日确权营收表（权责发生制）</h3>
+                      <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">每日营收确认表（按服务完成）</h3>
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                         <div className="bg-vrbg-surface rounded-lg p-3">
-                          <p className="text-vr-caption text-vrtext-tertiary">在线直付确权</p>
+                          <p className="text-vr-caption text-vrtext-tertiary">在线支付营收</p>
                           <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.directRevenue / 100).toLocaleString()}</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
-                          <p className="text-vr-caption text-vrtext-tertiary">会员本金确权</p>
+                          <p className="text-vr-caption text-vrtext-tertiary">余额消费营收</p>
                           <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.memberPrincipalRevenue / 100).toLocaleString()}</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
@@ -1263,18 +1263,18 @@ export default function Finance() {
                 <div className="space-y-4">
                   {/* 累计现金解缴表 */}
                   <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
-                    <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">累计现金解缴表（收付实现制）</h3>
+                    <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">累计现金收支表（按实际收付）</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div className="bg-vrbg-surface rounded-lg p-3">
                         <p className="text-vr-caption text-vrtext-tertiary">累计充值本金</p>
                         <p className="text-vr-body font-semibold text-vrtext-primary">¥{(totalSummary.totalRechargePrincipalIn / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">累计在线直付</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计在线支付</p>
                         <p className="text-vr-body font-semibold text-vrtext-primary">¥{(totalSummary.totalDirectPayIn / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">累计退款流出</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计退款</p>
                         <p className="text-vr-body font-semibold text-vrerror">¥{(totalSummary.totalRefundOut / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
@@ -1286,14 +1286,14 @@ export default function Finance() {
 
                   {/* 累计确权营收表 */}
                   <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
-                    <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">累计确权营收表（权责发生制）</h3>
+                    <h3 className="text-vr-body font-medium text-vrtext-primary mb-3">累计营收确认表（按服务完成）</h3>
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">累计在线直付确权</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计在线支付营收</p>
                         <p className="text-vr-body font-semibold text-vrtext-primary">¥{(totalSummary.totalDirectRevenue / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">累计会员本金确权</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计余额消费营收</p>
                         <p className="text-vr-body font-semibold text-vrtext-primary">¥{(totalSummary.totalMemberPrincipalRevenue / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">

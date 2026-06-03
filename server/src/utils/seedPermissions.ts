@@ -137,5 +137,14 @@ export async function seedPermissions() {
   }
   console.log('[Seed] Synced user legacy roles')
 
+  // 5. 清理旧格式权限（菜单 key 格式），这些不应再出现在数据库中
+  const OLD_MENU_KEYS = ['home', 'venues', 'games', 'booking', 'orders', 'users', 'analytics', 'finance', 'accounts', 'settings', 'audit-logs']
+  const deletedPerms = await prisma.permission.deleteMany({
+    where: { code: { in: OLD_MENU_KEYS } },
+  })
+  if (deletedPerms.count > 0) {
+    console.log(`[Seed] Cleaned ${deletedPerms.count} legacy permissions`)
+  }
+
   console.log('[Seed] Seeding completed')
 }

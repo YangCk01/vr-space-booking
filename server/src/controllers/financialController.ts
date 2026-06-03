@@ -204,7 +204,7 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
 
     const orderOnlineSum = await prisma.order.aggregate({
       where: {
-        status: { in: ['PAID', 'COMPLETED'] },
+        status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
         payMethod: { in: ['WECHAT', 'ALIPAY'] },
         ...(dateStr ? { paidAt: dateRange } : {}),
       },
@@ -239,7 +239,7 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
 
     const orderRefundSum = await prisma.order.aggregate({
       where: {
-        status: 'REFUNDED',
+        status: { in: ['REFUNDED', 'CANCELLED'] },
         ...(dateStr ? { updatedAt: dateRange } : {}),
       },
       _sum: { refundAmount: true },
@@ -265,7 +265,6 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
     const txPointsExchangeDeductSum = await prisma.balanceTransaction.aggregate({
       where: {
         type: 'POINTS_DEDUCT',
-        pointsAmount: { lt: 0 },
         orderId: null, // 只统计积分商城兑换（无订单关联）
         ...(dateStr ? { createdAt: dateRange } : {}),
       },
@@ -391,7 +390,7 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
         unit: '元',
       },
       {
-        name: '在线直付',
+        name: '在线支付金额',
         actual: paymentSum._sum?.amount || 0,
         expected: orderOnlineSum._sum?.amount || 0,
         diff:
@@ -591,7 +590,7 @@ export async function runDailyReport(dateStr: string) {
 
   const couponDiscountCost = await prisma.order.aggregate({
     where: {
-      status: { in: ['PAID', 'COMPLETED'] },
+      status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
       couponDiscount: { gt: 0 },
       paidAt: { gte: start, lte: end }
     },
@@ -840,7 +839,7 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
 
         const orders = await prisma.order.findMany({
           where: {
-            status: { in: ['PAID', 'COMPLETED', 'REFUNDED'] },
+            status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
             ...(dateStr ? { paidAt: dateRange } : {}),
           },
           select: {
@@ -1004,7 +1003,7 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
         const orders = await prisma.order.findMany({
           where: {
             id: { in: orderIds },
-            status: { in: ['PAID', 'COMPLETED'] },
+            status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
           },
           select: {
             id: true,
@@ -1532,7 +1531,7 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
 
     const couponDiscountCostSum = await prisma.order.aggregate({
       where: {
-        status: { in: ['PAID', 'COMPLETED'] },
+        status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
         couponDiscount: { gt: 0 },
       },
       _sum: { couponDiscount: true },
