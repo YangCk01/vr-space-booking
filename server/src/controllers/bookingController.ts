@@ -390,3 +390,38 @@ export async function remove(req: Request, res: Response) {
     return error(res, (err as Error).message, 500)
   }
 }
+
+
+/* ─── 顾客到场签到 ─── */
+export async function checkIn(req: Request, res: Response) {
+  try {
+    const id = req.params.id as string
+
+    const booking = await prisma.booking.findUnique({
+      where: { id },
+      include: { order: true },
+    })
+    if (!booking) return error(res, '预约不存在', 404)
+    if (!['CONFIRMED', 'READY'].includes(booking.status)) {
+      return error(res, '该预约状态不允许签到', 400)
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.booking.update({
+        where: { id: booking.id },
+        data: { status: 'CHECKED_IN', checkedInAt: new Date() },
+      })
+
+      if (booking.order) {
+        await tx.order.update({
+          where: { id: booking.order.id },
+          data: { verifiedAt: new Date() },
+        })
+      }
+    })
+
+    return success(res, null, '签到成功')
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}

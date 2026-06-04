@@ -1096,3 +1096,109 @@ export async function batchRefund(req: AuthenticatedRequest, res: Response) {
     return error(res, (err as Error).message, 400)
   }
 }
+
+
+/* ─── 手动标记爽约 ─── */
+export async function markNoShow(req: AuthenticatedRequest, res: Response) {
+  try {
+    const id = req.params.id as string
+    const { reason } = req.body
+
+    const order = await prisma.order.findUnique({
+      where: { id },
+      include: { booking: true },
+    })
+    if (!order) return error(res, '订单不存在', 404)
+    if (!['PAID', 'READY_TO_VERIFY'].includes(order.status)) {
+      return error(res, '该订单状态不允许标记爽约', 400)
+    }
+
+    const setting = await prisma.systemSetting.findUnique({ where: { key: 'no_show_penalty_rate' } })
+    const penaltyRate = ((setting?.value as any)?.value as number) ?? 100
+    const penaltyAmount = Math.floor((order.amount || 0) * penaltyRate / 100)
+
+    await prisma.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: 'NO_SHOW',
+          noShowAt: new Date(),
+          noShowReason: reason || 'manual',
+          penaltyAmount,
+        },
+      })
+
+      if (order.bookingId) {
+        await tx.booking.update({
+          where: { id: order.bookingId },
+          data: { status: 'NO_SHOW', noShowAt: new Date() },
+        })
+      }
+
+      await tx.balanceTransaction.create({
+        data: {
+          userId: order.userId ?? '',
+          orderId: order.id,
+          type: 'NO_SHOW_PENALTY',
+          amount: penaltyAmount,
+          remark: `店长手动标记爽约，违约金比例 ${penaltyRate}%${reason ? '，原因：' + reason : ''}`,
+        },
+      })
+    })
+
+    return success(res, null, '订单已标记为爽约')
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+/* ─── 手动激活（作废→已核销）─── */
+export async function activate(req: AuthenticatedRequest, res: Response) {
+  try {
+    const id = req.params.id as string
+
+    const order = await prisma.order.findUnique({
+      where: { id },
+      include: { booking: true },
+    })
+    if (!order) return error(res, '订单不存在', 404)
+    if (order.status !== 'NO_SHOW') {
+      return error(res, '仅已作废订单可激活', 400)
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: 'COMPLETED',
+          verifiedAt: new Date(),
+          noShowReason: null,
+        },
+      })
+
+      if (order.bookingId) {
+        await tx.booking.update({
+          where: { id: order.bookingId },
+          data: { status: 'COMPLETED', noShowAt: null },
+        })
+      }
+
+      // 冲回违约金流水
+      if (order.penaltyAmount && order.penaltyAmount > 0) {
+        await tx.balanceTransaction.create({
+          data: {
+            userId: order.userId ?? '',
+            orderId: order.id,
+            type: 'NO_SHOW_REVERSE',
+            amount: order.penaltyAmount,
+            remark: '店长手动激活作废订单，冲回违约金',
+          },
+        })
+      }
+    })
+
+    return success(res, null, '订单已激活')
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}

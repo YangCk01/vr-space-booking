@@ -10,6 +10,8 @@ import {
   refund,
   batchVerify,
   batchRefund,
+  markNoShow,
+  activate,
   createValidators,
   batchVerifyValidators,
   batchRefundValidators,
@@ -30,5 +32,7 @@ router.put('/:id/cancel', authenticate, logOperation({ type: '取消订单', con
 router.put('/:id/refund', authenticate, logOperation({ type: '订单退款', content: (req) => `订单退款: ${req.params.id}` }), refund)
 router.post('/batch-verify', authenticate, requirePermission('order:verify'), batchVerifyValidators, logOperation({ type: '批量核销订单', content: (req) => `批量核销 ${req.body.ids?.length || 0} 个订单` }), batchVerify)
 router.post('/batch-refund', authenticate, requirePermission('order:refund'), batchRefundValidators, logOperation({ type: '批量退款订单', content: (req) => `批量退款 ${req.body.ids?.length || 0} 个订单` }), batchRefund)
+router.post('/:id/mark-no-show', authenticate, requireRole('SUPER_ADMIN','ADMIN','OPERATOR','MANAGER'), logOperation({ type: '标记爽约', content: (req) => `标记订单爽约: ${req.params.id}` }), markNoShow)
+router.post('/:id/activate', authenticate, requireRole('SUPER_ADMIN','ADMIN','OPERATOR','MANAGER'), logOperation({ type: '激活作废订单', content: (req) => `激活作废订单: ${req.params.id}` }), activate)
 
 export default router
