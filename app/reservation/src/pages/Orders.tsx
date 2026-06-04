@@ -257,7 +257,7 @@ export default function Orders() {
                         去支付
                       </button>
                     )}
-                    {(o.status === 'PENDING' || o.status === 'PAID') && (
+                    {(o.status === 'PENDING' || o.status === 'PAID' || o.status === 'READY_TO_VERIFY') && (
                       <button
                         onClick={() => setCancelId(o.id)}
                         disabled={cancelMutation.isPending}
@@ -300,7 +300,7 @@ export default function Orders() {
                 const o = data?.data?.find((oo: any) => oo.id === cancelId)
                 if (!o) return null
                 const info = getRefundInfo(o, refundTiers)
-                const isPaid = o.status === 'PAID'
+                const isPaid = ['PAID', 'READY_TO_VERIFY'].includes(o.status)
                 return (
                   <div className="p-5 space-y-4">
                     {/* 订单摘要 */}

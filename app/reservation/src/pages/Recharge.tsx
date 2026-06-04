@@ -219,7 +219,7 @@ export default function Recharge() {
             </div>
             <p className="text-lg font-bold text-[var(--text-primary)]">充值成功</p>
             <p className="text-sm text-[var(--text-secondary)] mt-1">
-              到账 ¥{selectedCfg.total / 100}，当前余额 ¥{(user?.balance || 0) / 100}
+              到账 ¥{selectedCfg.total / 100}，当前余额 ¥{((user?.principalBalance || 0) + (user?.bonusBalance || 0)) / 100}
             </p>
 
             <button

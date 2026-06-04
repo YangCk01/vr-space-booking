@@ -57,7 +57,7 @@ export default function Pay() {
   const isExpired = countdownMs <= 0 && !!order?.expireAt
 
   const amountYuan = ((order?.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const balance = user?.balance || 0
+  const balance = (user?.principalBalance || 0) + (user?.bonusBalance || 0)
   const balanceDisabled = balance < (order?.amount || 0)
 
   const payMutation = useMutation({
@@ -341,15 +341,15 @@ export default function Pay() {
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowCancelConfirm(false)}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)] hover:bg-[var(--border-subtle)] transition-colors"
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-accent"
                 >
                   继续支付
                 </button>
                 <button
                   onClick={() => navigate('/orders', { replace: true })}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-accent"
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)] hover:bg-[var(--border-subtle)] transition-colors"
                 >
-                  返回订单
+                  稍后支付
                 </button>
               </div>
               <button

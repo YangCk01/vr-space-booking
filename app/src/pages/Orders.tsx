@@ -20,7 +20,7 @@ import {
   Gamepad2,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
-import { getOrders, payOrder, cancelOrder, refundOrder, verifyOrder, completeRefundOrder, batchVerifyOrders, batchRefundOrders } from '@/api/orders'
+import { getOrders, payOrder, cancelOrder, refundOrder, verifyOrder, completeRefundOrder, batchVerifyOrders, batchRefundOrders, markNoShow, activateOrder } from '@/api/orders'
 import { PaymentMethodModal, ScanBoxSimulator, type PaymentMethod } from '@/components/PaymentModal'
 import { VerifyScanModal } from '@/components/VerifyModal'
 import { cancelBooking } from '@/api/bookings'
@@ -111,10 +111,10 @@ function StatusBadge({ status, statusText }: { status: string; statusText: strin
   )
 }
 
-function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund, onVerify, onCompleteRefund, onDelete, payPending, cancelPending, refundPending, verifyPending, completeRefundPending, deletePending }: {
+function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund, onVerify, onMarkNoShow, onActivate, onCompleteRefund, onDelete, payPending, cancelPending, refundPending, verifyPending, markNoShowPending, activatePending, completeRefundPending, deletePending }: {
   order: Order | null; open: boolean; onOpenChange: (v: boolean) => void;
-  onPay: (id: string) => void; onCancel: (order: Order) => void; onRefund: (order: Order) => void; onVerify: (id: string) => void; onCompleteRefund: (id: string) => void; onDelete: (id: string) => void;
-  payPending: boolean; cancelPending: boolean; refundPending: boolean; verifyPending: boolean; completeRefundPending: boolean; deletePending: boolean;
+  onPay: (id: string) => void; onCancel: (order: Order) => void; onRefund: (order: Order) => void; onVerify: (id: string) => void; onMarkNoShow: (order: Order) => void; onActivate: (id: string) => void; onCompleteRefund: (id: string) => void; onDelete: (id: string) => void;
+  payPending: boolean; cancelPending: boolean; refundPending: boolean; verifyPending: boolean; markNoShowPending: boolean; activatePending: boolean; completeRefundPending: boolean; deletePending: boolean;
 }) {
   if (!order) return null
 
@@ -261,6 +261,13 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
                 {refundPending ? '处理中...' : '申请退款'}
               </button>
               <button
+                onClick={() => onMarkNoShow(order)}
+                disabled={markNoShowPending}
+                className="flex-1 h-10 rounded-lg border border-vrwarning text-vrwarning text-vr-body-sm font-medium hover:bg-vrwarning/10 transition-colors disabled:opacity-50"
+              >
+                {markNoShowPending ? '处理中...' : '标记爽约'}
+              </button>
+              <button
                 onClick={() => onVerify(order.id)}
                 disabled={verifyPending}
                 className="flex-1 h-10 rounded-lg bg-vrsuccess text-white text-vr-body-sm font-medium hover:bg-vrsuccess/90 transition-colors disabled:opacity-50"
@@ -270,19 +277,28 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
             </>
           )}
           {statusLower === 'playing' && (
-            <button className="w-full h-10 rounded-lg bg-emerald-500/20 text-emerald-500 text-vr-body-sm font-medium cursor-default">
-              游戏中
-            </button>
+            <>
+              <button
+                onClick={() => onMarkNoShow(order)}
+                disabled={markNoShowPending}
+                className="flex-1 h-10 rounded-lg border border-vrwarning text-vrwarning text-vr-body-sm font-medium hover:bg-vrwarning/10 transition-colors disabled:opacity-50"
+              >
+                {markNoShowPending ? '处理中...' : '标记爽约'}
+              </button>
+              <button className="flex-1 h-10 rounded-lg bg-emerald-500/20 text-emerald-500 text-vr-body-sm font-medium cursor-default">
+                游戏中
+              </button>
+            </>
           )}
           {['completed', 'no_show'].includes(statusLower) && (
             <>
               {statusLower === 'no_show' && (
                 <button
-                  onClick={() => onVerify(order.id)}
-                  disabled={verifyPending}
+                  onClick={() => onActivate(order.id)}
+                  disabled={activatePending}
                   className="flex-1 h-10 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
                 >
-                  {verifyPending ? '处理中...' : '手动激活'}
+                  {activatePending ? '处理中...' : '手动激活'}
                 </button>
               )}
               <button className={cn('h-10 rounded-lg bg-vrbg-elevated text-vrtext-secondary text-vr-body-sm font-medium cursor-default', statusLower === 'no_show' ? 'flex-1' : 'w-full')}>
@@ -448,6 +464,28 @@ export default function Orders() {
       alert('核销失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
       setVerifyScanOpen(false)
       setVerifyTargetOrder(null)
+    },
+  })
+
+  const markNoShowMutation = useMutation({
+    mutationFn: (order: Order) => markNoShow(order.id, 'manual'),
+    onSuccess: () => {
+      invalidateAll()
+      setDrawerOpen(false)
+    },
+    onError: (error: any) => {
+      alert('标记爽约失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
+    },
+  })
+
+  const activateMutation = useMutation({
+    mutationFn: activateOrder,
+    onSuccess: () => {
+      invalidateAll()
+      setDrawerOpen(false)
+    },
+    onError: (error: any) => {
+      alert('激活失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
     },
   })
 
@@ -979,6 +1017,12 @@ export default function Orders() {
                                 核销
                               </button>
                               <button
+                                onClick={() => { setSelectedOrder(order); markNoShowMutation.mutate(order) }}
+                                className="text-vr-body-sm text-vrwarning hover:underline transition-all"
+                              >
+                                标记爽约
+                              </button>
+                              <button
                                 onClick={() => { setSelectedOrder(order); refundMutation.mutate(order) }}
                                 className="text-vr-body-sm text-vrerror hover:underline transition-all"
                               >
@@ -987,12 +1031,20 @@ export default function Orders() {
                             </>
                           )}
                           {order.status.toLowerCase() === 'playing' && (
-                            <span className="text-vr-body-sm text-emerald-500">游戏中</span>
+                            <>
+                              <button
+                                onClick={() => { setSelectedOrder(order); markNoShowMutation.mutate(order) }}
+                                className="text-vr-body-sm text-vrwarning hover:underline transition-all"
+                              >
+                                标记爽约
+                              </button>
+                              <span className="text-vr-body-sm text-emerald-500">游戏中</span>
+                            </>
                           )}
                           {order.status.toLowerCase() === 'no_show' && (
                             <>
                               <button
-                                onClick={() => { setVerifyTargetOrder(order); setVerifyScanOpen(true) }}
+                                onClick={() => activateMutation.mutate(order.id)}
                                 className="text-vr-body-sm text-vraccent-primary hover:underline transition-all"
                               >
                                 激活
@@ -1103,12 +1155,16 @@ export default function Orders() {
             setVerifyScanOpen(true)
           }
         }}
+        onMarkNoShow={(o) => markNoShowMutation.mutate(o)}
+        onActivate={(id) => activateMutation.mutate(id)}
         onCompleteRefund={(id) => completeRefundMutation.mutate(id)}
         onDelete={(id) => deleteMutation.mutate(id)}
         payPending={payMutation.isPending}
         cancelPending={cancelMutation.isPending}
         refundPending={refundMutation.isPending}
         verifyPending={verifyMutation.isPending}
+        markNoShowPending={markNoShowMutation.isPending}
+        activatePending={activateMutation.isPending}
         completeRefundPending={completeRefundMutation.isPending}
         deletePending={deleteMutation.isPending}
       />

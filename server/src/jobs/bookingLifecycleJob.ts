@@ -161,6 +161,10 @@ export function startBookingLifecycleJob() {
         const noShowBookings = await prisma.booking.findMany({
           where: {
             status: { in: ['CONFIRMED', 'READY'] },
+            date: {
+              gte: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000), // 2天前开始
+              lte: new Date(now.getTime() + 1 * 60 * 60 * 1000),      // 1小时后结束（容错）
+            },
           },
           include: { order: true },
         })

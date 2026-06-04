@@ -687,16 +687,18 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
       return error(res, '订单不存在', 404)
     }
 
-    if (order.status === 'COMPLETED') {
-      return error(res, '已完成订单不能取消', 400)
+    if (['COMPLETED', 'NO_SHOW', 'PLAYING'].includes(order.status)) {
+      return error(res, '该订单状态不允许取消', 400)
     }
+
+    const isPaidOrder = ['PAID', 'READY_TO_VERIFY'].includes(order.status)
 
     // 计算阶梯退费比例
     let refundRate = 1
-    if (order.status === 'PAID' && order.booking) {
+    if (isPaidOrder && order.booking) {
       refundRate = await calcRefundRate(order.booking.date, order.booking.startTime)
     }
-    const refundAmount = order.status === 'PAID' ? Math.floor((order.amount || 0) * refundRate) : 0
+    const refundAmount = isPaidOrder ? Math.floor((order.amount || 0) * refundRate) : 0
 
     const { earnRate } = await getPointsConfig()
 
@@ -722,7 +724,7 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
       })
 
       // 已支付订单：按阶梯退费规则退回余额
-      if (order.userId && order.payMethod?.startsWith('BALANCE') && order.status === 'PAID' && refundAmount > 0) {
+      if (order.userId && order.payMethod?.startsWith('BALANCE') && isPaidOrder && refundAmount > 0) {
         // 等比计算退回金额（基于实际扣款明细）
         const totalDeducted = (order.principalDeduction || 0) + (order.bonusDeduction || 0)
         const ratio = totalDeducted > 0 ? refundAmount / totalDeducted : 0
@@ -752,7 +754,7 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
       }
 
       // 已支付订单取消时收回赠送积分（按实际支付金额计算）
-      if (order.userId && order.status === 'PAID') {
+      if (order.userId && isPaidOrder) {
         const baseAmount = order.payMethod?.startsWith('BALANCE') ? (order.principalDeduction || 0) : (order.amount || 0)
         const earned = Math.floor(baseAmount / 100 * earnRate)
         const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
@@ -826,8 +828,8 @@ export async function refund(req: AuthenticatedRequest, res: Response) {
       return error(res, '订单不存在', 404)
     }
 
-    if (order.status !== 'PAID') {
-      return error(res, '只有已支付订单可申请退款', 400)
+    if (!['PAID', 'READY_TO_VERIFY', 'NO_SHOW'].includes(order.status)) {
+      return error(res, '该订单状态不允许退款', 400)
     }
 
     const actualRefund = refundAmount || order.amount
@@ -1124,7 +1126,7 @@ export async function markNoShow(req: AuthenticatedRequest, res: Response) {
       include: { booking: true },
     })
     if (!order) return error(res, '订单不存在', 404)
-    if (!['PAID', 'READY_TO_VERIFY'].includes(order.status)) {
+    if (!['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(order.status)) {
       return error(res, '该订单状态不允许标记爽约', 400)
     }
 
@@ -1185,16 +1187,16 @@ export async function activate(req: AuthenticatedRequest, res: Response) {
       await tx.order.update({
         where: { id: order.id },
         data: {
-          status: 'COMPLETED',
-          verifiedAt: new Date(),
+          status: 'READY_TO_VERIFY',
           noShowReason: null,
+          penaltyAmount: 0,
         },
       })
 
       if (order.bookingId) {
         await tx.booking.update({
           where: { id: order.bookingId },
-          data: { status: 'COMPLETED', noShowAt: null },
+          data: { status: 'READY', noShowAt: null },
         })
       }
 

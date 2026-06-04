@@ -100,3 +100,13 @@ export async function batchRefundOrders(ids: string[], reason: string) {
   const res = await apiClient.post('/orders/batch-refund', { ids, reason })
   return res.data
 }
+
+export async function markNoShow(id: string, reason?: string) {
+  const res = await apiClient.post(`/orders/${id}/mark-no-show`, { reason })
+  return res.data
+}
+
+export async function activateOrder(id: string) {
+  const res = await apiClient.post(`/orders/${id}/activate`)
+  return res.data
+}

@@ -245,7 +245,9 @@ export async function getUserById(userId: string) {
 
   const permissions = await getUserPermissions(userId)
 
-  return { ...user, permissions }
+  // balance 为兼容字段，实时计算确保与 principalBalance + bonusBalance 一致
+  const totalBalance = (user.principalBalance || 0) + (user.bonusBalance || 0)
+  return { ...user, balance: totalBalance, permissions }
 }
 
 export async function changePassword(userId: string, oldPassword: string, newPassword: string) {

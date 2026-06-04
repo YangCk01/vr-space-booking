@@ -32,6 +32,8 @@ function mapTypeToSceneKey(type: string): string | null {
   const map: Record<string, string> = {
     BOOKING_SUCCESS: 'scene_booking_success',
     BOOKING_REMIND: 'scene_booking_remind',
+    BOOKING_VERIFY: 'scene_booking_remind',
+    BOOKING_URGENT: 'scene_booking_remind',
     BOOKING_CANCEL: 'scene_booking_cancel',
     PAY_SUCCESS: 'scene_pay_success',
     MARKETING: 'scene_marketing',
