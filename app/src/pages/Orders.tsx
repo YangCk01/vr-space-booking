@@ -75,7 +75,10 @@ const tabs: { key: OrderStatus; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'pending', label: '未付款' },
   { key: 'paid', label: '已付款' },
+  { key: 'ready_to_verify', label: '待核销' },
+  { key: 'playing', label: '游戏中' },
   { key: 'completed', label: '已核销' },
+  { key: 'no_show', label: '已作废' },
   { key: 'refunding', label: '退款中' },
   { key: 'refunded', label: '已退款' },
   { key: 'cancelled', label: '已取消' },
@@ -120,8 +123,8 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
   const timeline = [
     { time: formatDateTime(order.createdAt), status: '已提交', desc: '订单已创建', completed: true },
     { time: statusLower === 'pending' ? formatDateTime(order.createdAt) : statusLower !== 'cancelled' ? formatDateTime(order.createdAt) : '', status: statusLower === 'cancelled' ? '已取消' : '未付款', desc: statusLower === 'cancelled' ? '订单已取消' : '等待用户付款', completed: statusLower !== 'pending' },
-    { time: statusLower === 'paid' || statusLower === 'completed' ? formatDateTime(order.createdAt) : '', status: '已付款', desc: '订单已付款', completed: statusLower === 'paid' || statusLower === 'completed' },
-    { time: statusLower === 'completed' ? order.bookingTime.split(' ')[0] : '', status: '已核销', desc: '体验已核销', completed: statusLower === 'completed' },
+    { time: ['paid', 'ready_to_verify', 'playing', 'completed', 'no_show'].includes(statusLower) ? formatDateTime(order.paidAt || order.createdAt) : '', status: '已付款', desc: '订单已付款', completed: ['paid', 'ready_to_verify', 'playing', 'completed', 'no_show'].includes(statusLower) },
+    { time: ['completed', 'no_show'].includes(statusLower) ? (order.bookingTime?.split(' ')[0] || '-') : '', status: statusLower === 'no_show' ? '已作废' : '已核销', desc: statusLower === 'no_show' ? '顾客超时未到场' : '体验已核销', completed: ['completed', 'no_show'].includes(statusLower) },
   ]
 
   return (
@@ -223,7 +226,7 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
           <div className="flex items-center justify-center py-2">
             <span className={cn('inline-flex items-center gap-2 rounded-full px-4 py-2 text-vr-body-sm font-medium', cfg?.bg, cfg?.text)}>
               {cfg?.icon}
-              {({ PENDING: '未付款', PAID: '已付款', COMPLETED: '已核销', CANCELLED: '已取消', REFUNDING: '退款中', REFUNDED: '已退款' } as Record<string,string>)[order.status] || order.status}
+              {({ PENDING: '未付款', PAID: '已付款', READY_TO_VERIFY: '待核销', PLAYING: '游戏中', COMPLETED: '已核销', NO_SHOW: '已作废', CANCELLED: '已取消', REFUNDING: '退款中', REFUNDED: '已退款' } as Record<string,string>)[order.status] || order.status}
             </span>
           </div>
         </div>
@@ -248,7 +251,7 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
               </button>
             </>
           )}
-          {statusLower === 'paid' && (
+          {['paid', 'ready_to_verify'].includes(statusLower) && (
             <>
               <button
                 onClick={() => onRefund(order)}
@@ -266,10 +269,26 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
               </button>
             </>
           )}
-          {statusLower === 'completed' && (
-            <button className="w-full h-10 rounded-lg bg-vrbg-elevated text-vrtext-secondary text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors cursor-default">
-              已核销
+          {statusLower === 'playing' && (
+            <button className="w-full h-10 rounded-lg bg-emerald-500/20 text-emerald-500 text-vr-body-sm font-medium cursor-default">
+              游戏中
             </button>
+          )}
+          {['completed', 'no_show'].includes(statusLower) && (
+            <>
+              {statusLower === 'no_show' && (
+                <button
+                  onClick={() => onVerify(order.id)}
+                  disabled={verifyPending}
+                  className="flex-1 h-10 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {verifyPending ? '处理中...' : '手动激活'}
+                </button>
+              )}
+              <button className={cn('h-10 rounded-lg bg-vrbg-elevated text-vrtext-secondary text-vr-body-sm font-medium cursor-default', statusLower === 'no_show' ? 'flex-1' : 'w-full')}>
+                {statusLower === 'no_show' ? '已作废' : '已核销'}
+              </button>
+            </>
           )}
           {statusLower === 'refunding' && (
             <button
@@ -492,7 +511,10 @@ export default function Orders() {
   const statusLabelMap: Record<string, string> = {
     PENDING: '未付款',
     PAID: '已付款',
+    READY_TO_VERIFY: '待核销',
+    PLAYING: '游戏中',
     COMPLETED: '已核销',
+    NO_SHOW: '已作废',
     CANCELLED: '已取消',
     REFUNDING: '退款中',
     REFUNDED: '已退款',
@@ -935,7 +957,7 @@ export default function Orders() {
                       </td>
                       <td className="px-4 py-3 text-center">
                         <StatusBadge status={order.status.toLowerCase()} statusText={
-                          { PENDING: '未付款', PAID: '已付款', COMPLETED: '已核销', CANCELLED: '已取消', REFUNDING: '退款中', REFUNDED: '已退款' }[order.status] || order.status
+                          { PENDING: '未付款', PAID: '已付款', READY_TO_VERIFY: '待核销', PLAYING: '游戏中', COMPLETED: '已核销', NO_SHOW: '已作废', CANCELLED: '已取消', REFUNDING: '退款中', REFUNDED: '已退款' }[order.status] || order.status
                         } />
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -948,13 +970,32 @@ export default function Orders() {
                               收款
                             </button>
                           )}
-                          {order.status.toLowerCase() === 'paid' && (
+                          {['paid', 'ready_to_verify'].includes(order.status.toLowerCase()) && (
                             <>
                               <button
                                 onClick={() => { setVerifyTargetOrder(order); setVerifyScanOpen(true) }}
                                 className="text-vr-body-sm text-vrsuccess hover:underline transition-all"
                               >
                                 核销
+                              </button>
+                              <button
+                                onClick={() => { setSelectedOrder(order); refundMutation.mutate(order) }}
+                                className="text-vr-body-sm text-vrerror hover:underline transition-all"
+                              >
+                                退款
+                              </button>
+                            </>
+                          )}
+                          {order.status.toLowerCase() === 'playing' && (
+                            <span className="text-vr-body-sm text-emerald-500">游戏中</span>
+                          )}
+                          {order.status.toLowerCase() === 'no_show' && (
+                            <>
+                              <button
+                                onClick={() => { setVerifyTargetOrder(order); setVerifyScanOpen(true) }}
+                                className="text-vr-body-sm text-vraccent-primary hover:underline transition-all"
+                              >
+                                激活
                               </button>
                               <button
                                 onClick={() => { setSelectedOrder(order); refundMutation.mutate(order) }}
