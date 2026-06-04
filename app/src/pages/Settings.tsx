@@ -276,6 +276,13 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
     cancelHours: s.booking_cancel_hours?.value ?? 2,
     allowOvertime: s.booking_allow_overtime?.value ?? false,
     overtimeMinutes: s.booking_overtime_minutes?.value ?? 10,
+    verifyAdvanceMinutes: s.verify_advance_minutes?.value ?? 15,
+    lateBufferMinutes: s.late_buffer_minutes?.value ?? 10,
+    noShowDeadlineMinutes: s.no_show_deadline_minutes?.value ?? 15,
+    playingDurationMinutes: s.playing_duration_minutes?.value ?? 40,
+    noShowPenaltyRate: s.no_show_penalty_rate?.value ?? 100,
+    enableAutoNoShow: s.enable_auto_no_show?.value ?? true,
+    enableStandbyConversion: s.enable_standby_conversion?.value ?? true,
   })
   const defaultTiers: RefundTier[] = [
     { hours: 24, rate: 100, label: '开场24小时前' },
@@ -296,6 +303,13 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       cancelHours: s.booking_cancel_hours?.value ?? 2,
       allowOvertime: s.booking_allow_overtime?.value ?? false,
       overtimeMinutes: s.booking_overtime_minutes?.value ?? 10,
+      verifyAdvanceMinutes: s.verify_advance_minutes?.value ?? 15,
+      lateBufferMinutes: s.late_buffer_minutes?.value ?? 10,
+      noShowDeadlineMinutes: s.no_show_deadline_minutes?.value ?? 15,
+      playingDurationMinutes: s.playing_duration_minutes?.value ?? 40,
+      noShowPenaltyRate: s.no_show_penalty_rate?.value ?? 100,
+      enableAutoNoShow: s.enable_auto_no_show?.value ?? true,
+      enableStandbyConversion: s.enable_standby_conversion?.value ?? true,
     })
     const raw = s.booking_refund_tiers?.value
     setTiers(raw && Array.isArray(raw) && raw.length > 0 ? raw : defaultTiers)
@@ -339,6 +353,14 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       setError('时长/天数不能为负数')
       return
     }
+    if (values.verifyAdvanceMinutes < 0 || values.lateBufferMinutes < 0 || values.noShowDeadlineMinutes < 0 || values.playingDurationMinutes < 0) {
+      setError('分钟数不能为负数')
+      return
+    }
+    if (values.noShowPenaltyRate < 0 || values.noShowPenaltyRate > 100) {
+      setError('违约金比例必须在 0~100 之间')
+      return
+    }
     // 校验阶梯规则
     for (const t of tiers) {
       if (t.hours < 0) { setError('距开场时间不能为负数'); return }
@@ -358,6 +380,13 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       { key: 'booking_refund_tiers', value: tiers, category: 'booking' },
       { key: 'booking_allow_overtime', value: values.allowOvertime, category: 'booking' },
       { key: 'booking_overtime_minutes', value: values.overtimeMinutes, category: 'booking' },
+      { key: 'verify_advance_minutes', value: values.verifyAdvanceMinutes, category: 'booking' },
+      { key: 'late_buffer_minutes', value: values.lateBufferMinutes, category: 'booking' },
+      { key: 'no_show_deadline_minutes', value: values.noShowDeadlineMinutes, category: 'booking' },
+      { key: 'playing_duration_minutes', value: values.playingDurationMinutes, category: 'booking' },
+      { key: 'no_show_penalty_rate', value: values.noShowPenaltyRate, category: 'booking' },
+      { key: 'enable_auto_no_show', value: values.enableAutoNoShow, category: 'booking' },
+      { key: 'enable_standby_conversion', value: values.enableStandbyConversion, category: 'booking' },
     ])
   }
 

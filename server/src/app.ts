@@ -9,6 +9,7 @@ import { startUserTagJob } from './jobs/userTagJob'
 import { startTriggerJob } from './jobs/triggerJob'
 import { startCouponEffectJob } from './jobs/couponEffectJob'
 import { startOrderTimeoutJob } from './jobs/orderTimeoutJob'
+import { startBookingLifecycleJob } from './jobs/bookingLifecycleJob'
 import { loadConfig } from './services/configService'
 import { seedPermissions } from './utils/seedPermissions'
 
@@ -55,6 +56,9 @@ startCouponEffectJob()
 
 // 启动订单超时自动取消任务
 startOrderTimeoutJob()
+
+// 启动预约生命周期定时任务（状态自动流转 + No-Show 处理）
+startBookingLifecycleJob()
 
 // 启动时加载系统配置并初始化权限
 seedPermissions()
