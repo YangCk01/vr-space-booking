@@ -24,16 +24,16 @@ export async function getHealthChecks(params?: {
   startDate?: string
   endDate?: string
 }) {
-  const res = await apiClient.get('/health-checks', { params })
+  const res = await apiClient.get('/system/health-checks', { params })
   return res.data
 }
 
 export async function getHealthStats() {
-  const res = await apiClient.get('/health-checks/stats')
+  const res = await apiClient.get('/system/health-checks/stats')
   return res.data.data as HealthStats
 }
 
 export async function runHealthCheck() {
-  const res = await apiClient.post('/health-checks/run')
+  const res = await apiClient.post('/system/health-checks/run')
   return res.data.data
 }

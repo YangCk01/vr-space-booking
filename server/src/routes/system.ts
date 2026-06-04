@@ -2,6 +2,8 @@ import { Router } from 'express'
 import { authenticate, requireRole } from '../middleware/auth'
 import { prisma } from '../utils/prisma'
 import { success, error, paginated } from '../utils/response'
+import { runDataConsistencyCheck } from '../jobs/dataConsistencyJob'
+import { format } from 'date-fns'
 
 const router = Router()
 
@@ -40,6 +42,47 @@ router.get('/health-checks', async (req, res) => {
     ])
 
     return paginated(res, data, page, pageSize, total)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+})
+
+/**
+ * GET /system/health-checks/stats
+ * 今日健康检查统计
+ */
+router.get('/health-checks/stats', async (req, res) => {
+  try {
+    const today = format(new Date(), 'yyyy-MM-dd')
+    const [totalToday, failCount] = await Promise.all([
+      prisma.dataCheckResult.count({ where: { checkDate: today } }),
+      prisma.dataCheckResult.count({ where: { checkDate: today, status: 'FAIL' } }),
+    ])
+
+    const todayRecords = await prisma.dataCheckResult.findMany({
+      where: { checkDate: today },
+      select: { status: true },
+    })
+
+    const passRate = todayRecords.length > 0
+      ? Math.round((todayRecords.filter((r) => r.status === 'PASS').length / todayRecords.length) * 100)
+      : 100
+
+    return success(res, { totalToday, failCount, passRate })
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+})
+
+/**
+ * POST /system/health-checks/run
+ * 手动触发数据一致性校验
+ */
+router.post('/health-checks/run', async (req, res) => {
+  try {
+    const today = format(new Date(), 'yyyy-MM-dd')
+    const result = await runDataConsistencyCheck(today)
+    return success(res, result, '健康检查已执行')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
