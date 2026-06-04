@@ -341,7 +341,7 @@ export async function createStaff(req: Request, res: Response) {
       return error(res, '手机号、姓名和角色不能为空', 400)
     }
 
-    const validRoles = ['OPERATOR', 'FINANCE', 'MANAGER']
+    const validRoles = ['OPERATOR', 'FINANCE', 'MANAGER', 'ADMIN']
     if (!validRoles.includes(role)) {
       return error(res, '无效的角色', 400)
     }
@@ -426,7 +426,7 @@ export async function updateStaff(req: Request, res: Response) {
       return error(res, '不能修改超级管理员', 403)
     }
 
-    const validRoles = ['OPERATOR', 'FINANCE', 'MANAGER']
+    const validRoles = ['OPERATOR', 'FINANCE', 'MANAGER', 'ADMIN']
     if (role !== undefined && !validRoles.includes(role)) {
       return error(res, '无效的角色', 400)
     }

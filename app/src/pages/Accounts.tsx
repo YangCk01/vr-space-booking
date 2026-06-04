@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { format } from 'date-fns'
@@ -85,6 +85,7 @@ const roleOptions = [
   { value: 'OPERATOR', label: '运营' },
   { value: 'FINANCE', label: '财务' },
   { value: 'MANAGER', label: '店长' },
+  { value: 'ADMIN', label: '管理员' },
 ]
 
 const statusOptions = [
@@ -180,7 +181,9 @@ function StaffFormSheet({
   })
   const [error, setError] = useState('')
 
-  useMemo(() => {
+  const isSuperAdmin = mode === 'edit' && staff?.role === 'SUPER_ADMIN'
+
+  useEffect(() => {
     if (mode === 'edit' && staff) {
       setForm({
         name: staff.name,
@@ -335,10 +338,15 @@ function StaffFormSheet({
           )}
         </div>
 
+        {isSuperAdmin && (
+          <div className="px-6 py-3 bg-vrerror/10 border-t border-vrerror/20 text-vrerror text-vr-body-sm">
+            主账号（SUPER_ADMIN）不可编辑
+          </div>
+        )}
         <div className="p-6 border-t border-vrborder-subtle flex gap-3">
           <button
             onClick={handleSubmit}
-            disabled={isPending}
+            disabled={isPending || isSuperAdmin}
             className="flex-1 h-10 bg-vraccent-primary text-white rounded-lg text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
           >
             {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
