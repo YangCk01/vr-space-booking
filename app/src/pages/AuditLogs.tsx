@@ -31,6 +31,65 @@ function formatDateTime(iso: string): string {
   })
 }
 
+const fieldLabelMap: Record<string, string> = {
+  id: 'ID',
+  name: '姓名',
+  phone: '手机号',
+  email: '邮箱',
+  status: '状态',
+  role: '角色',
+  level: '会员等级',
+  balance: '余额',
+  principalBalance: '本金余额',
+  bonusBalance: '赠送余额',
+  points: '积分',
+  totalSpent: '累计消费',
+  totalVisits: '访问次数',
+  discountRate: '折扣率',
+  amount: '金额',
+  originalAmount: '原价',
+  couponDiscount: '优惠券折扣',
+  discountAmount: '折扣金额',
+  payMethod: '支付方式',
+  orderNo: '订单号',
+  bookingId: '预约ID',
+  venueId: '场地ID',
+  venueName: '场地名称',
+  userId: '用户ID',
+  userCouponId: '优惠券ID',
+  remark: '备注',
+  reason: '原因',
+  diff: '差异金额',
+  txData: '交易数据',
+  source: '来源',
+  type: '类型',
+  giftReason: '赠送原因',
+  giftRemark: '赠送备注',
+  trackingNumber: '物流单号',
+  address: '地址',
+  recipientName: '收件人',
+  recipientPhone: '收件电话',
+  paidAt: '支付时间',
+  usedAt: '使用时间',
+  createdAt: '创建时间',
+  updatedAt: '更新时间',
+  cancelledAt: '取消时间',
+  fulfilledAt: '完成时间',
+  validFrom: '有效开始',
+  validTo: '有效结束',
+}
+
+function formatDiffValue(val: any): string {
+  if (val === undefined || val === null) return '空'
+  if (typeof val === 'string') return val
+  if (typeof val === 'number') return String(val)
+  if (typeof val === 'boolean') return val ? '是' : '否'
+  // 对对象做简化展示
+  const str = JSON.stringify(val)
+  if (str.length > 120) return str.slice(0, 120) + '...'
+  return str
+}
+
 function JsonDiff({ before, after }: { before?: Record<string, any>; after?: Record<string, any> }) {
   const allKeys = useMemo(() => {
     const keys = new Set<string>()
@@ -51,8 +110,10 @@ function JsonDiff({ before, after }: { before?: Record<string, any>; after?: Rec
           const val = before?.[key]
           const changed = JSON.stringify(before?.[key]) !== JSON.stringify(after?.[key])
           return (
-            <div key={key} className={cn('text-vr-caption font-mono rounded px-2 py-1', changed && 'bg-vrerror/10')}>              <span className="text-vrtext-tertiary">{key}:</span>{' '}
-              <span className={cn('text-vrtext-primary', changed && 'text-vrerror line-through')}>                {val === undefined ? 'undefined' : JSON.stringify(val)}
+            <div key={key} className={cn('text-vr-caption rounded px-2 py-1', changed && 'bg-vrerror/10')}>
+              <span className="text-vrtext-tertiary">{fieldLabelMap[key] || key}:</span>{' '}
+              <span className={cn('text-vrtext-primary break-all', changed && 'text-vrerror line-through')}>
+                {formatDiffValue(val)}
               </span>
             </div>
           )
@@ -64,8 +125,10 @@ function JsonDiff({ before, after }: { before?: Record<string, any>; after?: Rec
           const val = after?.[key]
           const changed = JSON.stringify(before?.[key]) !== JSON.stringify(after?.[key])
           return (
-            <div key={key} className={cn('text-vr-caption font-mono rounded px-2 py-1', changed && 'bg-vrsuccess/10')}>              <span className="text-vrtext-tertiary">{key}:</span>{' '}
-              <span className={cn('text-vrtext-primary', changed && 'text-vrsuccess')}>                {val === undefined ? 'undefined' : JSON.stringify(val)}
+            <div key={key} className={cn('text-vr-caption rounded px-2 py-1', changed && 'bg-vrsuccess/10')}>
+              <span className="text-vrtext-tertiary">{fieldLabelMap[key] || key}:</span>{' '}
+              <span className={cn('text-vrtext-primary break-all', changed && 'text-vrsuccess')}>
+                {formatDiffValue(val)}
               </span>
             </div>
           )
@@ -81,20 +144,49 @@ const actionColorMap: Record<string, { bg: string; text: string }> = {
   DELETE: { bg: 'bg-vrerror/15', text: 'text-vrerror' },
   LOGIN: { bg: 'bg-vrpurple/15', text: 'text-vrpurple' },
   LOGOUT: { bg: 'bg-vrtext-muted/15', text: 'text-vrtext-muted' },
+  POST: { bg: 'bg-vraccent-primary/15', text: 'text-vraccent-primary' },
+  PATCH: { bg: 'bg-vraccent-primary/15', text: 'text-vraccent-primary' },
+  PUT: { bg: 'bg-vraccent-primary/15', text: 'text-vraccent-primary' },
+  GET: { bg: 'bg-vrtext-muted/15', text: 'text-vrtext-muted' },
+}
+
+const actionLabelMap: Record<string, string> = {
+  CREATE: '新增',
+  UPDATE: '修改',
+  DELETE: '删除',
+  LOGIN: '登录',
+  LOGOUT: '登出',
+  POST: '提交',
+  PATCH: '局部修改',
+  PUT: '修改',
+  GET: '查询',
+}
+
+const targetTypeLabelMap: Record<string, string> = {
+  USER: '用户',
+  ORDER: '订单',
+  BOOKING: '预约',
+  VENUE: '场地',
+  GAME: '游戏',
+  COUPON: '优惠券',
+  EQUIPMENT: '设备',
+  SETTINGS: '系统设置',
+  FINANCE: '财务',
+  RECONCILE: '对账',
+  POINTS: '积分',
+  GIFT: '赠送',
+  CAMPAIGN: '营销活动',
+  TRIGGER_RULE: '触发规则',
+  BALANCE_POINTS: '积分余额',
+  POINTS_EXCHANGE: '积分兑换',
+  POINTS_DEDUCT: '积分扣减',
 }
 
 function ActionBadge({ action }: { action: string }) {
   const colors = actionColorMap[action] || { bg: 'bg-vrtext-muted/15', text: 'text-vrtext-tertiary' }
-  const labelMap: Record<string, string> = {
-    CREATE: '新增',
-    UPDATE: '修改',
-    DELETE: '删除',
-    LOGIN: '登录',
-    LOGOUT: '登出',
-  }
   return (
-    <span className={cn('inline-flex items-center rounded-full px-2.5 py-1 text-vr-caption font-medium', colors.bg, colors.text)}>
-      {labelMap[action] || action}
+    <span className={cn('inline-flex items-center rounded-full px-2.5 py-1 text-vr-caption font-medium whitespace-nowrap', colors.bg, colors.text)}>
+      {actionLabelMap[action] || action}
     </span>
   )
 }
@@ -231,7 +323,7 @@ export default function AuditLogs() {
             >
               <option value="">全部对象类型</option>
               {targetTypes?.map((t) => (
-                <option key={t} value={t}>{t}</option>
+                <option key={t} value={t}>{targetTypeLabelMap[t] || t}</option>
               ))}
             </select>
 
@@ -288,8 +380,8 @@ export default function AuditLogs() {
               <thead>
                 <tr className="bg-vrbg-elevated">
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[160px]">时间</th>
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">操作人</th>
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">动作</th>
+                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">操作人</th>
+                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[110px]">动作</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">对象</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">变更摘要</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">原因</th>
@@ -338,7 +430,7 @@ export default function AuditLogs() {
                               <div className="w-6 h-6 rounded-full bg-vraccent-primary/15 flex items-center justify-center">
                                 <User className="w-3 h-3 text-vraccent-primary" />
                               </div>
-                              <span className="text-vr-body-sm text-vrtext-primary">{log.operatorName}</span>
+                              <span className="text-vr-body-sm text-vrtext-primary whitespace-nowrap">{log.operatorName}</span>
                             </div>
                           </td>
                           <td className="px-4 py-3">
@@ -347,7 +439,7 @@ export default function AuditLogs() {
                           <td className="px-4 py-3">
                             <div className="flex flex-col">
                               <span className="text-vr-body-sm text-vrtext-primary">{log.targetLabel || log.targetId}</span>
-                              <span className="text-vr-caption text-vrtext-tertiary">{log.targetType}</span>
+                              <span className="text-vr-caption text-vrtext-tertiary">{targetTypeLabelMap[log.targetType] || log.targetType}</span>
                             </div>
                           </td>
                           <td className="px-4 py-3">
