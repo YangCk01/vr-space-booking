@@ -99,6 +99,17 @@ async function seed() {
     { key: 'booking_advance_days', value: { value: 7 }, category: 'booking' },
     { key: 'booking_cancel_hours', value: { value: 2 }, category: 'booking' },
     { key: 'booking_refund_rate', value: { value: 50 }, category: 'booking' },
+    {
+      key: 'booking_refund_tiers',
+      value: {
+        value: [
+          { hours: 24, rate: 100, label: '开场24小时前' },
+          { hours: 2, rate: 50, label: '开场2-24小时' },
+          { hours: 0, rate: 0, label: '开场2小时内' },
+        ],
+      },
+      category: 'booking',
+    },
     { key: 'booking_allow_overtime', value: { value: false }, category: 'booking' },
     { key: 'booking_overtime_minutes', value: { value: 10 }, category: 'booking' },
     /* ── payment ── */

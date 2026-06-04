@@ -3,6 +3,12 @@ import { prisma } from '../utils/prisma'
 import { success, error } from '../utils/response'
 import { getMemberLevels, getPointsConfig } from '../utils/memberConfig'
 
+interface RefundTier {
+  hours: number
+  rate: number
+  label: string
+}
+
 /** 公开接口：返回会员相关配置（供C端使用） */
 export async function memberPublic(req: Request, res: Response) {
   try {
@@ -11,6 +17,24 @@ export async function memberPublic(req: Request, res: Response) {
       getPointsConfig(),
     ])
     return success(res, { levels, points })
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+/** 公开接口：返回退款阶梯规则（供C端订单页展示） */
+export async function refundRules(req: Request, res: Response) {
+  try {
+    const setting = await prisma.systemSetting.findUnique({ where: { key: 'booking_refund_tiers' } })
+    const raw = (setting?.value as any)?.value as RefundTier[] | undefined
+    const tiers: RefundTier[] = raw && Array.isArray(raw) && raw.length > 0
+      ? raw
+      : [
+          { hours: 24, rate: 100, label: '开场24小时前' },
+          { hours: 2, rate: 50, label: '开场2-24小时' },
+          { hours: 0, rate: 0, label: '开场2小时内' },
+        ]
+    return success(res, { tiers })
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }

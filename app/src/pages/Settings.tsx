@@ -261,19 +261,29 @@ function BasicSettings({ settings }: { settings?: Record<string, any> }) {
   )
 }
 
+interface RefundTier {
+  hours: number
+  rate: number
+  label: string
+}
+
 /* ---- Booking Settings ---- */
 function BookingSettings({ settings }: { settings?: Record<string, any> }) {
   const s = settings || {}
   const queryClient = useQueryClient()
   const [values, setValues] = useState({
-    interval: String(s.booking_interval?.value ?? 30),
-    minDuration: s.booking_min_duration?.value ?? 30,
-    maxDuration: s.booking_max_duration?.value ?? 240,
     advanceDays: s.booking_advance_days?.value ?? 7,
     cancelHours: s.booking_cancel_hours?.value ?? 2,
-    refundRate: s.booking_refund_rate?.value ?? 50,
     allowOvertime: s.booking_allow_overtime?.value ?? false,
     overtimeMinutes: s.booking_overtime_minutes?.value ?? 10,
+  })
+  const defaultTiers: RefundTier[] = [
+    { hours: 24, rate: 100, label: '开场24小时前' },
+    { hours: 2, rate: 50, label: '开场2-24小时' },
+  ]
+  const [tiers, setTiers] = useState<RefundTier[]>(() => {
+    const raw = s.booking_refund_tiers?.value
+    return raw && Array.isArray(raw) && raw.length > 0 ? raw : defaultTiers
   })
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
@@ -282,15 +292,13 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
     if (!settings) return
     const s = settings
     setValues({
-      interval: String(s.booking_interval?.value ?? 30),
-      minDuration: s.booking_min_duration?.value ?? 30,
-      maxDuration: s.booking_max_duration?.value ?? 240,
       advanceDays: s.booking_advance_days?.value ?? 7,
       cancelHours: s.booking_cancel_hours?.value ?? 2,
-      refundRate: s.booking_refund_rate?.value ?? 50,
       allowOvertime: s.booking_allow_overtime?.value ?? false,
       overtimeMinutes: s.booking_overtime_minutes?.value ?? 10,
     })
+    const raw = s.booking_refund_tiers?.value
+    setTiers(raw && Array.isArray(raw) && raw.length > 0 ? raw : defaultTiers)
   }, [settings])
 
   const mutation = useMutation({
@@ -307,27 +315,47 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
     setValues((p) => ({ ...p, [k]: v }))
   }
 
+  const updateTier = (idx: number, field: keyof RefundTier, val: number | string) => {
+    setError('')
+    setTiers((p) => p.map((t, i) => (i === idx ? { ...t, [field]: field === 'label' ? val : Number(val) } : t)))
+  }
+
+  const addTier = () => {
+    setTiers((p) => {
+      const sorted = [...p].sort((a, b) => b.hours - a.hours)
+      const last = sorted[sorted.length - 1]
+      const newHours = last ? Math.max(0, last.hours - 1) : 24
+      return [...p, { hours: newHours, rate: 50, label: `开场${newHours}小时内` }]
+    })
+  }
+
+  const removeTier = (idx: number) => {
+    setTiers((p) => p.filter((_, i) => i !== idx))
+  }
+
   const handleSave = () => {
     setError('')
-    if (values.minDuration > values.maxDuration) {
-      setError('最短预约时长不能大于最长预约时长')
-      return
-    }
-    if (values.refundRate < 0 || values.refundRate > 100) {
-      setError('退款比例必须在 0~100 之间')
-      return
-    }
-    if (values.advanceDays < 0 || values.cancelHours < 0 || values.minDuration < 0 || values.maxDuration < 0) {
+    if (values.advanceDays < 0 || values.cancelHours < 0) {
       setError('时长/天数不能为负数')
       return
     }
+    // 校验阶梯规则
+    for (const t of tiers) {
+      if (t.hours < 0) { setError('距开场时间不能为负数'); return }
+      if (t.rate < 0 || t.rate > 100) { setError('退款比例必须在 0~100 之间'); return }
+    }
+    // 按 hours 降序排列后，rate 应该递减（或相等）
+    const sorted = [...tiers].sort((a, b) => b.hours - a.hours)
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].rate > sorted[i - 1].rate) {
+        setError('时间越近退款比例不能高于时间更远的档位')
+        return
+      }
+    }
     mutation.mutate([
       { key: 'booking_advance_days', value: values.advanceDays, category: 'booking' },
-      { key: 'booking_interval', value: Number(values.interval), category: 'booking' },
-      { key: 'booking_min_duration', value: values.minDuration, category: 'booking' },
-      { key: 'booking_max_duration', value: values.maxDuration, category: 'booking' },
       { key: 'booking_cancel_hours', value: values.cancelHours, category: 'booking' },
-      { key: 'booking_refund_rate', value: values.refundRate, category: 'booking' },
+      { key: 'booking_refund_tiers', value: tiers, category: 'booking' },
       { key: 'booking_allow_overtime', value: values.allowOvertime, category: 'booking' },
       { key: 'booking_overtime_minutes', value: values.overtimeMinutes, category: 'booking' },
     ])
@@ -338,34 +366,97 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       <h2 className="text-vr-h2 text-vrtext-primary mb-6">预约设置</h2>
       <motion.div className="space-y-5 max-w-xl" variants={staggerContainer} initial="initial" animate="animate">
         {[
-          { label: '预约时段间隔', key: 'interval', type: 'select', options: ['15', '30', '60'], desc: '每个预约时段的时长间隔' },
-          { label: '最短预约时长（分钟）', key: 'minDuration', type: 'number', desc: '单次预约的最短时长' },
-          { label: '最长预约时长（分钟）', key: 'maxDuration', type: 'number', desc: '单次预约的最长时长' },
-          { label: '可提前预约天数', key: 'advanceDays', type: 'number', desc: '用户可提前多少天预约' },
-          { label: '取消预约时限（小时）', key: 'cancelHours', type: 'number', desc: '开场前多少小时可取消预约' },
-          { label: '退款比例(%)', key: 'refundRate', type: 'number', desc: '开场前X小时内退款比例' },
+          { label: '可提前预约天数', key: 'advanceDays', desc: '用户可提前多少天预约' },
+          { label: '取消预约时限（小时）', key: 'cancelHours', desc: `开场前${values.cancelHours}小时内不可取消，超过后按阶梯规则退款` },
         ].map((f) => (
           <motion.div key={f.key} {...fadeInUp}>
             <label className="block text-vr-caption text-vrtext-secondary mb-1">{f.label}</label>
-            {f.type === 'select' ? (
-              <select
-                value={values[f.key as keyof typeof values] as string}
-                onChange={(e) => update(f.key, e.target.value)}
-                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
-              >
-                {f.options?.map((o) => <option key={o} value={o}>{o}分钟</option>)}
-              </select>
-            ) : (
-              <input
-                type="number"
-                value={values[f.key as keyof typeof values] as number}
-                onChange={(e) => update(f.key, Number(e.target.value))}
-                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
-              />
-            )}
+            <input
+              type="number"
+              value={values[f.key as keyof typeof values] as number}
+              onChange={(e) => update(f.key, Number(e.target.value))}
+              className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+            />
             <p className="mt-1 text-vr-caption text-vrtext-tertiary">{f.desc}</p>
           </motion.div>
         ))}
+        {/* 阶梯式退款规则 */}
+        <motion.div {...fadeInUp}>
+          <label className="block text-vr-body-sm text-vrtext-primary mb-2">阶梯式退款规则</label>
+          <p className="text-vr-caption text-vrtext-tertiary mb-3">按距开场时间配置不同退款比例，时间越近比例越低</p>
+          <div className="space-y-2">
+            {[...tiers].sort((a, b) => b.hours - a.hours).map((tier, idx, arr) => {
+              const originalIdx = tiers.findIndex((t) => t === tier)
+              const nextHours = arr[idx + 1]?.hours ?? 0
+              const rangeText = nextHours > 0 ? `${nextHours}~${tier.hours}小时` : `<${tier.hours}小时`
+              return (
+                <div key={originalIdx} className="flex items-center gap-2 bg-vrbg-elevated rounded-lg p-3">
+                  <div className="flex-1">
+                    <p className="text-vr-caption text-vrtext-secondary mb-1">距开场时间 ≥ {tier.hours} 小时</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        value={tier.hours}
+                        onChange={(e) => updateTier(originalIdx, 'hours', e.target.value)}
+                        className="w-20 h-8 px-2 bg-vrbg-surface border border-vrborder-subtle rounded text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+                      />
+                      <span className="text-vr-caption text-vrtext-tertiary">小时</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={tier.rate}
+                        onChange={(e) => updateTier(originalIdx, 'rate', e.target.value)}
+                        className="w-20 h-8 px-2 bg-vrbg-surface border border-vrborder-subtle rounded text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+                      />
+                      <span className="text-vr-caption text-vrtext-tertiary">%</span>
+                      <input
+                        type="text"
+                        value={tier.label}
+                        onChange={(e) => updateTier(originalIdx, 'label', e.target.value)}
+                        placeholder="说明标签"
+                        className="flex-1 h-8 px-2 bg-vrbg-surface border border-vrborder-subtle rounded text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => removeTier(originalIdx)}
+                    className="px-2 py-1 text-vr-caption text-vrerror hover:bg-vrerror/10 rounded transition-colors"
+                  >
+                    删除
+                  </button>
+                </div>
+              )
+            })}
+            {/* 不可取消档位（由 cancelHours 决定） */}
+            <div className="flex items-center gap-2 bg-vrbg-elevated/50 rounded-lg p-3 border border-dashed border-vrborder-subtle">
+              <div className="flex-1">
+                <p className="text-vr-caption text-vrtext-secondary mb-1">距开场时间 &lt; {values.cancelHours} 小时</p>
+                <div className="flex items-center gap-2">
+                  <span className="w-20 h-8 flex items-center px-2 bg-vrbg-surface/50 border border-vrborder-subtle rounded text-vr-body-sm text-vrtext-muted">
+                    {values.cancelHours}
+                  </span>
+                  <span className="text-vr-caption text-vrtext-tertiary">小时</span>
+                  <span className="w-20 h-8 flex items-center px-2 bg-vrbg-surface/50 border border-vrborder-subtle rounded text-vr-body-sm text-vrtext-muted">
+                    0
+                  </span>
+                  <span className="text-vr-caption text-vrtext-tertiary">%</span>
+                  <span className="flex-1 h-8 flex items-center px-2 text-vr-body-sm text-vrtext-muted">
+                    不可取消（由「取消预约时限」控制）
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={addTier}
+            className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-vr-caption text-vraccent-primary border border-vraccent-primary/30 hover:bg-vraccent-primary/10 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            添加档位
+          </button>
+        </motion.div>
         <motion.div {...fadeInUp} className="flex items-center justify-between py-2">
           <div>
             <label className="block text-vr-body-sm text-vrtext-primary">是否允许超时</label>

@@ -7,6 +7,8 @@ const router = Router()
 
 // 公开接口：会员配置（供C端使用，无需管理员权限）
 router.get('/member-public', controller.memberPublic)
+// 公开接口：退款规则（供C端订单页展示阶梯退费规则）
+router.get('/refund-rules', controller.refundRules)
 
 router.use(authenticate, requireRole('SUPER_ADMIN','ADMIN'))
 

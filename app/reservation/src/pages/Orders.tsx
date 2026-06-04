@@ -4,9 +4,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronLeft, ClipboardList, LogIn, XCircle, MapPin, Clock, Calendar, Users, Ticket, QrCode, Timer } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { getOrders, cancelOrder } from '@/api/orders'
+import { getRefundRules } from '@/api/settings'
 import { useAuth } from '@/providers/AuthProvider'
 import { cn } from '@/lib/utils'
 import { SimpleQRCode } from '@/components/SimpleQRCode'
+import type { RefundTier } from '@/api/settings'
 
 const tabs = [
   { key: 'all', label: '全部' },
@@ -24,11 +26,11 @@ const statusMap: Record<string, { label: string; color: string }> = {
   REFUNDED: { label: '已退款', color: 'text-[var(--text-muted)]' },
 }
 
-/* ─── 阶梯退费计算 ─── */
-function getRefundInfo(order: any) {
+/* ─── 阶梯退费计算（动态规则） ─── */
+function getRefundInfo(order: any, tiers: RefundTier[]) {
   const booking = order?.booking
   if (!booking?.date || !booking?.startTime) {
-    return { rate: 0, refundAmount: 0, refundText: '¥0.00', canCancel: true, deadlineText: '', isExpired: false }
+    return { rate: 0, refundAmount: 0, refundText: '¥0.00', canCancel: true, deadlineText: '', isExpired: false, activeTier: null as RefundTier | null }
   }
   const startDate = new Date(booking.date)
   const [h, m] = booking.startTime.split(':')
@@ -37,29 +39,39 @@ function getRefundInfo(order: any) {
   const diffMs = startDate.getTime() - now.getTime()
   const diffHours = diffMs / (1000 * 60 * 60)
 
-  let rate = 0
-  if (diffHours > 24) rate = 1
-  else if (diffHours >= 2) rate = 0.5
-  else rate = 0
+  // 按 hours 降序排列，找到第一个满足 diffHours >= hours 的规则
+  const sorted = [...tiers].sort((a, b) => b.hours - a.hours)
+  let activeTier: RefundTier | null = null
+  for (const tier of sorted) {
+    if (diffHours >= tier.hours) {
+      activeTier = tier
+      break
+    }
+  }
+  const rate = activeTier ? activeTier.rate / 100 : 0
 
   const refundAmount = Math.floor((order.amount || 0) * rate)
   const refundText = `¥${(refundAmount / 100).toFixed(2)}`
 
+  // 最小阈值（不可取消的小时数）
+  const minHours = sorted.length > 0 ? sorted[sorted.length - 1].hours : 0
+
   // 最迟取消提示
   let deadlineText = ''
-  if (diffHours > 24) {
-    const d = new Date(startDate.getTime() - 24 * 60 * 60 * 1000)
-    deadlineText = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前可取消`
-  } else if (diffHours >= 2) {
-    const d = new Date(startDate.getTime() - 2 * 60 * 60 * 1000)
-    deadlineText = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前可取消`
+  if (diffHours > minHours) {
+    const d = new Date(startDate.getTime() - minHours * 60 * 60 * 1000)
+    if (minHours >= 24) {
+      deadlineText = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前可取消`
+    } else {
+      deadlineText = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前可取消`
+    }
   } else if (diffHours > 0) {
-    deadlineText = '开场前2小时内不可取消'
+    deadlineText = `开场前${minHours}小时内不可取消`
   } else {
     deadlineText = '已开场，不可取消'
   }
 
-  return { rate, refundAmount, refundText, canCancel: diffHours > 2 || order.status === 'PENDING', deadlineText, isExpired: diffHours <= 0 }
+  return { rate, refundAmount, refundText, canCancel: diffHours > minHours || order.status === 'PENDING', deadlineText, isExpired: diffHours <= 0, activeTier }
 }
 
 export default function Orders() {
@@ -83,6 +95,18 @@ export default function Orders() {
     queryFn: () => getOrders({ pageSize: 50 }),
     enabled: isLoggedIn,
   })
+
+  const { data: refundTiersData } = useQuery({
+    queryKey: ['refundRules'],
+    queryFn: () => getRefundRules(),
+    enabled: isLoggedIn,
+    staleTime: 1000 * 60 * 5,
+  })
+
+  const refundTiers = refundTiersData ?? [
+    { hours: 24, rate: 100, label: '开场24小时前' },
+    { hours: 2, rate: 50, label: '开场2-24小时' },
+  ]
 
   const cancelMutation = useMutation({
     mutationFn: cancelOrder,
@@ -259,7 +283,7 @@ export default function Orders() {
               {(() => {
                 const o = data?.data?.find((oo: any) => oo.id === cancelId)
                 if (!o) return null
-                const info = getRefundInfo(o)
+                const info = getRefundInfo(o, refundTiers)
                 const isPaid = o.status === 'PAID'
                 return (
                   <div className="p-5 space-y-4">
@@ -300,18 +324,23 @@ export default function Orders() {
                           <span className="text-xs font-medium text-[var(--text-primary)]">阶梯式退费规则</span>
                           <span className="text-[10px] text-[var(--text-muted)]">按申请取消时间计算</span>
                         </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          <div className={cn('rounded-lg p-2 text-center border', info.rate === 1 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border-subtle)]')}>
-                            <p className={cn('text-sm font-bold', info.rate === 1 ? 'text-emerald-400' : 'text-[var(--text-muted)]')}>退100%</p>
-                            <p className="text-[10px] text-[var(--text-muted)] mt-0.5">开场24小时前</p>
-                          </div>
-                          <div className={cn('rounded-lg p-2 text-center border', info.rate === 0.5 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border-subtle)]')}>
-                            <p className={cn('text-sm font-bold', info.rate === 0.5 ? 'text-amber-400' : 'text-[var(--text-muted)]')}>退50%</p>
-                            <p className="text-[10px] text-[var(--text-muted)] mt-0.5">开场2-24小时</p>
-                          </div>
+                        <div className={cn('grid gap-2', refundTiers.length >= 3 ? 'grid-cols-3' : refundTiers.length === 2 ? 'grid-cols-2' : 'grid-cols-1')}>
+                          {[...refundTiers].sort((a, b) => b.hours - a.hours).map((tier, idx, arr) => {
+                            const nextHours = arr[idx + 1]?.hours ?? 0
+                            const isActive = info.activeTier?.hours === tier.hours
+                            const rangeText = nextHours > 0 ? `开场${nextHours}~${tier.hours}小时` : `开场${tier.hours}小时内`
+                            return (
+                              <div key={tier.hours} className={cn('rounded-lg p-2 text-center border', isActive ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border-subtle)]')}>
+                                <p className={cn('text-sm font-bold', isActive ? 'text-emerald-400' : 'text-[var(--text-muted)]')}>退{tier.rate}%</p>
+                                <p className="text-[10px] text-[var(--text-muted)] mt-0.5">{tier.label || rangeText}</p>
+                              </div>
+                            )
+                          })}
                           <div className={cn('rounded-lg p-2 text-center border', info.rate === 0 ? 'bg-red-500/10 border-red-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border-subtle)]')}>
                             <p className={cn('text-sm font-bold', info.rate === 0 ? 'text-red-400' : 'text-[var(--text-muted)]')}>不退款</p>
-                            <p className="text-[10px] text-[var(--text-muted)] mt-0.5">开场2小时内</p>
+                            <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                              开场{refundTiers.length > 0 ? Math.min(...refundTiers.map((t) => t.hours)) : 2}小时内
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -323,7 +352,7 @@ export default function Orders() {
                         <p className="text-xs font-medium text-[var(--text-primary)]">取消前请确认退费金额</p>
                         <p className="text-[10px] text-[var(--text-muted)]">
                           系统已按当前时间自动计算可退金额，确认取消后将退回 <span className={cn('font-bold', info.rate === 0 ? 'text-[var(--error)]' : 'text-emerald-400')}>{info.refundText}</span>
-                          {info.rate === 0 ? '（开场前2小时内取消不予退款）' : ''}
+                          {info.rate === 0 ? `（开场前${refundTiers.length > 0 ? Math.min(...refundTiers.map((t) => t.hours)) : 2}小时内取消不予退款）` : ''}
                         </p>
                       </div>
                     )}

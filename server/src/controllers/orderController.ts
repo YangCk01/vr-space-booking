@@ -626,14 +626,37 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
   }
 }
 
+interface RefundTier {
+  hours: number
+  rate: number
+  label: string
+}
+
 /* ─── 阶梯退费比例计算 ─── */
-function calcRefundRate(bookingDate: Date, startTime: string): number {
+async function calcRefundRate(bookingDate: Date, startTime: string): Promise<number> {
   const start = new Date(bookingDate)
   const [h, m] = startTime.split(':')
   start.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
   const diffHours = (start.getTime() - Date.now()) / (1000 * 60 * 60)
-  if (diffHours > 24) return 1
-  if (diffHours >= 2) return 0.5
+
+  // 从数据库读取阶梯规则，没有则使用默认
+  const setting = await prisma.systemSetting.findUnique({ where: { key: 'booking_refund_tiers' } })
+  const raw = (setting?.value as any)?.value as RefundTier[] | undefined
+  const tiers: RefundTier[] = raw && Array.isArray(raw) && raw.length > 0
+    ? raw
+    : [
+        { hours: 24, rate: 100, label: '开场24小时前' },
+        { hours: 2, rate: 50, label: '开场2-24小时' },
+        { hours: 0, rate: 0, label: '开场2小时内' },
+      ]
+
+  // 按 hours 降序排列，找到第一个满足 diffHours >= hours 的规则
+  const sorted = [...tiers].sort((a, b) => b.hours - a.hours)
+  for (const tier of sorted) {
+    if (diffHours >= tier.hours) {
+      return tier.rate / 100
+    }
+  }
   return 0
 }
 
@@ -656,7 +679,7 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
     // 计算阶梯退费比例
     let refundRate = 1
     if (order.status === 'PAID' && order.booking) {
-      refundRate = calcRefundRate(order.booking.date, order.booking.startTime)
+      refundRate = await calcRefundRate(order.booking.date, order.booking.startTime)
     }
     const refundAmount = order.status === 'PAID' ? Math.floor((order.amount || 0) * refundRate) : 0
 
