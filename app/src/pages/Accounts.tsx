@@ -433,7 +433,7 @@ function VenueAssignDialog({
 }) {
   const [selected, setSelected] = useState<string[]>([])
 
-  useMemo(() => {
+  useEffect(() => {
     if (staff) {
       setSelected(staff.managedVenues?.map((v) => v.id) || [])
     } else {
