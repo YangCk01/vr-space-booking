@@ -83,6 +83,10 @@ export default function SystemHealth() {
     setCurrentPage(totalPages)
   }
 
+  const checkTypeMap: Record<string, string> = {
+    BALANCE_CONSISTENCY: '余额一致性校验',
+  }
+
   const checkTypes = Array.from(new Set(checks.map((c) => c.checkType)))
 
   const statCards = [
@@ -169,7 +173,7 @@ export default function SystemHealth() {
                     : 'bg-vrbg-card border border-vrborder-subtle text-vrtext-secondary hover:text-vrtext-primary'
                 )}
               >
-                {t}
+                {checkTypeMap[t] || t}
               </button>
             ))}
           </div>
@@ -235,7 +239,7 @@ export default function SystemHealth() {
                           </td>
                           <td className="px-4 py-3">
                             <span className="text-vr-caption text-vrtext-secondary bg-vrbg-elevated px-2 py-1 rounded">
-                              {check.checkType}
+                              {checkTypeMap[check.checkType] || check.checkType}
                             </span>
                           </td>
                           <td className="px-4 py-3 text-center">

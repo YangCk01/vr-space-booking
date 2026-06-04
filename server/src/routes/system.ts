@@ -31,7 +31,7 @@ router.get('/health-checks', async (req, res) => {
       if (endDate) where.checkDate.lte = endDate
     }
 
-    const [data, total] = await Promise.all([
+    const [rawData, total] = await Promise.all([
       prisma.dataCheckResult.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -40,6 +40,29 @@ router.get('/health-checks', async (req, res) => {
       }),
       prisma.dataCheckResult.count({ where }),
     ])
+
+    const checkTypeMap: Record<string, string> = {
+      BALANCE_CONSISTENCY: '余额一致性校验',
+    }
+
+    const data = rawData.map((r) => {
+      const errors = (r.errors as any[]) || []
+      const firstError = errors[0]
+      const details = errors.length > 0
+        ? errors.map((e) => `用户: ${e.userName || e.userPhone || e.userId} | 字段: ${e.field} | 实际: ${e.actual} | 期望: ${e.expected} | 差异: ${e.diff}`).join('\n')
+        : undefined
+
+      return {
+        id: r.id,
+        checkType: r.checkType,
+        checkName: checkTypeMap[r.checkType] || r.checkType,
+        status: r.status,
+        runAt: r.createdAt.toISOString(),
+        details,
+        expectedValue: firstError ? String(firstError.expected) : undefined,
+        actualValue: firstError ? String(firstError.actual) : undefined,
+      }
+    })
 
     return paginated(res, data, page, pageSize, total)
   } catch (err) {
