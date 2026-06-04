@@ -281,14 +281,6 @@ export async function create(req: AuthenticatedRequest, res: Response) {
           },
         })
 
-        // 如果使用了优惠券，更新优惠券状态
-        if (finalUserCouponId) {
-          await tx.userCoupon.update({
-            where: { id: finalUserCouponId },
-            data: { status: 'USED', usedAt: new Date() },
-          })
-        }
-
         // 创建订单（记录所有明细）
         const order = await tx.order.create({
           data: {
@@ -318,6 +310,14 @@ export async function create(req: AuthenticatedRequest, res: Response) {
             booking: true,
           },
         })
+
+        // 支付成功：扣减优惠券并记录关联订单
+        if (finalUserCouponId) {
+          await tx.userCoupon.update({
+            where: { id: finalUserCouponId },
+            data: { status: 'USED', usedAt: new Date(), usedOrderId: order.id },
+          })
+        }
 
         // 记录余额变动流水（拆分记录）
         await tx.balanceTransaction.create({
