@@ -94,6 +94,22 @@ function BasicSettings({ settings }: { settings?: Record<string, any> }) {
   const [uploadingQr, setUploadingQr] = useState(false)
   const [saved, setSaved] = useState(false)
 
+  useEffect(() => {
+    if (!settings) return
+    const s = settings
+    setForm({
+      venueName: s.venue_name?.value ?? 'VR大空间体验馆',
+      address: s.venue_address?.value ?? '北京市朝阳区xxx',
+      phone: s.venue_phone?.value ?? '400-888-0000',
+      hours: s.venue_hours?.value ?? '09:00-22:00',
+      description: s.venue_description?.value ?? 'VR大空间体验馆提供沉浸式虚拟现实体验，支持多人联机互动。',
+      logo: s.logo?.value ?? '',
+      serviceQr: s.service_qr?.value ?? '',
+      announcement: s.announcement?.value ?? '',
+      maxVenues: String(s.max_venues?.value ?? 10),
+    })
+  }, [settings])
+
   const mutation = useMutation({
     mutationFn: bulkSaveSettings,
     onSuccess: () => {
@@ -260,6 +276,22 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
     overtimeMinutes: s.booking_overtime_minutes?.value ?? 10,
   })
   const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!settings) return
+    const s = settings
+    setValues({
+      interval: String(s.booking_interval?.value ?? 30),
+      minDuration: s.booking_min_duration?.value ?? 30,
+      maxDuration: s.booking_max_duration?.value ?? 240,
+      advanceDays: s.booking_advance_days?.value ?? 7,
+      cancelHours: s.booking_cancel_hours?.value ?? 2,
+      refundRate: s.booking_refund_rate?.value ?? 50,
+      allowOvertime: s.booking_allow_overtime?.value ?? false,
+      overtimeMinutes: s.booking_overtime_minutes?.value ?? 10,
+    })
+  }, [settings])
 
   const mutation = useMutation({
     mutationFn: bulkSaveSettings,
@@ -270,9 +302,25 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
     },
   })
 
-  const update = (k: string, v: unknown) => setValues((p) => ({ ...p, [k]: v }))
+  const update = (k: string, v: unknown) => {
+    setError('')
+    setValues((p) => ({ ...p, [k]: v }))
+  }
 
   const handleSave = () => {
+    setError('')
+    if (values.minDuration > values.maxDuration) {
+      setError('最短预约时长不能大于最长预约时长')
+      return
+    }
+    if (values.refundRate < 0 || values.refundRate > 100) {
+      setError('退款比例必须在 0~100 之间')
+      return
+    }
+    if (values.advanceDays < 0 || values.cancelHours < 0 || values.minDuration < 0 || values.maxDuration < 0) {
+      setError('时长/天数不能为负数')
+      return
+    }
     mutation.mutate([
       { key: 'booking_advance_days', value: values.advanceDays, category: 'booking' },
       { key: 'booking_interval', value: Number(values.interval), category: 'booking' },
@@ -334,6 +382,11 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
               onChange={(e) => update('overtimeMinutes', Number(e.target.value))}
               className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
             />
+          </motion.div>
+        )}
+        {error && (
+          <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="text-vr-body-sm text-vrerror">
+            {error}
           </motion.div>
         )}
         <motion.div {...fadeInUp} className="pt-4">
@@ -399,6 +452,36 @@ function PaymentApiSettings({ settings }: { settings?: Record<string, any> }) {
   })
 
   const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    if (!settings) return
+    const s = settings
+    setMethods([
+      { name: '微信支付', key: 'payment_wechat', enabled: s.payment_wechat?.value ?? true, rate: s.payment_wechat_rate?.value ?? 0.6 },
+      { name: '支付宝', key: 'payment_alipay', enabled: s.payment_alipay?.value ?? true, rate: s.payment_alipay_rate?.value ?? 0.6 },
+      { name: '现金支付', key: 'payment_cash', enabled: s.payment_cash?.value ?? true, rate: 0 },
+    ])
+    setRefund({
+      enabled: true,
+      fullHours: s.payment_full_refund_hours?.value ?? 24,
+      partialPercent: s.payment_partial_refund_rate?.value ?? 50,
+    })
+    setApis([
+      { name: '微信支付API', status: s.wechat_mchid?.value ? 'configured' : 'unconfigured', testing: false },
+      { name: '支付宝API', status: s.alipay_appid?.value ? 'configured' : 'unconfigured', testing: false },
+      { name: '短信服务（阿里云）', status: s.sms_access_key?.value ? 'configured' : 'unconfigured', testing: false },
+      { name: '微信小程序', status: s.wxmini_appid?.value ? 'configured' : 'unconfigured', testing: false },
+    ])
+    setForm({
+      wechatMchid: s.wechat_mchid?.value ?? '',
+      wechatApiKey: s.wechat_api_key?.value ?? '',
+      alipayAppid: s.alipay_appid?.value ?? '',
+      alipayPrivateKey: s.alipay_private_key?.value ?? '',
+      smsAccessKey: s.sms_access_key?.value ?? '',
+      smsSecret: s.sms_secret?.value ?? '',
+      wxminiAppid: s.wxmini_appid?.value ?? '',
+    })
+  }, [settings])
 
   const mutation = useMutation({
     mutationFn: bulkSaveSettings,
@@ -618,6 +701,26 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
   ])
 
   const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    if (!settings) return
+    const s = settings
+    setUserScenes([
+      { label: '预约成功通知', key: 'scene_booking_success', checked: s.scene_booking_success?.value ?? true },
+      { label: '预约提醒（开场前）', key: 'scene_booking_remind', checked: s.scene_booking_remind?.value ?? true },
+      { label: '预约取消通知', key: 'scene_booking_cancel', checked: s.scene_booking_cancel?.value ?? true },
+      { label: '支付成功通知', key: 'scene_pay_success', checked: s.scene_pay_success?.value ?? true },
+      { label: '积分赠送通知', key: 'scene_points_gift', checked: s.scene_points_gift?.value ?? true },
+      { label: '优惠券赠送通知', key: 'scene_coupon_gift', checked: s.scene_coupon_gift?.value ?? true },
+      { label: '营销推送（可选）', key: 'scene_marketing', checked: s.scene_marketing?.value ?? false },
+    ])
+    setAdminScenes([
+      { label: '商品售出提醒', key: 'scene_admin_product_sold', checked: s.scene_admin_product_sold?.value ?? true },
+      { label: '库存不足提醒', key: 'scene_admin_low_stock', checked: s.scene_admin_low_stock?.value ?? true },
+      { label: '新订单提醒', key: 'scene_admin_new_order', checked: s.scene_admin_new_order?.value ?? true },
+      { label: '退款申请提醒', key: 'scene_admin_refund_request', checked: s.scene_admin_refund_request?.value ?? true },
+    ])
+  }, [settings])
 
   const mutation = useMutation({
     mutationFn: bulkSaveSettings,
