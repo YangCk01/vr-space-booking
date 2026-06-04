@@ -10,6 +10,7 @@ import { startTriggerJob } from './jobs/triggerJob'
 import { startCouponEffectJob } from './jobs/couponEffectJob'
 import { startOrderTimeoutJob } from './jobs/orderTimeoutJob'
 import { startBookingLifecycleJob } from './jobs/bookingLifecycleJob'
+import { startBookingReminderJob } from './jobs/bookingReminderJob'
 import { loadConfig } from './services/configService'
 import { seedPermissions } from './utils/seedPermissions'
 
@@ -59,6 +60,9 @@ startOrderTimeoutJob()
 
 // 启动预约生命周期定时任务（状态自动流转 + No-Show 处理）
 startBookingLifecycleJob()
+
+// 启动预约提醒定时任务（开场前2小时/15分钟通知）
+startBookingReminderJob()
 
 // 启动时加载系统配置并初始化权限
 seedPermissions()
