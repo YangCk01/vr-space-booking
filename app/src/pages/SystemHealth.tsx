@@ -33,13 +33,13 @@ function formatDateTime(iso: string): string {
 
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { bg: string; text: string; icon: React.ReactNode; label: string }> = {
-    PASS: { bg: 'bg-vrsuccess/15', text: 'text-vrsuccess', icon: <CheckCircle2 className="w-3.5 h-3.5" />, label: '通过' },
-    WARN: { bg: 'bg-vrwarning/15', text: 'text-vrwarning', icon: <AlertTriangle className="w-3.5 h-3.5" />, label: '警告' },
-    FAIL: { bg: 'bg-vrerror/15', text: 'text-vrerror', icon: <XCircle className="w-3.5 h-3.5" />, label: '异常' },
+    PASS: { bg: 'bg-vrsuccess/15', text: 'text-vrsuccess', icon: <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />, label: '通过' },
+    WARN: { bg: 'bg-vrwarning/15', text: 'text-vrwarning', icon: <AlertTriangle className="w-3.5 h-3.5 shrink-0" />, label: '警告' },
+    FAIL: { bg: 'bg-vrerror/15', text: 'text-vrerror', icon: <XCircle className="w-3.5 h-3.5 shrink-0" />, label: '异常' },
   }
   const cfg = config[status] || config.PASS
   return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-vr-caption font-medium', cfg.bg, cfg.text)}>
+    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-vr-caption font-medium whitespace-nowrap', cfg.bg, cfg.text)}>
       {cfg.icon}
       {cfg.label}
     </span>
@@ -211,7 +211,7 @@ export default function SystemHealth() {
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">校验时间</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">校验项</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">类型</th>
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">状态</th>
+                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">状态</th>
                   <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">详情</th>
                 </tr>
               </thead>

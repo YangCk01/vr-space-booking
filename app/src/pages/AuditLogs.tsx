@@ -289,11 +289,11 @@ export default function AuditLogs() {
                 <tr className="bg-vrbg-elevated">
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[160px]">时间</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">操作人</th>
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">动作</th>
+                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">动作</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">对象</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">变更摘要</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">原因</th>
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">详情</th>
+                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">详情</th>
                 </tr>
               </thead>
               <tbody>

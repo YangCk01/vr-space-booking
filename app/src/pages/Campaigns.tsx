@@ -2346,7 +2346,7 @@ export default function Campaigns() {
                   <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">预算</th>
                   <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">已消耗</th>
                   <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">发放/核销</th>
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">效果</th>
+                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">效果</th>
                   <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[160px]">操作</th>
                 </tr>
               </thead>

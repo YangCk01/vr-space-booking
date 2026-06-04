@@ -607,7 +607,7 @@ export default function Equipment() {
                 <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">
                   最后维护时间
                 </th>
-                <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">
+                <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">
                   操作
                 </th>
               </tr>

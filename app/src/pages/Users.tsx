@@ -1054,10 +1054,10 @@ export default function UsersPage() {
                   </th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">用户</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">手机号</th>
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">会员等级</th>
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">积分</th>
+                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">会员等级</th>
+                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">积分</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[110px]">注册时间</th>
-                  <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">操作</th>
+                  <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">操作</th>
                 </tr>
               </thead>
               <tbody>

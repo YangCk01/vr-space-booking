@@ -611,8 +611,8 @@ export default function TriggerRules() {
                 <tr className="bg-vrbg-elevated">
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[180px]">规则名称</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">触发事件</th>
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">状态</th>
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">执行次数</th>
+                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[110px]">状态</th>
+                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[110px]">执行次数</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">关联活动</th>
                   <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">操作</th>
                 </tr>

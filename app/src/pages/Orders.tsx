@@ -861,9 +861,9 @@ export default function Orders() {
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[170px]">预约时间</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">游戏</th>
                   <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[70px]">人数</th>
-                  <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[90px]">实付</th>
-                  <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">优惠</th>
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[110px]">状态</th>
+                  <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[110px]">实付</th>
+                  <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">优惠</th>
+                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[130px]">状态</th>
                   <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[130px]">操作</th>
                 </tr>
               </thead>
