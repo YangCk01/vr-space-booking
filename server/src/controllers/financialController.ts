@@ -1520,6 +1520,12 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
       _sum: { principalDeduction: true },
     })
 
+    // No-Show 违约金累计
+    const noShowPenaltySum = await prisma.order.aggregate({
+      where: { status: 'NO_SHOW' },
+      _sum: { penaltyAmount: true },
+    })
+
     const pointsExchangeCostSum = await prisma.pointsExchange.aggregate({
       _sum: { pointsCost: true },
     })
@@ -1593,6 +1599,7 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
     const cdr = confirmedDirectRevenueSum._sum?.amount || 0
     const pmr = prepaidMemberRevenueSum._sum?.principalDeduction || 0
     const cmr = confirmedMemberRevenueSum._sum?.principalDeduction || 0
+    const nsp = noShowPenaltySum._sum?.penaltyAmount || 0
     const pec = (pointsExchangeCostSum._sum?.pointsCost || 0) + (pointsOrderCostSum._sum?.pointsCost || 0)
     const pgc = pointsGiftCostSum._sum?.pointsAmount || 0
     const cdc = couponDiscountCostSum._sum?.couponDiscount || 0
@@ -1618,6 +1625,7 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
       totalConfirmedDirectRevenue: cdr,
       totalPrepaidMemberRevenue: pmr,
       totalConfirmedMemberRevenue: cmr,
+      totalNoShowPenalty: nsp,
       totalPointsExchangeCost: pec,
       totalPointsGiftCost: pgc,
       totalCouponDiscountCost: cdc,

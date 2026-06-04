@@ -273,7 +273,7 @@ export default function Booking() {
       pageSize: 500,
     }),
   })
-  const allEvents = (bookingData?.data || []).filter((b: Booking) => b.status !== 'CANCELLED')
+  const allEvents = (bookingData?.data || []).filter((b: Booking) => !['CANCELLED', 'NO_SHOW'].includes(b.status))
 
   /* ─── Fetch games ─── */
   const { data: gamesData } = useQuery({
@@ -802,8 +802,10 @@ export default function Booking() {
                             }}
                             className={cn(
                               'group absolute rounded-md border-l-[3px] px-1.5 py-1 cursor-pointer overflow-hidden',
+                              event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
+                              event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
                               cfg.bg,
-                              cfg.border,
+                              event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
                               'hover:overflow-visible hover:z-[30] hover:shadow-vr-xl hover:ring-2 hover:ring-white/20 transition-all duration-150 z-20'
                             )}
                           >
@@ -963,8 +965,10 @@ export default function Booking() {
                               }}
                               className={cn(
                                 'group absolute rounded-md border-l-[3px] px-1.5 py-1 cursor-pointer overflow-hidden',
+                                event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
+                                event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
                                 cfg.bg,
-                                cfg.border,
+                                event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
                                 'hover:overflow-visible hover:z-[30] hover:shadow-vr-xl hover:ring-2 hover:ring-white/20 transition-all duration-150 z-20'
                               )}
                             >
@@ -1039,8 +1043,10 @@ export default function Booking() {
                           }}
                           className={cn(
                             'group absolute rounded-md border-l-[3px] px-1.5 py-1 cursor-pointer overflow-hidden',
+                            event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
+                            event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
                             cfg.bg,
-                            cfg.border,
+                            event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
                             'hover:overflow-visible hover:z-[30] hover:shadow-vr-xl hover:ring-2 hover:ring-white/20 transition-all duration-150 z-20'
                           )}
                         >
@@ -1157,12 +1163,18 @@ export default function Booking() {
                           key={event.id}
                           className={cn(
                             'group relative flex items-center gap-1 px-1.5 py-0.5 rounded-sm mb-0.5 cursor-pointer hover:opacity-80 transition-opacity',
+                            event.status === 'PLAYING' ? 'bg-emerald-500/20' :
+                            event.status === 'CHECKED_IN' ? 'bg-amber-500/20' :
                             cfg.bg
                           )}
                         >
                           <div
                             className="w-1.5 h-1.5 rounded-full shrink-0"
-                            style={{ backgroundColor: cfg.border.replace('border-l-', '') }}
+                            style={{ backgroundColor:
+                              event.status === 'PLAYING' ? '#10B981' :
+                              event.status === 'CHECKED_IN' ? '#F59E0B' :
+                              cfg.border.replace('border-l-', '')
+                            }}
                           />
                           <span className="text-vr-caption text-white truncate">
                             {event.startTime} {cfg.label.slice(0, 2)}
