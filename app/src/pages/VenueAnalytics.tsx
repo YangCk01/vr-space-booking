@@ -16,11 +16,13 @@ import { format, subDays } from 'date-fns'
 import { getVenueOccupancy, getGamePerformance } from '@/api/venueAnalytics'
 import { getVenues } from '@/api/venues'
 
-type DateRange = '7days' | '30days'
+type DateRange = 'today' | '7days' | '30days' | 'custom'
 
 const dateRangeOptions: { value: DateRange; label: string }[] = [
+  { value: 'today', label: '当天' },
   { value: '7days', label: '近7天' },
   { value: '30days', label: '近30天' },
+  { value: 'custom', label: '自定义' },
 ]
 
 
@@ -46,9 +48,26 @@ export default function VenueAnalytics() {
 
   const [venueId, setVenueId] = useState('')
   const [dateRange, setDateRange] = useState<DateRange>('7days')
+  const [customStart, setCustomStart] = useState(sevenDaysAgo)
+  const [customEnd, setCustomEnd] = useState(today)
 
-  const startDate = dateRange === '7days' ? sevenDaysAgo : thirtyDaysAgo
-  const endDate = today
+  const startDate = useMemo(() => {
+    switch (dateRange) {
+      case 'today': return today
+      case '7days': return sevenDaysAgo
+      case '30days': return thirtyDaysAgo
+      case 'custom': return customStart
+    }
+  }, [dateRange, today, sevenDaysAgo, thirtyDaysAgo, customStart])
+
+  const endDate = useMemo(() => {
+    switch (dateRange) {
+      case 'today': return today
+      case '7days': return today
+      case '30days': return today
+      case 'custom': return customEnd
+    }
+  }, [dateRange, today, customEnd])
 
   const { data: venuesData } = useQuery({
     queryKey: ['venues', 'all'],
@@ -194,6 +213,24 @@ export default function VenueAnalytics() {
               </button>
             ))}
           </div>
+
+          {dateRange === 'custom' && (
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+                className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
+              />
+              <span className="text-vr-caption text-vrtext-tertiary">至</span>
+              <input
+                type="date"
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+                className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
+              />
+            </div>
+          )}
         </div>
 
         {/* KPI Cards */}
