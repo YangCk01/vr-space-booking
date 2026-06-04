@@ -10,7 +10,8 @@ export interface AuditLog {
   targetLabel?: string
   beforeValue?: Record<string, any>
   afterValue?: Record<string, any>
-  summary: string
+  summary?: string
+  actionName?: string
   reason?: string
   createdAt: string
 }

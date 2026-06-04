@@ -443,8 +443,8 @@ export default function AuditLogs() {
                             </div>
                           </td>
                           <td className="px-4 py-3">
-                            <span className="text-vr-body-sm text-vrtext-secondary max-w-xs truncate block" title={log.summary}>
-                              {log.summary}
+                            <span className="text-vr-body-sm text-vrtext-secondary max-w-xs truncate block" title={log.summary || log.actionName || ''}>
+                              {log.summary || log.actionName || '-'}
                             </span>
                           </td>
                           <td className="px-4 py-3">
