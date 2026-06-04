@@ -20,8 +20,11 @@ const tabs = [
 
 const statusMap: Record<string, { label: string; color: string }> = {
   PENDING: { label: '待支付', color: 'text-[var(--warning)]' },
-  PAID: { label: '待核销', color: 'text-[var(--accent-primary)]' },
+  PAID: { label: '已付款', color: 'text-[var(--accent-primary)]' },
+  READY_TO_VERIFY: { label: '待核销', color: 'text-blue-400' },
+  PLAYING: { label: '游戏中', color: 'text-emerald-400' },
   COMPLETED: { label: '已完成', color: 'text-[var(--success)]' },
+  NO_SHOW: { label: '已作废', color: 'text-[var(--text-muted)]' },
   CANCELLED: { label: '已取消', color: 'text-[var(--text-muted)]' },
   REFUNDED: { label: '已退款', color: 'text-[var(--text-muted)]' },
 }
@@ -196,8 +199,20 @@ export default function Orders() {
                 isExpired = true
               } else {
                 const m = Math.floor(diff / 60000)
-                const s = Math.floor((diff % 60000) / 1000)
-                countdownText = `${m}分${s.toString().padStart(2, '0')}秒后过期`
+                const sec = Math.floor((diff % 60000) / 1000)
+                countdownText = `${m}分${sec.toString().padStart(2, '0')}秒后过期`
+              }
+            } else if (o.booking?.date && o.booking?.startTime && ['PAID', 'READY_TO_VERIFY'].includes(o.status)) {
+              const startDate = new Date(o.booking.date)
+              const [h, m] = o.booking.startTime.split(':')
+              startDate.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
+              const diff = startDate.getTime() - Date.now()
+              if (diff > 0) {
+                const hours = Math.floor(diff / 3600000)
+                const mins = Math.floor((diff % 3600000) / 60000)
+                countdownText = hours > 0 ? `${hours}小时${mins}分后开场` : `${mins}分钟后开场`
+              } else {
+                countdownText = '场次已开始'
               }
             }
             return (
@@ -439,12 +454,17 @@ export default function Orders() {
                 <div className="flex items-center justify-center">
                   <span className={cn(
                     'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium',
-                    ticketOrder.status === 'PAID' ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]' :
+                    ticketOrder.status === 'PAID' || ticketOrder.status === 'READY_TO_VERIFY' ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]' :
+                    ticketOrder.status === 'PLAYING' ? 'bg-emerald-500/10 text-emerald-400 animate-pulse' :
                     ticketOrder.status === 'COMPLETED' ? 'bg-emerald-500/10 text-emerald-400' :
                     'bg-[var(--text-muted)]/10 text-[var(--text-muted)]'
                   )}>
-                    {ticketOrder.status === 'PAID' ? '待核销' :
+                    {ticketOrder.status === 'PENDING' ? '待支付' :
+                     ticketOrder.status === 'PAID' ? '已付款' :
+                     ticketOrder.status === 'READY_TO_VERIFY' ? '待核销' :
+                     ticketOrder.status === 'PLAYING' ? '游戏中' :
                      ticketOrder.status === 'COMPLETED' ? '已完成' :
+                     ticketOrder.status === 'NO_SHOW' ? '已作废' :
                      ticketOrder.status === 'CANCELLED' ? '已取消' :
                      ticketOrder.status === 'REFUNDED' ? '已退款' : ticketOrder.status}
                   </span>
@@ -505,7 +525,7 @@ export default function Orders() {
                 )}
 
                 {/* QR Code */}
-                {ticketOrder.status === 'PAID' || ticketOrder.status === 'COMPLETED' ? (
+                {['PAID', 'READY_TO_VERIFY', 'COMPLETED'].includes(ticketOrder.status) ? (
                   <div className="flex flex-col items-center pt-2">
                     <div className="bg-white rounded-xl p-3 shadow-sm">
                       <SimpleQRCode value={ticketOrder.id} size={160} />
@@ -519,7 +539,9 @@ export default function Orders() {
                       <QrCode className="w-10 h-10 text-[var(--text-muted)] opacity-30" />
                     </div>
                     <p className="text-xs text-[var(--text-muted)] mt-2">
-                      {ticketOrder.status === 'CANCELLED' ? '订单已取消，二维码已失效' :
+                      {ticketOrder.status === 'PLAYING' ? '游戏进行中，已签到入场' :
+                       ticketOrder.status === 'NO_SHOW' ? '订单已作废，二维码已失效' :
+                       ticketOrder.status === 'CANCELLED' ? '订单已取消，二维码已失效' :
                        ticketOrder.status === 'REFUNDED' ? '订单已退款，二维码已失效' :
                        '二维码未生成'}
                     </p>
