@@ -9,6 +9,8 @@ const router = Router()
 router.get('/member-public', controller.memberPublic)
 // 公开接口：退款规则（供C端订单页展示阶梯退费规则）
 router.get('/refund-rules', controller.refundRules)
+// 公开接口：预约配置（供C端使用）
+router.get('/booking-config', controller.bookingConfig)
 
 router.use(authenticate, requireRole('SUPER_ADMIN','ADMIN'))
 

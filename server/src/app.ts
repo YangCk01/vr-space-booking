@@ -21,7 +21,7 @@ const corsOrigin = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
   : process.env.NODE_ENV === 'production'
     ? []
-    : ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174', 'http://127.0.0.1:5173', 'http://127.0.0.1:5174', 'http://192.168.2.200:5173', 'http://192.168.2.200:5174']
+    : ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:5176', 'http://127.0.0.1:5173', 'http://127.0.0.1:5174', 'http://127.0.0.1:5175', 'http://127.0.0.1:5176', 'http://192.168.2.200:5173', 'http://192.168.2.200:5174', 'http://192.168.2.200:5175', 'http://192.168.2.200:5176']
 
 app.use(cors({
   origin: corsOrigin.length ? corsOrigin : true,

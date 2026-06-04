@@ -279,10 +279,8 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
     verifyAdvanceMinutes: s.verify_advance_minutes?.value ?? 15,
     lateBufferMinutes: s.late_buffer_minutes?.value ?? 10,
     noShowDeadlineMinutes: s.no_show_deadline_minutes?.value ?? 15,
-    playingDurationMinutes: s.playing_duration_minutes?.value ?? 40,
     noShowPenaltyRate: s.no_show_penalty_rate?.value ?? 100,
     enableAutoNoShow: s.enable_auto_no_show?.value ?? true,
-    enableStandbyConversion: s.enable_standby_conversion?.value ?? true,
   })
   const defaultTiers: RefundTier[] = [
     { hours: 24, rate: 100, label: '开场24小时前' },
@@ -306,10 +304,8 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       verifyAdvanceMinutes: s.verify_advance_minutes?.value ?? 15,
       lateBufferMinutes: s.late_buffer_minutes?.value ?? 10,
       noShowDeadlineMinutes: s.no_show_deadline_minutes?.value ?? 15,
-      playingDurationMinutes: s.playing_duration_minutes?.value ?? 40,
       noShowPenaltyRate: s.no_show_penalty_rate?.value ?? 100,
       enableAutoNoShow: s.enable_auto_no_show?.value ?? true,
-      enableStandbyConversion: s.enable_standby_conversion?.value ?? true,
     })
     const raw = s.booking_refund_tiers?.value
     setTiers(raw && Array.isArray(raw) && raw.length > 0 ? raw : defaultTiers)
@@ -353,7 +349,7 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       setError('时长/天数不能为负数')
       return
     }
-    if (values.verifyAdvanceMinutes < 0 || values.lateBufferMinutes < 0 || values.noShowDeadlineMinutes < 0 || values.playingDurationMinutes < 0) {
+    if (values.verifyAdvanceMinutes < 0 || values.lateBufferMinutes < 0 || values.noShowDeadlineMinutes < 0) {
       setError('分钟数不能为负数')
       return
     }
@@ -383,10 +379,8 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       { key: 'verify_advance_minutes', value: values.verifyAdvanceMinutes, category: 'booking' },
       { key: 'late_buffer_minutes', value: values.lateBufferMinutes, category: 'booking' },
       { key: 'no_show_deadline_minutes', value: values.noShowDeadlineMinutes, category: 'booking' },
-      { key: 'playing_duration_minutes', value: values.playingDurationMinutes, category: 'booking' },
       { key: 'no_show_penalty_rate', value: values.noShowPenaltyRate, category: 'booking' },
       { key: 'enable_auto_no_show', value: values.enableAutoNoShow, category: 'booking' },
-      { key: 'enable_standby_conversion', value: values.enableStandbyConversion, category: 'booking' },
     ])
   }
 
@@ -488,14 +482,14 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
         </motion.div>
         <motion.div {...fadeInUp} className="flex items-center justify-between py-2">
           <div>
-            <label className="block text-vr-body-sm text-vrtext-primary">是否允许超时</label>
-            <p className="text-vr-caption text-vrtext-tertiary">超时后自动结束预约</p>
+            <label className="block text-vr-body-sm text-vrtext-primary">允许延长游戏时间</label>
+            <p className="text-vr-caption text-vrtext-tertiary">游戏达到标准时长后，是否允许顾客继续体验</p>
           </div>
           <Switch checked={values.allowOvertime} onCheckedChange={(v) => update('allowOvertime', v)} />
         </motion.div>
         {values.allowOvertime && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.3, ease }}>
-            <label className="block text-vr-caption text-vrtext-secondary mb-1">超时宽限时间（分钟）</label>
+            <label className="block text-vr-caption text-vrtext-secondary mb-1">可延长时长（分钟）</label>
             <input
               type="number"
               value={values.overtimeMinutes}
@@ -512,7 +506,6 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
               { label: '开场前进入待核销（分钟）', key: 'verifyAdvanceMinutes', desc: '开场前多少分钟订单状态变为「待核销」，顾客可开始入场' },
               { label: '迟到宽限期（分钟）', key: 'lateBufferMinutes', desc: '开场后多少分钟内仍可入场，超过后标记为爽约' },
               { label: '最大缓冲期 / 自动作废（分钟）', key: 'noShowDeadlineMinutes', desc: '开场后超过此时间未到场，系统自动标记为「已作废/爽约」' },
-              { label: '单场游戏标准时长（分钟）', key: 'playingDurationMinutes', desc: '用于自动计算游戏结束时间，从开场时间开始计时' },
             ].map((f) => (
               <div key={f.key}>
                 <label className="block text-vr-caption text-vrtext-secondary mb-1">{f.label}</label>
@@ -546,13 +539,6 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
                 <p className="text-vr-caption text-vrtext-tertiary">超过最大缓冲期后系统自动将订单标记为作废</p>
               </div>
               <Switch checked={values.enableAutoNoShow} onCheckedChange={(v) => update('enableAutoNoShow', v)} />
-            </div>
-            <div className="flex items-center justify-between py-1">
-              <div>
-                <label className="block text-vr-body-sm text-vrtext-primary">允许转为候补票</label>
-                <p className="text-vr-caption text-vrtext-tertiary">店长可将作废订单转为候补票，供现场 walk-in 顾客使用</p>
-              </div>
-              <Switch checked={values.enableStandbyConversion} onCheckedChange={(v) => update('enableStandbyConversion', v)} />
             </div>
           </div>
         </motion.div>

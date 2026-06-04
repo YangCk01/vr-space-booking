@@ -30,7 +30,7 @@ const statusMap: Record<string, { label: string; color: string }> = {
 }
 
 /* ─── 阶梯退费计算（动态规则） ─── */
-function getRefundInfo(order: any, tiers: RefundTier[]) {
+function getRefundInfo(order: any, tiers: RefundTier[], cancelHours: number) {
   const booking = order?.booking
   if (!booking?.date || !booking?.startTime) {
     return { rate: 0, refundAmount: 0, refundText: '¥0.00', canCancel: true, deadlineText: '', isExpired: false, activeTier: null as RefundTier | null }
@@ -56,25 +56,22 @@ function getRefundInfo(order: any, tiers: RefundTier[]) {
   const refundAmount = Math.floor((order.amount || 0) * rate)
   const refundText = `¥${(refundAmount / 100).toFixed(2)}`
 
-  // 最小阈值（不可取消的小时数）
-  const minHours = sorted.length > 0 ? sorted[sorted.length - 1].hours : 0
-
-  // 最迟取消提示
+  // 最迟取消提示（使用 cancelHours 作为不可取消阈值）
   let deadlineText = ''
-  if (diffHours > minHours) {
-    const d = new Date(startDate.getTime() - minHours * 60 * 60 * 1000)
-    if (minHours >= 24) {
+  if (diffHours > cancelHours) {
+    const d = new Date(startDate.getTime() - cancelHours * 60 * 60 * 1000)
+    if (cancelHours >= 24) {
       deadlineText = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前可取消`
     } else {
       deadlineText = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前可取消`
     }
   } else if (diffHours > 0) {
-    deadlineText = `开场前${minHours}小时内不可取消`
+    deadlineText = `开场前${cancelHours}小时内不可取消`
   } else {
     deadlineText = '已开场，不可取消'
   }
 
-  return { rate, refundAmount, refundText, canCancel: diffHours > minHours || order.status === 'PENDING', deadlineText, isExpired: diffHours <= 0, activeTier }
+  return { rate, refundAmount, refundText, canCancel: diffHours > cancelHours || order.status === 'PENDING', deadlineText, isExpired: diffHours <= 0, activeTier }
 }
 
 export default function Orders() {
@@ -299,7 +296,7 @@ export default function Orders() {
               {(() => {
                 const o = data?.data?.find((oo: any) => oo.id === cancelId)
                 if (!o) return null
-                const info = getRefundInfo(o, refundTiers)
+                const info = getRefundInfo(o, refundTiers, cancelHours)
                 const isPaid = ['PAID', 'READY_TO_VERIFY'].includes(o.status)
                 return (
                   <div className="p-5 space-y-4">

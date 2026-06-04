@@ -5,9 +5,10 @@ interface LifecycleConfig {
   verifyAdvanceMinutes: number
   lateBufferMinutes: number
   noShowDeadlineMinutes: number
-  playingDurationMinutes: number
   noShowPenaltyRate: number
   enableAutoNoShow: boolean
+  allowOvertime: boolean
+  overtimeMinutes: number
 }
 
 async function getLifecycleConfig(): Promise<LifecycleConfig> {
@@ -15,9 +16,10 @@ async function getLifecycleConfig(): Promise<LifecycleConfig> {
     'verify_advance_minutes',
     'late_buffer_minutes',
     'no_show_deadline_minutes',
-    'playing_duration_minutes',
     'no_show_penalty_rate',
     'enable_auto_no_show',
+    'booking_allow_overtime',
+    'booking_overtime_minutes',
   ]
   const settings = await prisma.systemSetting.findMany({
     where: { key: { in: keys } },
@@ -31,9 +33,10 @@ async function getLifecycleConfig(): Promise<LifecycleConfig> {
     verifyAdvanceMinutes: map.verify_advance_minutes ?? 15,
     lateBufferMinutes: map.late_buffer_minutes ?? 10,
     noShowDeadlineMinutes: map.no_show_deadline_minutes ?? 15,
-    playingDurationMinutes: map.playing_duration_minutes ?? 40,
     noShowPenaltyRate: map.no_show_penalty_rate ?? 100,
     enableAutoNoShow: map.enable_auto_no_show ?? true,
+    allowOvertime: map.booking_allow_overtime ?? false,
+    overtimeMinutes: map.booking_overtime_minutes ?? 10,
   }
 }
 
@@ -100,7 +103,8 @@ export function startBookingLifecycleJob() {
 
       for (const b of playingBookings) {
         const start = getBookingStartTime(b.date, b.startTime)
-        if (now >= start) {
+        const deadline = new Date(start.getTime() + cfg.lateBufferMinutes * 60 * 1000)
+        if (now >= start && now <= deadline) {
           await prisma.$transaction(async (tx) => {
             await tx.booking.update({
               where: { id: b.id },
@@ -117,16 +121,22 @@ export function startBookingLifecycleJob() {
       }
 
       // ── 3. 游戏结束：PLAYING → COMPLETED ──
+      // 使用场地/游戏自身设置的 duration，不再读取全局配置
       const completedBookings = await prisma.booking.findMany({
         where: {
           status: 'PLAYING',
         },
-        include: { order: true },
+        include: { order: true, game: true },
       })
 
       for (const b of completedBookings) {
+        // 没有关联游戏的预约不自动结束，需店长手动标记
+        if (!b.game) continue
+
         const start = getBookingStartTime(b.date, b.startTime)
-        const endTime = new Date(start.getTime() + cfg.playingDurationMinutes * 60 * 1000)
+        const baseDuration = b.game.duration || 30
+        const totalDuration = baseDuration + (cfg.allowOvertime ? cfg.overtimeMinutes : 0)
+        const endTime = new Date(start.getTime() + totalDuration * 60 * 1000)
         if (now >= endTime) {
           await prisma.$transaction(async (tx) => {
             await tx.booking.update({

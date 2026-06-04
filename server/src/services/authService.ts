@@ -144,6 +144,15 @@ export async function register(input: RegisterInput) {
     },
   })
 
+  // 给新用户打上 NEW_CUSTOMER 标签（用于营销活动人群定向）
+  try {
+    await prisma.userTag.create({
+      data: { userId: user.id, tag: 'NEW_CUSTOMER' },
+    })
+  } catch (e) {
+    // 标签已存在，忽略错误
+  }
+
   // 自动发放 AUTO_GIFT 活动奖励
   try {
     await distributeAutoGifts(user.id)

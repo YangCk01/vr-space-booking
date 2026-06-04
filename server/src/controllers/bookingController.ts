@@ -241,6 +241,18 @@ export async function create(req: Request, res: Response) {
 
     const queryDate = new Date(`${date}T00:00:00.000Z`)
 
+    // 检查可提前预约天数
+    const advanceSetting = await prisma.systemSetting.findUnique({ where: { key: 'booking_advance_days' } })
+    const advanceRaw = advanceSetting?.value as any
+    const advanceDays = typeof advanceRaw === 'number' ? advanceRaw : (advanceRaw?.value as number) ?? 7
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const maxDate = new Date(today)
+    maxDate.setDate(maxDate.getDate() + advanceDays)
+    if (queryDate > maxDate) {
+      return error(res, `只能预约未来 ${advanceDays} 天内的场次`, 400)
+    }
+
     // 检查场地维护时段
     if (venue.status === 'MAINTENANCE' && venue.maintenanceStartDate && venue.maintenanceEndDate && venue.maintenanceStartTime && venue.maintenanceEndTime) {
       const bookingDateStr = date as string

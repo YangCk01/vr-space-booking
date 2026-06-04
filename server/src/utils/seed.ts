@@ -115,10 +115,8 @@ async function seed() {
     { key: 'verify_advance_minutes', value: { value: 15 }, category: 'booking' },
     { key: 'late_buffer_minutes', value: { value: 10 }, category: 'booking' },
     { key: 'no_show_deadline_minutes', value: { value: 15 }, category: 'booking' },
-    { key: 'playing_duration_minutes', value: { value: 40 }, category: 'booking' },
     { key: 'no_show_penalty_rate', value: { value: 100 }, category: 'booking' },
     { key: 'enable_auto_no_show', value: { value: true }, category: 'booking' },
-    { key: 'enable_standby_conversion', value: { value: true }, category: 'booking' },
     /* ── payment ── */
     { key: 'payment_wechat', value: { value: true }, category: 'payment' },
     { key: 'payment_alipay', value: { value: true }, category: 'payment' },

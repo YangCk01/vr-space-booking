@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { prisma } from '../utils/prisma'
 import { success, error } from '../utils/response'
 import { getMemberLevels, getPointsConfig } from '../utils/memberConfig'
+import { getConfig } from '../services/configService'
 
 interface RefundTier {
   hours: number
@@ -29,8 +30,10 @@ export async function refundRules(req: Request, res: Response) {
       prisma.systemSetting.findUnique({ where: { key: 'booking_refund_tiers' } }),
       prisma.systemSetting.findUnique({ where: { key: 'booking_cancel_hours' } }),
     ])
-    const raw = (tierSetting?.value as any)?.value as RefundTier[] | undefined
-    const cancelHours = ((cancelSetting?.value as any)?.value as number) ?? 2
+    const tierRaw = tierSetting?.value as any
+    const cancelRaw = cancelSetting?.value as any
+    const raw = (typeof tierRaw === 'object' && tierRaw !== null && 'value' in tierRaw ? tierRaw.value : tierRaw) as RefundTier[] | undefined
+    const cancelHours = (typeof cancelRaw === 'object' && cancelRaw !== null && 'value' in cancelRaw ? cancelRaw.value : cancelRaw) ?? 2
     const tiers: RefundTier[] = raw && Array.isArray(raw) && raw.length > 0
       ? raw
       : [
@@ -38,6 +41,19 @@ export async function refundRules(req: Request, res: Response) {
           { hours: 2, rate: 50, label: '开场2-24小时' },
         ]
     return success(res, { tiers, cancelHours })
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+/** 公开接口：返回预约相关配置（供C端使用） */
+export async function bookingConfig(req: Request, res: Response) {
+  try {
+    const setting = await prisma.systemSetting.findUnique({ where: { key: 'booking_advance_days' } })
+    const raw = setting?.value as any
+    // 兼容两种格式：直接存储的数字，或 { value: number } 对象
+    const advanceDays = typeof raw === 'number' ? raw : (raw?.value as number) ?? 7
+    return success(res, { advanceDays })
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }

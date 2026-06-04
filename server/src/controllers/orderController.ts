@@ -656,7 +656,8 @@ async function calcRefundRate(bookingDate: Date, startTime: string): Promise<num
 
   // 从数据库读取阶梯规则，没有则使用默认
   const setting = await prisma.systemSetting.findUnique({ where: { key: 'booking_refund_tiers' } })
-  const raw = (setting?.value as any)?.value as RefundTier[] | undefined
+  const rawVal = setting?.value as any
+  const raw = (typeof rawVal === 'object' && rawVal !== null && 'value' in rawVal ? rawVal.value : rawVal) as RefundTier[] | undefined
   const tiers: RefundTier[] = raw && Array.isArray(raw) && raw.length > 0
     ? raw
     : [
@@ -692,6 +693,22 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
     }
 
     const isPaidOrder = ['PAID', 'READY_TO_VERIFY'].includes(order.status)
+
+    // 检查取消预约时限
+    if (order.booking) {
+      const start = new Date(order.booking.date)
+      const [h, m] = order.booking.startTime.split(':')
+      start.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
+      const diffHours = (start.getTime() - Date.now()) / (1000 * 60 * 60)
+
+      const cancelSetting = await prisma.systemSetting.findUnique({ where: { key: 'booking_cancel_hours' } })
+      const raw = cancelSetting?.value as any
+      const cancelHours = (typeof raw === 'object' && raw !== null && 'value' in raw ? raw.value : raw) ?? 2
+
+      if (diffHours <= cancelHours) {
+        return error(res, `开场前${cancelHours}小时内不可取消`, 400)
+      }
+    }
 
     // 计算阶梯退费比例
     let refundRate = 1
@@ -1131,7 +1148,8 @@ export async function markNoShow(req: AuthenticatedRequest, res: Response) {
     }
 
     const setting = await prisma.systemSetting.findUnique({ where: { key: 'no_show_penalty_rate' } })
-    const penaltyRate = ((setting?.value as any)?.value as number) ?? 100
+    const raw = setting?.value as any
+    const penaltyRate = (typeof raw === 'object' && raw !== null && 'value' in raw ? raw.value : raw) ?? 100
     const penaltyAmount = Math.floor((order.amount || 0) * penaltyRate / 100)
 
     await prisma.$transaction(async (tx) => {

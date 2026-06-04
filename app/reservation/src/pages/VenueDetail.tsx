@@ -6,6 +6,7 @@ import { ChevronLeft, MapPin, Phone, Users, Clock, Copy, Star } from 'lucide-rea
 import { getVenue } from '@/api/venues'
 import { getGames } from '@/api/games'
 import { getBookings } from '@/api/bookings'
+import { getBookingConfig } from '@/api/settings'
 import { getImageUrl } from '@/lib/imageUrl'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/providers/AuthProvider'
@@ -54,18 +55,25 @@ export default function VenueDetail() {
   const selectedGame = activeGames.find((g) => g.id === selectedGameId)
   const gamePrice = selectedGame ? selectedGame.price / 100 : 0
 
+  // Fetch booking config
+  const { data: bookingConfig } = useQuery({
+    queryKey: ['booking-config'],
+    queryFn: getBookingConfig,
+  })
+  const advanceDays = bookingConfig?.advanceDays || 7
+
   // Days
   const days = useMemo(() => {
     const result: Date[] = []
     const today = new Date()
     today.setHours(0, 0, 0, 0)
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < advanceDays; i++) {
       const d = new Date(today)
       d.setDate(d.getDate() + i)
       result.push(d)
     }
     return result
-  }, [])
+  }, [advanceDays])
 
   const selectedDate = days[selectedDay]
   const dateStr = useMemo(() => {
@@ -382,7 +390,7 @@ export default function VenueDetail() {
           {/* 右渐变提示 */}
           <div className="absolute right-0 top-0 bottom-2 w-5 bg-gradient-to-l from-[var(--bg-primary)] to-transparent z-10 pointer-events-none" />
           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide snap-x snap-mandatory touch-pan-x scroll-smooth">
-            {days.slice(0, 7).map((date, idx) => {
+            {days.map((date, idx) => {
               const isActive = idx === selectedDay
               return (
                 <button

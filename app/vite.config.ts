@@ -13,7 +13,6 @@ export default defineConfig({
     host: '0.0.0.0', // 绑定到所有网卡，确保局域网可访问
     hmr: {
       host: 'localhost',
-      port: 5173,
     },
   },
   resolve: {

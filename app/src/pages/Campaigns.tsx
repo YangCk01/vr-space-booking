@@ -861,7 +861,7 @@ function CampaignTrackList({ campaignId }: { campaignId: string }) {
   const pageSize = 10
   const { data } = useQuery({
     queryKey: ['campaign-tracks', campaignId, page],
-    queryFn: () => getCampaignTracks(campaignId, { page, pageSize }),
+    queryFn: () => getCampaignLogs(campaignId, { page, pageSize }),
     enabled: !!campaignId,
   })
 
@@ -895,6 +895,13 @@ function CampaignTrackList({ campaignId }: { campaignId: string }) {
                 </span>
                 <span className="text-vr-caption text-vrtext-muted">
                   {stepLabel[t.step] || t.step}
+                  {t.rewardType && (
+                    <span className="ml-2 text-vr-accent-primary">
+                      {t.rewardType === 'POINTS' ? '积分' : (t.rewardCouponName || t.rewardType)}
+                      {t.rewardType === 'POINTS' && t.rewardValue ? ` ${t.rewardValue}积分` : ''}
+                      {t.rewardType !== 'POINTS' && t.rewardValue ? ` ¥${(t.rewardValue / 100).toFixed(2)}` : ''}
+                    </span>
+                  )}
                 </span>
               </div>
               <span className="text-vr-caption text-vrtext-muted">

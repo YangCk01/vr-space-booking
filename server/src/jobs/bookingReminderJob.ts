@@ -24,7 +24,8 @@ export function startBookingReminderJob() {
 
       // 读取配置
       const advanceSetting = await prisma.systemSetting.findUnique({ where: { key: 'verify_advance_minutes' } })
-      const verifyAdvanceMinutes = ((advanceSetting?.value as any)?.value as number) ?? 15
+      const raw = advanceSetting?.value as any
+      const verifyAdvanceMinutes = (typeof raw === 'object' && raw !== null && 'value' in raw ? raw.value : raw) ?? 15
 
       // 查询未来24小时内的已支付/待核销预约
       const upcomingBookings = await prisma.booking.findMany({
