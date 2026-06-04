@@ -2,11 +2,12 @@ import cron from 'node-cron'
 import { prisma } from '../utils/prisma'
 import { pushNotification } from '../controllers/notificationController'
 
+/**
+ * 计算预约的开始时间（东八区）
+ */
 function getBookingStartTime(date: Date, startTime: string): Date {
-  const d = new Date(date)
-  const [h, m] = startTime.split(':')
-  d.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
-  return d
+  const dateStr = date.toISOString().split('T')[0]
+  return new Date(`${dateStr}T${startTime}:00+08:00`)
 }
 
 /**
@@ -50,30 +51,34 @@ export function startBookingReminderJob() {
         const diffMinutes = diffMs / (1000 * 60)
         const diffHours = diffMs / (1000 * 60 * 60)
 
-        const reminderKey = `${booking.id}-${Math.floor(diffMinutes / 5) * 5}`
-        if (sentReminders.has(reminderKey)) continue
+        // 使用精确类型的 reminder key，避免不同类型提醒冲突
+        const key2h = `${booking.id}-2h`
+        const key15m = `${booking.id}-15m`
+        const keyUrgent = `${booking.id}-urgent`
 
         // 场景1：开场前2小时提醒
         if (diffMinutes <= 120 && diffMinutes > 115) {
+          if (sentReminders.has(key2h)) continue
           await pushNotification(
             booking.userId,
             'BOOKING_REMIND',
             '场次即将开始',
             `您预约的 ${booking.venue?.name || 'VR体验'} ${booking.startTime} 场次将在2小时后开始，请提前15分钟到场准备。`
           )
-          sentReminders.add(reminderKey)
+          sentReminders.add(key2h)
           console.log(`[ReminderJob] 发送2小时提醒: ${booking.id}`)
         }
 
         // 场景2：开场前15分钟提醒（进入待核销阶段）
         else if (diffMinutes <= verifyAdvanceMinutes && diffMinutes > verifyAdvanceMinutes - 5) {
+          if (sentReminders.has(key15m)) continue
           await pushNotification(
             booking.userId,
             'BOOKING_VERIFY',
             '场次即将开始',
             `您预约的 ${booking.venue?.name || 'VR体验'} ${booking.startTime} 场次即将开始，请尽快到场签到入场。`
           )
-          sentReminders.add(reminderKey)
+          sentReminders.add(key15m)
           console.log(`[ReminderJob] 发送开场前提醒: ${booking.id}`)
         }
 
@@ -82,6 +87,7 @@ export function startBookingReminderJob() {
           const orderAgeMinutes = (now.getTime() - new Date(booking.order.createdAt).getTime()) / (1000 * 60)
           // 订单创建后5分钟内且距开场不足2小时
           if (orderAgeMinutes <= 5) {
+            if (sentReminders.has(keyUrgent)) continue
             const hours = Math.floor(diffMinutes / 60)
             const mins = Math.floor(diffMinutes % 60)
             const timeText = hours > 0 ? `${hours}小时${mins}分` : `${mins}分钟`
@@ -91,7 +97,7 @@ export function startBookingReminderJob() {
               '预约成功，场次临近',
               `您预约的 ${booking.venue?.name || 'VR体验'} ${booking.startTime} 场次距开场仅剩${timeText}，请务必提前15分钟到达，迟到将导致游戏时间缩短或无法入场。`
             )
-            sentReminders.add(reminderKey)
+            sentReminders.add(keyUrgent)
             console.log(`[ReminderJob] 发送紧急提醒: ${booking.id}`)
           }
         }

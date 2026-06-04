@@ -37,15 +37,14 @@ async function getLifecycleConfig(): Promise<LifecycleConfig> {
   }
 }
 
-function toBeijingDate(date: Date): Date {
-  return new Date(date.getTime() + 8 * 60 * 60 * 1000)
-}
-
+/**
+ * 计算预约的开始时间（东八区）
+ * booking.date 是 UTC 午夜，startTime 是本地时间字符串如 "20:00"
+ * 返回东八区对应的 Date 对象
+ */
 function getBookingStartTime(date: Date, startTime: string): Date {
-  const d = new Date(date)
-  const [h, m] = startTime.split(':')
-  d.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
-  return d
+  const dateStr = date.toISOString().split('T')[0] // '2026-06-04'
+  return new Date(`${dateStr}T${startTime}:00+08:00`)
 }
 
 /**
@@ -59,11 +58,14 @@ export function startBookingLifecycleJob() {
       const cfg = await getLifecycleConfig()
 
       // ── 1. 开场前 X 分钟：PAID → READY_TO_VERIFY，Booking → READY ──
-      const verifyThreshold = new Date(now.getTime() + cfg.verifyAdvanceMinutes * 60 * 1000)
+      // 只处理开场前且状态为 CONFIRMED 的预约
       const readyBookings = await prisma.booking.findMany({
         where: {
           status: 'CONFIRMED',
-          date: { lte: new Date(verifyThreshold.getTime() + 24 * 60 * 60 * 1000) },
+          date: {
+            gte: new Date(now.getTime() - 1 * 60 * 60 * 1000), // 1小时前开始
+            lte: new Date(now.getTime() + cfg.verifyAdvanceMinutes * 60 * 1000 + 24 * 60 * 60 * 1000),
+          },
         },
         include: { order: true },
       })
@@ -71,7 +73,8 @@ export function startBookingLifecycleJob() {
       for (const b of readyBookings) {
         const start = getBookingStartTime(b.date, b.startTime)
         const diffMs = start.getTime() - now.getTime()
-        if (diffMs <= cfg.verifyAdvanceMinutes * 60 * 1000 && diffMs > -cfg.lateBufferMinutes * 60 * 1000) {
+        // 开场前 verifyAdvanceMinutes 分钟内触发，开场后不触发
+        if (diffMs > 0 && diffMs <= cfg.verifyAdvanceMinutes * 60 * 1000) {
           if (b.order && b.order.status === 'PAID') {
             await prisma.order.update({
               where: { id: b.order.id },

@@ -8,7 +8,7 @@ import { getRefundRules } from '@/api/settings'
 import { useAuth } from '@/providers/AuthProvider'
 import { cn } from '@/lib/utils'
 import { SimpleQRCode } from '@/components/SimpleQRCode'
-import type { RefundTier } from '@/api/settings'
+import type { RefundTier, RefundRules } from '@/api/settings'
 
 const tabs = [
   { key: 'all', label: '全部' },
@@ -99,17 +99,18 @@ export default function Orders() {
     enabled: isLoggedIn,
   })
 
-  const { data: refundTiersData } = useQuery({
+  const { data: refundRulesData } = useQuery({
     queryKey: ['refundRules'],
     queryFn: () => getRefundRules(),
     enabled: isLoggedIn,
     staleTime: 1000 * 60 * 5,
   })
 
-  const refundTiers = refundTiersData ?? [
+  const refundTiers = refundRulesData?.tiers ?? [
     { hours: 24, rate: 100, label: '开场24小时前' },
     { hours: 2, rate: 50, label: '开场2-24小时' },
   ]
+  const cancelHours = refundRulesData?.cancelHours ?? 2
 
   const cancelMutation = useMutation({
     mutationFn: cancelOrder,
@@ -367,7 +368,7 @@ export default function Orders() {
                         <p className="text-xs font-medium text-[var(--text-primary)]">取消前请确认退费金额</p>
                         <p className="text-[10px] text-[var(--text-muted)]">
                           系统已按当前时间自动计算可退金额，确认取消后将退回 <span className={cn('font-bold', info.rate === 0 ? 'text-[var(--error)]' : 'text-emerald-400')}>{info.refundText}</span>
-                          {info.rate === 0 ? `（开场前${refundTiers.length > 0 ? Math.min(...refundTiers.map((t) => t.hours)) : 2}小时内取消不予退款）` : ''}
+                          {info.rate === 0 ? `（开场前${cancelHours}小时内取消不予退款）` : ''}
                         </p>
                       </div>
                     )}

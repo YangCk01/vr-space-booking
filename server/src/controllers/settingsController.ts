@@ -25,16 +25,19 @@ export async function memberPublic(req: Request, res: Response) {
 /** 公开接口：返回退款阶梯规则（供C端订单页展示） */
 export async function refundRules(req: Request, res: Response) {
   try {
-    const setting = await prisma.systemSetting.findUnique({ where: { key: 'booking_refund_tiers' } })
-    const raw = (setting?.value as any)?.value as RefundTier[] | undefined
+    const [tierSetting, cancelSetting] = await Promise.all([
+      prisma.systemSetting.findUnique({ where: { key: 'booking_refund_tiers' } }),
+      prisma.systemSetting.findUnique({ where: { key: 'booking_cancel_hours' } }),
+    ])
+    const raw = (tierSetting?.value as any)?.value as RefundTier[] | undefined
+    const cancelHours = ((cancelSetting?.value as any)?.value as number) ?? 2
     const tiers: RefundTier[] = raw && Array.isArray(raw) && raw.length > 0
       ? raw
       : [
           { hours: 24, rate: 100, label: '开场24小时前' },
           { hours: 2, rate: 50, label: '开场2-24小时' },
-          { hours: 0, rate: 0, label: '开场2小时内' },
         ]
-    return success(res, { tiers })
+    return success(res, { tiers, cancelHours })
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }

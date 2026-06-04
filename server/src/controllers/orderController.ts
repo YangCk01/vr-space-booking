@@ -424,6 +424,11 @@ export async function updateStatus(req: AuthenticatedRequest, res: Response) {
       data.paidAt = new Date()
     } else if (status === 'CANCELLED') {
       data.cancelledAt = new Date()
+    } else if (status === 'NO_SHOW') {
+      data.noShowAt = new Date()
+      data.noShowReason = 'manual'
+    } else if (status === 'COMPLETED') {
+      data.verifiedAt = new Date()
     }
 
     const order = await prisma.order.update({
@@ -431,12 +436,22 @@ export async function updateStatus(req: AuthenticatedRequest, res: Response) {
       data,
     })
 
-    // 核销订单时，同步将关联排场标记为已完成
-    if (status === 'COMPLETED' && order.bookingId) {
-      await prisma.booking.update({
-        where: { id: order.bookingId },
-        data: { status: 'COMPLETED' },
-      })
+    // 同步更新关联排场状态
+    if (order.bookingId) {
+      const bookingStatusMap: Record<string, 'READY' | 'PLAYING' | 'COMPLETED' | 'NO_SHOW' | 'CANCELLED'> = {
+        READY_TO_VERIFY: 'READY',
+        PLAYING: 'PLAYING',
+        COMPLETED: 'COMPLETED',
+        NO_SHOW: 'NO_SHOW',
+        CANCELLED: 'CANCELLED',
+      }
+      const bs = bookingStatusMap[status]
+      if (bs) {
+        await prisma.booking.update({
+          where: { id: order.bookingId },
+          data: { status: bs },
+        })
+      }
     }
 
     // 触发条件规则（ORDER_COMPLETED 事件）
