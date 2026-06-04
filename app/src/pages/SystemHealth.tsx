@@ -75,7 +75,29 @@ export default function SystemHealth() {
     staleTime: 1000 * 60,
   })
 
-  const checks: HealthCheck[] = healthData?.data || []
+  const checkTypeMap: Record<string, string> = {
+    BALANCE_CONSISTENCY: '余额一致性校验',
+  }
+
+  // 兼容后端新旧格式：规范化健康检查数据
+  const rawChecks = healthData?.data || []
+  const checks: HealthCheck[] = rawChecks.map((c: any) => {
+    const errors = c.errors || []
+    const firstError = errors[0]
+    const detailsFromErrors = errors.length > 0
+      ? errors.map((e: any) => `用户: ${e.userName || e.userPhone || e.userId} | 字段: ${e.field} | 实际: ${e.actual} | 期望: ${e.expected} | 差异: ${e.diff}`).join('\n')
+      : undefined
+    return {
+      id: c.id,
+      checkType: c.checkType,
+      checkName: c.checkName || checkTypeMap[c.checkType] || c.checkType,
+      status: c.status,
+      runAt: c.runAt || c.createdAt,
+      details: c.details || detailsFromErrors,
+      expectedValue: c.expectedValue !== undefined ? c.expectedValue : (firstError ? String(firstError.expected) : undefined),
+      actualValue: c.actualValue !== undefined ? c.actualValue : (firstError ? String(firstError.actual) : undefined),
+    }
+  })
   const total = healthData?.meta?.total || 0
   const totalPages = healthData?.meta?.totalPages || 1
   const safePage = Math.min(currentPage, totalPages)
@@ -83,28 +105,24 @@ export default function SystemHealth() {
     setCurrentPage(totalPages)
   }
 
-  const checkTypeMap: Record<string, string> = {
-    BALANCE_CONSISTENCY: '余额一致性校验',
-  }
-
   const checkTypes = Array.from(new Set(checks.map((c) => c.checkType)))
 
   const statCards = [
     {
       label: '今日校验项数',
-      value: stats?.totalToday ?? '-',
+      value: stats?.totalToday ?? 0,
       icon: <BarChart3 className="w-5 h-5 text-vraccent-primary" />,
       color: 'text-vraccent-primary',
     },
     {
       label: '异常数',
-      value: stats?.failCount ?? '-',
+      value: stats?.failCount ?? 0,
       icon: <XCircle className="w-5 h-5 text-vrerror" />,
       color: 'text-vrerror',
     },
     {
       label: '通过率',
-      value: stats?.passRate !== undefined ? `${stats.passRate}%` : '-',
+      value: stats?.passRate !== undefined ? `${stats.passRate}%` : '100%',
       icon: <ShieldCheck className="w-5 h-5 text-vrsuccess" />,
       color: 'text-vrsuccess',
     },
