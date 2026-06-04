@@ -392,7 +392,7 @@ function StepSelectTime({
     const bookings: any[] = bookingsData?.data || []
     const occupiedSet = new Set<string>()
     for (const booking of bookings) {
-      if (booking.status === 'CANCELLED') continue
+      if (['CANCELLED', 'NO_SHOW'].includes(booking.status)) continue
       const startMin = timeToMinutes(booking.startTime)
       const endMin = timeToMinutes(booking.endTime)
       for (let m = startMin; m < endMin; m += 30) {
