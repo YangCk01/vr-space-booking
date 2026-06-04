@@ -102,6 +102,11 @@ model Booking {
   updatedAt   DateTime      @updatedAt
   gameId      String?
   remindSent  Boolean       @default(false)
+  checkedInAt       DateTime?
+  playingStartedAt  DateTime?
+  playingEndedAt    DateTime?
+  noShowAt          DateTime?
+  bookingMode       BookingMode   @default(SINGLE)
   game        Game?         @relation(fields: [gameId], references: [id])
   user        User?         @relation(fields: [userId], references: [id])
   venue       Venue         @relation(fields: [venueId], references: [id])
@@ -135,6 +140,13 @@ model Order {
   principalDeduction Int                  @default(0)
   userCouponId       String?
   couponDiscount     Int                  @default(0)
+  noShowAt          DateTime?
+  noShowReason      String?
+  penaltyAmount     Int?
+  standbyConverted  Boolean              @default(false)
+  verifiedAt        DateTime?
+  playingStartedAt  DateTime?
+  playingEndedAt    DateTime?
   transactions       BalanceTransaction[]
   booking            Booking?             @relation(fields: [bookingId], references: [id])
   user               User?                @relation(fields: [userId], references: [id])
@@ -576,17 +588,28 @@ enum BookingType {
   MAINTENANCE
 }
 
+enum BookingMode {
+  SINGLE
+  TEAM
+}
+
 enum BookingStatus {
   CONFIRMED
+  READY
   CHECKED_IN
+  PLAYING
   COMPLETED
+  NO_SHOW
   CANCELLED
 }
 
 enum OrderStatus {
   PENDING
   PAID
+  READY_TO_VERIFY
+  PLAYING
   COMPLETED
+  NO_SHOW
   CANCELLED
   REFUNDING
   REFUNDED
@@ -622,6 +645,9 @@ enum TransactionType {
   CANCEL_RESTORE
   ADJUSTMENT
   FREEZE
+  NO_SHOW_PENALTY
+  NO_SHOW_REVERSE
+  STANDBY_SALE
 }
 
 enum EquipmentType {
