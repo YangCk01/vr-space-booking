@@ -255,6 +255,19 @@ export default function OrderConfirm() {
               <p className="text-xs text-[var(--text-muted)]">{month}月{day}日 {weekDay}</p>
             </div>
           </div>
+
+          {/* 重要提示 */}
+          <div className="mt-3 bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-bold text-orange-400">重要提示</p>
+                <p className="text-xs text-orange-400/80 mt-0.5">
+                  大空间 VR 为定时场次，请务必提前 15 分钟到场进行佩戴教学，迟到将导致游戏时间缩短或无法入场。
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Person count */}
