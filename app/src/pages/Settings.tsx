@@ -504,6 +504,58 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
             />
           </motion.div>
         )}
+        {/* ── 入场与核销设置 ── */}
+        <motion.div {...fadeInUp}>
+          <h3 className="text-vr-body-sm font-medium text-vrtext-primary mb-3 pt-2">入场与核销设置</h3>
+          <div className="space-y-4">
+            {[
+              { label: '开场前进入待核销（分钟）', key: 'verifyAdvanceMinutes', desc: '开场前多少分钟订单状态变为「待核销」，顾客可开始入场' },
+              { label: '迟到宽限期（分钟）', key: 'lateBufferMinutes', desc: '开场后多少分钟内仍可入场，超过后标记为爽约' },
+              { label: '最大缓冲期 / 自动作废（分钟）', key: 'noShowDeadlineMinutes', desc: '开场后超过此时间未到场，系统自动标记为「已作废/爽约」' },
+              { label: '单场游戏标准时长（分钟）', key: 'playingDurationMinutes', desc: '用于自动计算游戏结束时间，从开场时间开始计时' },
+            ].map((f) => (
+              <div key={f.key}>
+                <label className="block text-vr-caption text-vrtext-secondary mb-1">{f.label}</label>
+                <input
+                  type="number"
+                  value={values[f.key as keyof typeof values] as number}
+                  onChange={(e) => update(f.key, Number(e.target.value))}
+                  className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                />
+                <p className="mt-1 text-vr-caption text-vrtext-tertiary">{f.desc}</p>
+              </div>
+            ))}
+            <div>
+              <label className="block text-vr-caption text-vrtext-secondary mb-1">爽约违约金比例（%）</label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={values.noShowPenaltyRate}
+                  onChange={(e) => update('noShowPenaltyRate', Number(e.target.value))}
+                  className="flex-1 accent-[#3B82F6]"
+                />
+                <span className="text-vr-body-sm text-vrtext-primary w-12 text-right">{values.noShowPenaltyRate}%</span>
+              </div>
+              <p className="mt-1 text-vr-caption text-vrtext-tertiary">顾客超时未到场时扣除的比例，100%表示不退款</p>
+            </div>
+            <div className="flex items-center justify-between py-1">
+              <div>
+                <label className="block text-vr-body-sm text-vrtext-primary">自动标记爽约</label>
+                <p className="text-vr-caption text-vrtext-tertiary">超过最大缓冲期后系统自动将订单标记为作废</p>
+              </div>
+              <Switch checked={values.enableAutoNoShow} onCheckedChange={(v) => update('enableAutoNoShow', v)} />
+            </div>
+            <div className="flex items-center justify-between py-1">
+              <div>
+                <label className="block text-vr-body-sm text-vrtext-primary">允许转为候补票</label>
+                <p className="text-vr-caption text-vrtext-tertiary">店长可将作废订单转为候补票，供现场 walk-in 顾客使用</p>
+              </div>
+              <Switch checked={values.enableStandbyConversion} onCheckedChange={(v) => update('enableStandbyConversion', v)} />
+            </div>
+          </div>
+        </motion.div>
         {error && (
           <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="text-vr-body-sm text-vrerror">
             {error}
