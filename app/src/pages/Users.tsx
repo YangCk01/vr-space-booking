@@ -126,8 +126,8 @@ function LevelBadge({ level, levelsConfig }: { level: string; levelsConfig?: Arr
   const IconComp = cfg.Icon
 
   return (
-    <span className={cn('inline-flex items-center gap-1 rounded-full px-3 py-1 text-vr-caption font-medium', cfg.bg, cfg.text)}>
-      <IconComp className={cn('w-3 h-3', cfg.iconColor)} />
+    <span className={cn('inline-flex items-center gap-1 rounded-full px-3 py-1 text-vr-caption font-medium whitespace-nowrap', cfg.bg, cfg.text)}>
+      <IconComp className={cn('w-3 h-3 shrink-0', cfg.iconColor)} />
       {displayName}
     </span>
   )
