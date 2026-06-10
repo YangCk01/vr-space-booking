@@ -45,6 +45,13 @@ interface EquipmentItem {
   lastMaint: string
   buyDate: string
   warranty: string
+  occupancy?: {
+    isOccupied: boolean
+    currentBooking?: {
+      personName?: string
+      startTime?: string
+    }
+  }
 }
 
 type EquipmentTypeExcludeAll = 'headset' | 'tracker' | 'controller' | 'computer'
@@ -388,6 +395,7 @@ export default function Equipment() {
         lastMaint: eq.lastMaint ? new Date(eq.lastMaint).toISOString().split('T')[0] : '-',
         buyDate: eq.buyDate ? new Date(eq.buyDate).toISOString().split('T')[0] : '-',
         warranty: eq.warranty ? new Date(eq.warranty).toISOString().split('T')[0] : '-',
+        occupancy: eq.occupancy,
       }
     })
   }, [apiEquipment])
@@ -604,6 +612,9 @@ export default function Equipment() {
                 <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[110px]">
                   状态
                 </th>
+                <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">
+                  当前占用
+                </th>
                 <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">
                   最后维护时间
                 </th>
@@ -653,6 +664,20 @@ export default function Equipment() {
                     {/* Status */}
                     <td className="px-4 py-3 text-center">
                       <StatusBadge status={eq.status} statusText={eq.statusText} />
+                    </td>
+
+                    {/* Occupancy */}
+                    <td className="px-4 py-3">
+                      {eq.occupancy?.isOccupied ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-vr-caption text-vrerror font-medium">使用中</span>
+                          <span className="text-[10px] text-vrtext-muted truncate">
+                            {eq.occupancy.currentBooking?.personName || '未知用户'} · {eq.occupancy.currentBooking?.startTime}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-vr-caption text-vrsuccess">空闲</span>
+                      )}
                     </td>
 
                     {/* Last maintenance */}

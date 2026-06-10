@@ -759,7 +759,7 @@ export default function UsersPage() {
 
   const batchGiftPointsMutation = useMutation({
     mutationFn: ({ userIds, points, remark }: { userIds: string[]; points: number; remark?: string }) =>
-      batchGiftPoints(userIds, points, remark),
+      batchGiftPoints(userIds, points, '批量赠送积分', remark),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       setSelectedIds([])

@@ -5,13 +5,16 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon src/server.ts",
+    "dev:dev": "nodemon src/server.ts --dev",
     "build": "tsc",
     "start": "node dist/server.js",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:seed": "ts-node src/utils/seed.ts",
     "db:studio": "prisma studio",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:recon": "node scripts/recon-smoke-test.js",
+    "test:finance-summary": "node scripts/finance-summary-check.js"
   },
   "keywords": [
     "vr",

@@ -6,6 +6,7 @@ import { success, error, paginated } from '../utils/response'
 import { runManualRecon } from '../jobs/reconciliationJob'
 import { refundByChannel } from '../services/channelRefundService'
 import { testWebhook as testWebhookService } from '../services/notificationService'
+import { logAudit } from '../middleware/auditLog'
 
 /**
  * 获取对账批次列表
@@ -124,8 +125,25 @@ export async function handleException(req: AuthenticatedRequest, res: Response) 
     const { action, remark } = req.body
     const handlerId = req.user?.id
     const handlerName = req.user?.name || '系统'
+    const handlerRole = req.user?.role || ''
 
     if (!action) return error(res, '请指定处理动作', 400)
+    if (!['FIX', 'FREEZE', 'REFUND', 'IGNORE'].includes(action)) {
+      return error(res, '不支持的处理动作', 400)
+    }
+
+    const cleanRemark = typeof remark === 'string' ? remark.trim() : ''
+    if (!cleanRemark || cleanRemark.length < 4) {
+      return error(res, '请填写至少 4 个字的处理说明，便于后续审计追溯', 400)
+    }
+    if (cleanRemark.length > 300) {
+      return error(res, '处理说明不能超过 300 个字', 400)
+    }
+
+    const highRiskActions = ['FIX', 'FREEZE', 'REFUND']
+    if (highRiskActions.includes(action) && !['SUPER_ADMIN', 'ADMIN', 'FINANCE'].includes(handlerRole)) {
+      return error(res, '当前账号无权执行资金/权益类对账处置', 403)
+    }
 
     const exception = await prisma.reconException.findUnique({ where: { id } })
     if (!exception) return error(res, '异常记录不存在', 404)
@@ -133,15 +151,25 @@ export async function handleException(req: AuthenticatedRequest, res: Response) 
       return error(res, '该异常已处理，不可重复操作', 400)
     }
 
+    if (action === 'REFUND' && exception.exceptionType !== 'LONG') {
+      return error(res, '仅长款异常允许执行原路退回', 400)
+    }
+    if (action === 'FREEZE' && exception.exceptionType !== 'SHORT') {
+      return error(res, '仅短款异常允许冻结用户权益', 400)
+    }
+    if (action === 'IGNORE' && Math.abs(exception.diffAmount || 0) >= 10000) {
+      return error(res, '差异金额达到 100 元及以上，不允许直接忽略，请先核实处理', 400)
+    }
+
     let fixTransactionId: string | undefined
 
     // ========== 执行业务操作 ==========
     if (action === 'FIX') {
-      fixTransactionId = await handleFix(exception, remark, handlerId)
+      fixTransactionId = await handleFix(exception, cleanRemark, handlerId)
     } else if (action === 'FREEZE') {
-      fixTransactionId = await handleFreeze(exception, remark, handlerId)
+      fixTransactionId = await handleFreeze(exception, cleanRemark, handlerId)
     } else if (action === 'REFUND') {
-      await handleRefund(exception, remark)
+      await handleRefund(exception, cleanRemark)
     }
 
     const updated = await prisma.reconException.update({
@@ -149,12 +177,65 @@ export async function handleException(req: AuthenticatedRequest, res: Response) 
       data: {
         exceptionStatus: mapActionToStatus(action) as any,
         handleAction: action,
-        handleRemark: remark,
+        handleRemark: cleanRemark,
         handlerId,
         handlerName,
         handledAt: new Date(),
         fixTransactionId: fixTransactionId || null,
       },
+    })
+
+    const beforeValue = JSON.stringify({
+      exceptionStatus: exception.exceptionStatus,
+      diffAmount: exception.diffAmount,
+      bizOrderNo: exception.bizOrderNo,
+      bizAmount: exception.bizAmount,
+      channelAmount: exception.channelAmount,
+    })
+    const afterValue = JSON.stringify({
+      exceptionStatus: updated.exceptionStatus,
+      handleAction: action,
+      fixTransactionId: fixTransactionId || null,
+    })
+    await prisma.$executeRaw`
+      INSERT INTO "FinanceAdjustment" (
+        "id", "adjustmentNo", "source", "type", "status", "targetType", "targetId", "targetDesc",
+        "amount", "pointsAmount", "beforeValue", "afterValue", "reason",
+        "operatorId", "operatorName", "operatorRole", "executedAt", "createdAt", "updatedAt"
+      ) VALUES (
+        ${randomId()}, ${`RADJ${format(new Date(), 'yyyyMMddHHmmss')}${Math.random().toString(36).slice(2, 6).toUpperCase()}`},
+        'RECON_EXCEPTION', ${`${exception.exceptionType}_${action}`}, 'EXECUTED', 'RECON_EXCEPTION', ${id}, ${`对账异常 ${exception.exceptionType}`},
+        ${exception.exceptionType === 'HARDWARE_MISMATCH' ? 0 : Math.abs(exception.diffAmount || 0)},
+        ${exception.exceptionType === 'HARDWARE_MISMATCH' ? Math.abs(exception.diffAmount || 0) : 0},
+        CAST(${beforeValue} AS JSONB), CAST(${afterValue} AS JSONB), ${cleanRemark},
+        ${handlerId || 'system'}, ${handlerName}, ${handlerRole || 'SYSTEM'}, NOW(), NOW(), NOW()
+      )
+    `
+
+    await logAudit(req, {
+      targetType: 'RECONCILE',
+      targetId: id,
+      targetDesc: `对账异常 ${exception.exceptionType}`,
+      action: 'PUT',
+      actionName: '处理对账异常',
+      beforeValue: {
+        exceptionStatus: exception.exceptionStatus,
+        diffAmount: exception.diffAmount,
+        bizOrderNo: exception.bizOrderNo,
+        bizAmount: exception.bizAmount,
+        channelAmount: exception.channelAmount,
+      },
+      afterValue: {
+        exceptionStatus: updated.exceptionStatus,
+        handleAction: action,
+        fixTransactionId: fixTransactionId || null,
+      },
+      diffValue: {
+        action,
+        remark: cleanRemark,
+      },
+      amount: Math.abs(exception.diffAmount || 0),
+      reason: cleanRemark,
     })
 
     return success(res, updated, '处理完成')
@@ -307,14 +388,34 @@ function mapActionToStatus(action: string): string {
   }
 }
 
+function randomId() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16)
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 /**
  * 清空对账数据（管理员）
  * DELETE /recon/clear
  */
 export async function clearReconData(req: AuthenticatedRequest, res: Response) {
   try {
+    if (req.user?.role !== 'SUPER_ADMIN') {
+      return error(res, '仅超级管理员可以清空对账批次和异常记录', 403)
+    }
     const delExc = await prisma.reconException.deleteMany()
     const delBatch = await prisma.reconBatch.deleteMany()
+    await logAudit(req, {
+      targetType: 'RECONCILE',
+      targetId: 'ALL',
+      targetDesc: '全部对账批次和异常记录',
+      action: 'DELETE',
+      actionName: '清空对账数据',
+      afterValue: { deletedExceptions: delExc.count, deletedBatches: delBatch.count },
+      reason: '清空对账批次和异常记录',
+    })
     return success(res, { deletedExceptions: delExc.count, deletedBatches: delBatch.count }, '对账数据已清空')
   } catch (err) {
     return error(res, (err as Error).message, 500)
@@ -343,10 +444,10 @@ export async function testWebhook(req: AuthenticatedRequest, res: Response) {
  */
 export async function runRecon(req: AuthenticatedRequest, res: Response) {
   try {
-    const { date } = req.body
+    const { date, force } = req.body
     const dateStr = date || format(new Date(), 'yyyy-MM-dd')
-    const result = await runManualRecon(dateStr)
-    return success(res, result, '对账已触发')
+    const result = await runManualRecon(dateStr, { force: force === true })
+    return success(res, result, (result as any).skipped ? '该日期已成功对账，已跳过' : '对账已触发')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -358,10 +459,15 @@ export async function runRecon(req: AuthenticatedRequest, res: Response) {
  */
 export async function getSummary(req: AuthenticatedRequest, res: Response) {
   try {
-    const totalBatches = await prisma.reconBatch.count()
-    const pendingExceptions = await prisma.reconException.count({
-      where: { exceptionStatus: 'PENDING' },
-    })
+    const [totalBatches, pendingExceptions, handledExceptions, pendingAmount] = await Promise.all([
+      prisma.reconBatch.count(),
+      prisma.reconException.count({ where: { exceptionStatus: 'PENDING' } }),
+      prisma.reconException.count({ where: { exceptionStatus: { not: 'PENDING' } } }),
+      prisma.reconException.aggregate({
+        where: { exceptionStatus: 'PENDING' },
+        _sum: { diffAmount: true },
+      }),
+    ])
     const todayBatch = await prisma.reconBatch.findFirst({
       orderBy: { reconDate: 'desc' },
     })
@@ -369,6 +475,8 @@ export async function getSummary(req: AuthenticatedRequest, res: Response) {
     return success(res, {
       totalBatches,
       pendingExceptions,
+      handledExceptions,
+      pendingAmount: pendingAmount._sum?.diffAmount || 0,
       lastReconDate: todayBatch?.reconDate || null,
       lastReconStatus: todayBatch?.status || null,
     })

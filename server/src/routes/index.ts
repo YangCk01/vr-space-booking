@@ -28,6 +28,8 @@ import auditLogRoutes from './auditLog'
 import systemRoutes from './system'
 import roleRoutes from './role'
 import systemConfigRoutes from './systemConfig'
+import userBenefitRoutes from './userBenefits'
+import approvalRoutes from './approvals'
 
 const router = Router()
 
@@ -60,5 +62,7 @@ router.use('/trigger-rules', triggerRuleRoutes)
 router.use('/coupon-effects', couponEffectRoutes)
 router.use('/roles', roleRoutes)
 router.use('/system-configs', systemConfigRoutes)
+router.use('/user-benefits', userBenefitRoutes)
+router.use('/approvals', approvalRoutes)
 
 export default router

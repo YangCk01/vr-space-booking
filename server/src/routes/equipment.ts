@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { authenticate, requireRole } from '../middleware/auth'
 import { logOperation } from '../middleware/operationLog'
 import * as controller from '../controllers/equipmentController'
+import { getEquipmentOccupancy } from '../services/equipmentService'
 
 const router = Router()
 
@@ -14,5 +15,13 @@ router.put('/:id', controller.updateValidators, logOperation({ type: '编辑设�
 router.delete('/:id', logOperation({ type: '删除设备', content: (req) => `删除设备ID: ${req.params.id}` }), controller.remove)
 router.get('/:id/maintenance', controller.listMaintenance)
 router.post('/:id/maintenance', logOperation({ type: '设备维护', content: (req) => `设备维护: ${req.params.id}` }), controller.createMaintenance)
+router.get('/:id/occupancy', async (req, res) => {
+  try {
+    const occupancy = await getEquipmentOccupancy(req.params.id)
+    return res.json({ success: true, data: occupancy })
+  } catch (err) {
+    return res.status(500).json({ success: false, message: (err as Error).message })
+  }
+})
 
 export default router

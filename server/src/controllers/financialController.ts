@@ -5,6 +5,76 @@ import { success, error } from '../utils/response'
 import { startOfDay, endOfDay, subDays, format } from 'date-fns'
 import { logAudit } from '../middleware/auditLog'
 
+const DAILY_STATUS = {
+  DRAFT: 'DRAFT',
+  GENERATED: 'GENERATED',
+  HAS_EXCEPTION: 'HAS_EXCEPTION',
+  READY_TO_CONFIRM: 'READY_TO_CONFIRM',
+  LOCKED: 'LOCKED',
+  REOPENED: 'REOPENED',
+}
+
+function currentUser(req: AuthenticatedRequest) {
+  return {
+    id: req.user?.id || 'system',
+    name: req.user?.name || req.user?.phone || '系统',
+    role: req.user?.role || 'SYSTEM',
+  }
+}
+
+function adjustmentNo(prefix = 'ADJ') {
+  const d = new Date()
+  const stamp = format(d, 'yyyyMMddHHmmss')
+  return `${prefix}${stamp}${Math.random().toString(36).slice(2, 6).toUpperCase()}`
+}
+
+function cryptoRandomId() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16)
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
+async function countPendingReconExceptions(date: string) {
+  return prisma.reconException.count({
+    where: {
+      exceptionStatus: 'PENDING',
+      batch: { reconDate: date },
+    },
+  })
+}
+
+async function getReportMeta(date: string) {
+  const rows = await prisma.$queryRaw<Array<{
+    status: string
+    generatedAt: Date | null
+    generatedById: string | null
+    generatedByName: string | null
+    confirmedAt: Date | null
+    confirmedById: string | null
+    confirmedByName: string | null
+    lockedAt: Date | null
+    reopenedAt: Date | null
+    reopenedById: string | null
+    reopenedByName: string | null
+    reopenReason: string | null
+  }>>`
+    SELECT "status", "generatedAt", "generatedById", "generatedByName",
+           "confirmedAt", "confirmedById", "confirmedByName", "lockedAt",
+           "reopenedAt", "reopenedById", "reopenedByName", "reopenReason"
+    FROM "DailyFinancialReport"
+    WHERE "date" = ${date}
+    LIMIT 1
+  `
+  return rows[0] || null
+}
+
+async function resolveReportStatus(date: string) {
+  const pending = await countPendingReconExceptions(date)
+  return pending > 0 ? DAILY_STATUS.HAS_EXCEPTION : DAILY_STATUS.READY_TO_CONFIRM
+}
+
 /**
  * 获取每日财务报表
  * GET /finance/daily-report?date=YYYY-MM-DD
@@ -32,6 +102,11 @@ export async function getDailyReport(req: AuthenticatedRequest, res: Response) {
     if (!report) {
       return success(res, {
         date: dateStr,
+        generated: false,
+        generatedAt: null,
+        status: DAILY_STATUS.DRAFT,
+        statusLabel: '未生成',
+        pendingExceptionCount: 0,
         rechargePrincipalIn: 0,
         directPayIn: 0,
         refundOut: 0,
@@ -59,8 +134,17 @@ export async function getDailyReport(req: AuthenticatedRequest, res: Response) {
       }, '该日期暂无跑批数据，负债数据为实时值')
     }
 
+    const meta = await getReportMeta(dateStr)
+    const status = meta?.status || DAILY_STATUS.GENERATED
+
     return success(res, {
       ...report,
+      ...meta,
+      generated: status !== DAILY_STATUS.DRAFT,
+      generatedAt: meta?.generatedAt || report.updatedAt,
+      status,
+      statusLabel: dailyStatusLabel(status),
+      pendingExceptionCount: await countPendingReconExceptions(dateStr),
       totalPrincipalLiability: principalLiability._sum?.principalBalance || 0,
       totalBonusLiability: bonusLiability._sum?.bonusBalance || 0,
       pointsLiability: ptsLiability._sum?.points || 0,
@@ -105,8 +189,129 @@ export async function generateReport(req: AuthenticatedRequest, res: Response) {
   if (!date) return error(res, '请指定日期', 400)
 
   try {
-    await runDailyReport(date as string)
+    const existingMeta = await getReportMeta(date as string)
+    if (existingMeta?.status === DAILY_STATUS.LOCKED) {
+      return error(res, '该日期已日结锁定，如需重跑请先执行重开日结', 400)
+    }
+
+    const user = currentUser(req)
+    await runDailyReport(date as string, user)
+    await logAudit(req, {
+      targetType: 'FINANCE_REPORT',
+      targetId: date as string,
+      targetDesc: `每日财务报表 ${date}`,
+      action: 'POST',
+      actionName: '生成每日财务报表',
+      afterValue: { date },
+      reason: `手动生成每日财务报表: ${date}`,
+    })
     return success(res, null, `报表生成成功: ${date}`)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+function dailyStatusLabel(status?: string | null) {
+  switch (status) {
+    case DAILY_STATUS.GENERATED: return '已生成'
+    case DAILY_STATUS.HAS_EXCEPTION: return '有异常'
+    case DAILY_STATUS.READY_TO_CONFIRM: return '待确认'
+    case DAILY_STATUS.LOCKED: return '已日结'
+    case DAILY_STATUS.REOPENED: return '已重开'
+    default: return '未生成'
+  }
+}
+
+export async function confirmDailyReport(req: AuthenticatedRequest, res: Response) {
+  const { date } = req.body
+  if (!date) return error(res, '请指定日期', 400)
+
+  try {
+    const report = await prisma.dailyFinancialReport.findUnique({ where: { date } })
+    if (!report) return error(res, '请先生成该日期的财务报表', 400)
+    const meta = await getReportMeta(date)
+    if (meta?.status === DAILY_STATUS.LOCKED) return error(res, '该日期已经日结锁定', 400)
+
+    const pendingExceptionCount = await countPendingReconExceptions(date)
+    if (pendingExceptionCount > 0) {
+      await prisma.$executeRaw`
+        UPDATE "DailyFinancialReport"
+        SET "status" = ${DAILY_STATUS.HAS_EXCEPTION}, "updatedAt" = NOW()
+        WHERE "date" = ${date}
+      `
+      return error(res, `仍有 ${pendingExceptionCount} 条待处理对账异常，不能确认日结`, 400)
+    }
+
+    const user = currentUser(req)
+    const lockedAt = new Date()
+    await prisma.$executeRaw`
+      UPDATE "DailyFinancialReport"
+      SET "status" = ${DAILY_STATUS.LOCKED},
+          "confirmedAt" = ${lockedAt},
+          "confirmedById" = ${user.id},
+          "confirmedByName" = ${user.name},
+          "lockedAt" = ${lockedAt},
+          "updatedAt" = NOW()
+      WHERE "date" = ${date}
+    `
+    const updated = { ...report, ...(await getReportMeta(date)) }
+
+    await logAudit(req, {
+      targetType: 'FINANCE_REPORT',
+      targetId: date,
+      targetDesc: `每日财务报表 ${date}`,
+      action: 'POST',
+      actionName: '确认日结',
+      beforeValue: { status: meta?.status || DAILY_STATUS.GENERATED },
+      afterValue: { status: DAILY_STATUS.LOCKED, lockedAt },
+      reason: `确认 ${date} 财务日报并锁定`,
+    })
+
+    return success(res, updated, '日结确认成功，报表已锁定')
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+export async function reopenDailyReport(req: AuthenticatedRequest, res: Response) {
+  const { date, reason } = req.body
+  const cleanReason = typeof reason === 'string' ? reason.trim() : ''
+  if (!date) return error(res, '请指定日期', 400)
+  if (cleanReason.length < 4) return error(res, '请填写至少 4 个字的重开原因', 400)
+
+  try {
+    const report = await prisma.dailyFinancialReport.findUnique({ where: { date } })
+    if (!report) return error(res, '该日期没有财务报表', 404)
+    const meta = await getReportMeta(date)
+    if (meta?.status !== DAILY_STATUS.LOCKED) return error(res, '只有已日结锁定的报表需要重开', 400)
+
+    const user = currentUser(req)
+    const reopenedAt = new Date()
+    await prisma.$executeRaw`
+      UPDATE "DailyFinancialReport"
+      SET "status" = ${DAILY_STATUS.REOPENED},
+          "lockedAt" = NULL,
+          "reopenedAt" = ${reopenedAt},
+          "reopenedById" = ${user.id},
+          "reopenedByName" = ${user.name},
+          "reopenReason" = ${cleanReason},
+          "updatedAt" = NOW()
+      WHERE "date" = ${date}
+    `
+    const updated = { ...report, ...(await getReportMeta(date)) }
+
+    await logAudit(req, {
+      targetType: 'FINANCE_REPORT',
+      targetId: date,
+      targetDesc: `每日财务报表 ${date}`,
+      action: 'POST',
+      actionName: '重开日结',
+      beforeValue: { status: meta?.status, lockedAt: meta?.lockedAt },
+      afterValue: { status: DAILY_STATUS.REOPENED, reopenedAt },
+      reason: cleanReason,
+    })
+
+    return success(res, updated, '日结已重开，可重新生成报表')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -204,7 +409,7 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
 
     const orderOnlineSum = await prisma.order.aggregate({
       where: {
-        status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
+        status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED', 'NO_SHOW'] },
         payMethod: { in: ['WECHAT', 'ALIPAY'] },
         ...(dateStr ? { paidAt: dateRange } : {}),
       },
@@ -214,7 +419,7 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
     // ==================== 3. 消费对账 ====================
     const orderConsumeSum = await prisma.order.aggregate({
       where: {
-        status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
+        status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED', 'NO_SHOW'] },
         ...(dateStr ? { paidAt: dateRange } : {}),
       },
       _sum: { principalDeduction: true, bonusDeduction: true },
@@ -237,13 +442,40 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
       _sum: { totalAmount: true, principalAmount: true, bonusAmount: true },
     })
 
-    const orderRefundSum = await prisma.order.aggregate({
-      where: {
-        status: { in: ['REFUNDED', 'CANCELLED'] },
-        ...(dateStr ? { updatedAt: dateRange } : {}),
-      },
-      _sum: { refundAmount: true },
-    })
+    let orderRefundTotal = 0
+    if (dateStr && dateRange) {
+      const refundTxOrders = await prisma.balanceTransaction.findMany({
+        where: {
+          type: 'REFUND',
+          createdAt: dateRange,
+          orderId: { not: null },
+        },
+        select: { orderId: true },
+      })
+      const orderIdsFromRefundTx = refundTxOrders
+        .map((tx) => tx.orderId)
+        .filter(Boolean) as string[]
+      const refundOrders = await prisma.order.findMany({
+        where: {
+          status: { in: ['REFUNDED', 'CANCELLED'] },
+          OR: [
+            { updatedAt: dateRange },
+            ...(orderIdsFromRefundTx.length ? [{ id: { in: orderIdsFromRefundTx } }] : []),
+          ],
+        },
+        select: { id: true, refundAmount: true },
+      })
+      const uniqueRefundOrders = new Map(refundOrders.map((order) => [order.id, order.refundAmount || 0]))
+      orderRefundTotal = Array.from(uniqueRefundOrders.values()).reduce((sum, amount) => sum + amount, 0)
+    } else {
+      const orderRefundSum = await prisma.order.aggregate({
+        where: {
+          status: { in: ['REFUNDED', 'CANCELLED'] },
+        },
+        _sum: { refundAmount: true },
+      })
+      orderRefundTotal = orderRefundSum._sum?.refundAmount || 0
+    }
 
     // ==================== 5. 积分对账 ====================
     const txPointsEarnSum = await prisma.balanceTransaction.aggregate({
@@ -419,12 +651,12 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
       {
         name: '退款总额',
         actual: txRefundSum._sum?.totalAmount || 0,
-        expected: orderRefundSum._sum?.refundAmount || 0,
+        expected: orderRefundTotal,
         diff:
           (txRefundSum._sum?.totalAmount || 0) -
-          (orderRefundSum._sum?.refundAmount || 0),
+          orderRefundTotal,
         unit: '元',
-        note: mode === 'daily' ? '退款按流水时间统计，订单按更新时间近似' : undefined,
+        note: mode === 'daily' ? '日对账会纳入当天退款流水关联的订单，避免历史订单补流水误报' : undefined,
       }
     )
 
@@ -496,9 +728,14 @@ export async function listTransactions(req: AuthenticatedRequest, res: Response)
 }
 
 // ========== 内部跑批逻辑 ==========
-export async function runDailyReport(dateStr: string) {
+export async function runDailyReport(
+  dateStr: string,
+  operator?: { id: string; name: string; role: string }
+) {
   const start = startOfDay(new Date(dateStr + 'T00:00:00'))
   const end = endOfDay(new Date(dateStr + 'T00:00:00'))
+  const generatedAt = new Date()
+  const status = await resolveReportStatus(dateStr)
 
   // 5.1 现金解缴表
   const rechargePrincipalIn = await prisma.rechargeRecord.aggregate({
@@ -681,6 +918,38 @@ export async function runDailyReport(dateStr: string) {
   })
   const pointsLiab = ptsLiability._sum.points || 0
 
+  // 营业外收入：No-Show 违约金 + 取消手续费
+  const noShowOrders = await prisma.order.findMany({
+    where: {
+      status: 'NO_SHOW',
+      noShowAt: { gte: start, lte: end },
+    },
+    select: { penaltyAmount: true },
+  })
+  const noShowPenaltySum = noShowOrders.reduce((s, o) => s + (o.penaltyAmount || 0), 0)
+
+  const cancelledOrders = await prisma.order.findMany({
+    where: {
+      status: 'CANCELLED',
+      cancelledAt: { gte: start, lte: end },
+      refundAmount: { not: null },
+    },
+    select: { amount: true, refundAmount: true },
+  })
+  const cancelFeeSum = cancelledOrders.reduce((s, o) => s + (o.amount - (o.refundAmount || 0)), 0)
+
+  // 改签手续费作为营业外收入
+  const rescheduleOrders = await prisma.order.findMany({
+    where: {
+      rescheduleFeeAmount: { gt: 0 },
+      updatedAt: { gte: start, lte: end },
+    },
+    select: { rescheduleFeeAmount: true },
+  })
+  const rescheduleFeeSum = rescheduleOrders.reduce((s, o) => s + (o.rescheduleFeeAmount || 0), 0)
+
+  const totalOtherIncome = noShowPenaltySum + cancelFeeSum + rescheduleFeeSum
+
   await prisma.dailyFinancialReport.upsert({
     where: { date: dateStr },
     update: {
@@ -708,6 +977,7 @@ export async function runDailyReport(dateStr: string) {
       totalBonusLiability: tbl,
       pointsLiability: pointsLiab,
       dormantPrincipal,
+      noShowPenalty: totalOtherIncome,
     },
     create: {
       date: dateStr,
@@ -733,8 +1003,19 @@ export async function runDailyReport(dateStr: string) {
       totalBonusLiability: tbl,
       pointsLiability: pointsLiab,
       dormantPrincipal,
+      noShowPenalty: totalOtherIncome,
     }
   })
+
+  await prisma.$executeRaw`
+    UPDATE "DailyFinancialReport"
+    SET "status" = ${status},
+        "generatedAt" = ${generatedAt},
+        "generatedById" = ${operator?.id || null},
+        "generatedByName" = ${operator?.name || null},
+        "updatedAt" = NOW()
+    WHERE "date" = ${dateStr}
+  `
 }
 
 /**
@@ -839,7 +1120,7 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
 
         const orders = await prisma.order.findMany({
           where: {
-            status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
+            status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED', 'NO_SHOW'] },
             ...(dateStr ? { paidAt: dateRange } : {}),
           },
           select: {
@@ -868,14 +1149,15 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
           const existing = txMap.get(tx.orderId) || 0
           txMap.set(
             tx.orderId,
-            existing + Math.abs((tx as any)[txField] || 0)
+            existing + ((tx as any)[txField] || 0)
           )
         }
 
         // 订单 vs 流水
         for (const order of orders) {
           const orderVal = ((order as any)[orderField] as number) || 0
-          const txVal = txMap.get(order.id) || 0
+          const txSignedVal = txMap.get(order.id) || 0
+          const txVal = Math.abs(txSignedVal)
           if (orderVal !== txVal) {
             items.push({
               id: order.id,
@@ -902,17 +1184,21 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
         const orderIds = new Set(orders.map((o) => o.id))
         for (const [orderId, txVal] of txMap.entries()) {
           if (!orderIds.has(orderId)) {
+            const displayVal = Math.abs(txVal)
+            if (displayVal === 0) continue
             items.push({
               id: orderId,
               title: '未知订单',
               subtitle: '存在流水但无对应订单',
               actual: 0,
-              expected: txVal,
-              diff: -txVal,
+              expected: displayVal,
+              diff: -displayVal,
               unit,
               reason: '存在扣款流水但找不到对应订单',
+              canAutoFix: true,
+              fixHint: '系统将生成一条反向扣款流水，把这笔孤儿流水从消费对账中抵消；原始流水仍保留审计。',
             })
-            totalDiff += txVal
+            totalDiff += displayVal
           }
           if (items.length >= limit) break
         }
@@ -1003,7 +1289,7 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
         const orders = await prisma.order.findMany({
           where: {
             id: { in: orderIds },
-            status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
+            status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED', 'NO_SHOW'] },
           },
           select: {
             id: true,
@@ -1027,6 +1313,8 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
               diff: payment.amount,
               unit: '元',
               reason: '支付成功但找不到对应订单',
+              canAutoFix: false,
+              fixHint: '在线支付涉及外部渠道流水，不能用余额调整单修复；请核对微信/支付宝交易单和订单来源。',
             })
             totalDiff += payment.amount
           } else if (payment.amount !== order.amount) {
@@ -1040,6 +1328,8 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
               unit: '元',
               reason: '支付金额与订单金额不一致',
               link: `/orders/${order.id}`,
+              canAutoFix: false,
+              fixHint: '在线支付金额不一致需要修正支付记录或订单金额，不能通过会员余额调整单平账。',
             })
             totalDiff += Math.abs(payment.amount - order.amount)
           }
@@ -1069,16 +1359,59 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
           .map((t) => t.orderId)
           .filter(Boolean) as string[]
         const orders = await prisma.order.findMany({
-          where: { id: { in: orderIds } },
+          where: {
+            OR: [
+              { id: { in: orderIds } },
+              {
+                status: { in: ['REFUNDED', 'CANCELLED'] },
+                ...(dateStr ? { updatedAt: dateRange } : {}),
+              },
+            ],
+          },
           select: {
             id: true,
             orderNo: true,
             refundAmount: true,
             amount: true,
+            userId: true,
+            updatedAt: true,
           },
         })
 
         const orderMap = new Map(orders.map((o) => [o.id, o]))
+        const txMap = new Map<string, number>()
+        for (const tx of refundTxs) {
+          if (!tx.orderId) continue
+          txMap.set(tx.orderId, (txMap.get(tx.orderId) || 0) + (tx.totalAmount || 0))
+        }
+
+        for (const order of orders) {
+          const orderVal = order.refundAmount || 0
+          if (orderVal === 0) continue
+          const txVal = txMap.get(order.id) || 0
+          if (txVal !== orderVal) {
+            items.push({
+              id: order.id,
+              title: order.orderNo,
+              subtitle: `订单金额 ¥${(order.amount / 100).toLocaleString()} · ${format(new Date(order.updatedAt), 'yyyy-MM-dd HH:mm')}`,
+              actual: txVal,
+              expected: orderVal,
+              diff: txVal - orderVal,
+              unit: '元',
+              reason:
+                txVal === 0
+                  ? '订单已记录退款金额，但缺少对应退款流水'
+                  : txVal < orderVal
+                    ? '退款流水金额少于订单退款金额'
+                    : '退款流水金额多于订单退款金额',
+              link: `/orders/${order.id}`,
+              canAutoFix: true,
+              fixHint: '系统将按差额补一条退款流水，使退款流水与订单退款金额一致。',
+            })
+            totalDiff += Math.abs(txVal - orderVal)
+          }
+          if (items.length >= limit) break
+        }
 
         for (const tx of refundTxs) {
           if (!tx.orderId) continue
@@ -1098,19 +1431,6 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
               reason: '退款流水关联的订单不存在',
             })
             totalDiff += txVal
-          } else if (txVal !== orderVal) {
-            items.push({
-              id: tx.id,
-              title: order.orderNo,
-              subtitle: `订单金额 ¥${(order.amount / 100).toLocaleString()}`,
-              actual: txVal,
-              expected: orderVal,
-              diff: txVal - orderVal,
-              unit: '元',
-              reason: '退款流水金额与订单退款金额不一致',
-              link: `/orders/${order.id}`,
-            })
-            totalDiff += Math.abs(txVal - orderVal)
           }
           if (items.length >= limit) break
         }
@@ -1285,17 +1605,22 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
  * POST /finance/fix-reconcile-diff
  */
 export async function fixReconcileDiff(req: AuthenticatedRequest, res: Response) {
-  const { type, targetId, diff } = req.body
+  const { type, targetId, diff, reason } = req.body
   if (!type || !targetId || diff === undefined || diff === null) {
     return error(res, '参数不完整: type, targetId, diff 均为必填', 400)
+  }
+  const cleanReason = typeof reason === 'string' ? reason.trim() : ''
+  if (!cleanReason || cleanReason.length < 4) {
+    return error(res, '请填写至少 4 个字的修复原因', 400)
   }
 
   try {
     let userId: string | null = null
+    let shouldUpdateUserBalance = false
     let txData: any = {
       amount: Math.abs(diff),
       totalAmount: Math.abs(diff),
-      remark: `对账差异修复: ${type}`,
+      remark: `对账差异修复: ${type}；原因：${cleanReason}`,
     }
 
     switch (type) {
@@ -1303,12 +1628,14 @@ export async function fixReconcileDiff(req: AuthenticatedRequest, res: Response)
         userId = targetId
         txData.type = 'ADJUSTMENT'
         txData.principalAmount = diff
+        txData.totalAmount = diff
         break
       }
       case 'BALANCE_BONUS': {
         userId = targetId
         txData.type = 'ADJUSTMENT'
         txData.bonusAmount = diff
+        txData.totalAmount = diff
         break
       }
       case 'BALANCE_POINTS': {
@@ -1322,21 +1649,43 @@ export async function fixReconcileDiff(req: AuthenticatedRequest, res: Response)
       case 'CONSUME_PRINCIPAL': {
         const order = await prisma.order.findUnique({
           where: { id: targetId },
-          select: { userId: true },
+          select: { userId: true, principalDeduction: true },
         })
-        userId = order?.userId || null
-        txData.type = 'ADJUSTMENT'
-        txData.principalAmount = diff
+        const txs = await prisma.balanceTransaction.findMany({
+          where: { type: 'DEDUCT', orderId: targetId },
+          select: { userId: true, principalAmount: true },
+        })
+        userId = order?.userId || txs[0]?.userId || null
+        const currentTx = txs.reduce((sum, tx) => sum + (tx.principalAmount || 0), 0)
+        const orderVal = order?.principalDeduction || 0
+        const delta = -orderVal - currentTx
+        if (delta === 0) return success(res, { alreadyBalanced: true, type, targetId }, '该差异已平衡，无需重复生成调整单')
+        txData.type = 'DEDUCT'
+        txData.orderId = targetId
+        txData.principalAmount = delta
+        txData.totalAmount = delta
+        txData.amount = Math.abs(delta)
         break
       }
       case 'CONSUME_BONUS': {
         const order = await prisma.order.findUnique({
           where: { id: targetId },
-          select: { userId: true },
+          select: { userId: true, bonusDeduction: true },
         })
-        userId = order?.userId || null
-        txData.type = 'ADJUSTMENT'
-        txData.bonusAmount = diff
+        const txs = await prisma.balanceTransaction.findMany({
+          where: { type: 'DEDUCT', orderId: targetId },
+          select: { userId: true, bonusAmount: true },
+        })
+        userId = order?.userId || txs[0]?.userId || null
+        const currentTx = txs.reduce((sum, tx) => sum + (tx.bonusAmount || 0), 0)
+        const orderVal = order?.bonusDeduction || 0
+        const delta = -orderVal - currentTx
+        if (delta === 0) return success(res, { alreadyBalanced: true, type, targetId }, '该差异已平衡，无需重复生成调整单')
+        txData.type = 'DEDUCT'
+        txData.orderId = targetId
+        txData.bonusAmount = delta
+        txData.totalAmount = delta
+        txData.amount = Math.abs(delta)
         break
       }
       case 'RECHARGE_PRINCIPAL': {
@@ -1345,8 +1694,10 @@ export async function fixReconcileDiff(req: AuthenticatedRequest, res: Response)
           select: { userId: true },
         })
         userId = recharge?.userId || null
-        txData.type = 'ADJUSTMENT'
+        txData.type = 'RECHARGE'
+        txData.rechargeId = targetId
         txData.principalAmount = diff
+        txData.totalAmount = diff
         break
       }
       case 'RECHARGE_BONUS': {
@@ -1355,43 +1706,55 @@ export async function fixReconcileDiff(req: AuthenticatedRequest, res: Response)
           select: { userId: true },
         })
         userId = recharge?.userId || null
-        txData.type = 'ADJUSTMENT'
+        txData.type = 'RECHARGE'
+        txData.rechargeId = targetId
         txData.bonusAmount = diff
+        txData.totalAmount = diff
         break
       }
       case 'DIRECT_PAY': {
-        const payment = await prisma.payment.findUnique({
-          where: { id: targetId },
-          select: { orderId: true },
-        })
-        if (payment?.orderId) {
-          const order = await prisma.order.findUnique({
-            where: { id: payment.orderId },
-            select: { userId: true },
-          })
-          userId = order?.userId || null
-        }
-        txData.type = 'ADJUSTMENT'
-        txData.amount = diff
-        txData.totalAmount = diff
-        break
+        return error(res, '在线支付差异不能通过余额调整单修复，请核对支付渠道流水和订单金额后修正原始记录', 400)
       }
       case 'REFUND': {
-        const tx = await prisma.balanceTransaction.findUnique({
+        const order = await prisma.order.findUnique({
           where: { id: targetId },
-          select: { orderId: true, userId: true },
+          select: { id: true, userId: true, refundAmount: true },
         })
-        userId = tx?.userId || null
-        if (!userId && tx?.orderId) {
-          const order = await prisma.order.findUnique({
-            where: { id: tx.orderId },
-            select: { userId: true },
+        let orderId = order?.id || null
+        userId = order?.userId || null
+
+        if (!orderId) {
+          const tx = await prisma.balanceTransaction.findUnique({
+            where: { id: targetId },
+            select: { orderId: true, userId: true },
           })
-          userId = order?.userId || null
+          orderId = tx?.orderId || null
+          userId = tx?.userId || null
         }
-        txData.type = 'ADJUSTMENT'
-        txData.amount = diff
-        txData.totalAmount = diff
+
+        if (!orderId) {
+          return error(res, '退款差异缺少订单关联，不能自动生成调整单，请先人工定位退款来源', 400)
+        }
+
+        const refundOrder = order || await prisma.order.findUnique({
+          where: { id: orderId },
+          select: { id: true, userId: true, refundAmount: true },
+        })
+        userId = userId || refundOrder?.userId || null
+        const txSum = await prisma.balanceTransaction.aggregate({
+          where: { type: 'REFUND', orderId },
+          _sum: { totalAmount: true },
+        })
+        const currentTx = txSum._sum?.totalAmount || 0
+        const orderVal = refundOrder?.refundAmount || 0
+        const delta = orderVal - currentTx
+        if (delta === 0) {
+          return success(res, { alreadyBalanced: true, type, targetId: orderId }, '该差异已平衡，无需重复生成调整单')
+        }
+        txData.type = 'REFUND'
+        txData.orderId = orderId
+        txData.amount = Math.abs(delta)
+        txData.totalAmount = delta
         break
       }
       case 'POINTS_EXCHANGE': {
@@ -1417,29 +1780,71 @@ export async function fixReconcileDiff(req: AuthenticatedRequest, res: Response)
       return error(res, '无法确定关联用户，无法执行修复', 400)
     }
 
-    await prisma.$transaction([
-      prisma.balanceTransaction.create({
+    const userBefore = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { principalBalance: true, bonusBalance: true, points: true },
+    })
+    const operator = currentUser(req)
+
+    const tx = await prisma.$transaction(async (db) => {
+      const balanceTx = await db.balanceTransaction.create({
         data: { ...txData, userId },
-      }),
-      ...(txData.principalAmount
-        ? [prisma.user.update({
-            where: { id: userId },
-            data: { principalBalance: { increment: txData.principalAmount } },
-          })]
-        : []),
-      ...(txData.bonusAmount
-        ? [prisma.user.update({
-            where: { id: userId },
-            data: { bonusBalance: { increment: txData.bonusAmount } },
-          })]
-        : []),
-      ...(txData.pointsAmount && txData.type !== 'ADJUSTMENT'
-        ? [prisma.user.update({
-            where: { id: userId },
-            data: { points: { increment: txData.pointsAmount } },
-          })]
-        : []),
-    ])
+      })
+
+      if (shouldUpdateUserBalance && txData.principalAmount) {
+        await db.user.update({
+          where: { id: userId! },
+          data: { principalBalance: { increment: txData.principalAmount } },
+        })
+      }
+      if (shouldUpdateUserBalance && txData.bonusAmount) {
+        await db.user.update({
+          where: { id: userId! },
+          data: { bonusBalance: { increment: txData.bonusAmount } },
+        })
+      }
+      if (shouldUpdateUserBalance && txData.pointsAmount && txData.type !== 'ADJUSTMENT') {
+        await db.user.update({
+          where: { id: userId! },
+          data: { points: { increment: txData.pointsAmount } },
+        })
+      }
+
+      const userAfter = await db.user.findUnique({
+        where: { id: userId! },
+        select: { principalBalance: true, bonusBalance: true, points: true },
+      })
+
+      const financeAdjustmentNo = adjustmentNo()
+      const adjustment = await db.financeAdjustment.create({
+        data: {
+          adjustmentNo: financeAdjustmentNo,
+          source: 'RECONCILE_DETAIL',
+          type,
+          status: 'EXECUTED',
+          targetType: 'RECONCILE',
+          targetId,
+          targetDesc: `对账差异修复 - ${type}`,
+          amount: Math.abs(txData.totalAmount || txData.amount || 0),
+          pointsAmount: Math.abs(txData.pointsAmount || 0),
+          beforeValue: { diff, user: userBefore },
+          afterValue: { txData, userId, balanceTransactionId: balanceTx.id, user: userAfter },
+          reason: cleanReason,
+          operatorId: operator.id,
+          operatorName: operator.name,
+          operatorRole: operator.role,
+        },
+        select: {
+          id: true,
+          adjustmentNo: true,
+          amount: true,
+          pointsAmount: true,
+          executedAt: true,
+        },
+      })
+
+      return { balanceTx, adjustment, userAfter }
+    })
 
     await logAudit(req, {
       targetType: 'RECONCILE',
@@ -1447,13 +1852,30 @@ export async function fixReconcileDiff(req: AuthenticatedRequest, res: Response)
       targetDesc: `对账差异修复 - ${type}`,
       action: 'POST',
       actionName: '修复对账差异',
-      beforeValue: { diff },
-      afterValue: { txData, userId },
+      beforeValue: { diff, user: userBefore },
+      afterValue: { txData, userId, adjustmentId: tx.adjustment.id, adjustmentNo: tx.adjustment.adjustmentNo, balanceTransactionId: tx.balanceTx.id, user: tx.userAfter },
       amount: Math.abs(diff),
-      reason: `修复对账差异: ${type}, diff=${diff}`,
+      reason: cleanReason,
     })
 
-    return success(res, null, '修复成功，已创建调整流水并同步更新用户余额')
+    return success(res, {
+      type,
+      targetId,
+      diff,
+      userId,
+      reason: cleanReason,
+      balanceTransactionId: tx.balanceTx.id,
+      adjustmentId: tx.adjustment.id,
+      adjustmentNo: tx.adjustment.adjustmentNo,
+      adjustmentAmount: tx.adjustment.amount,
+      adjustmentPointsAmount: tx.adjustment.pointsAmount,
+      executedAt: tx.adjustment.executedAt,
+      userBefore,
+      userAfter: tx.userAfter,
+      txData,
+    }, shouldUpdateUserBalance
+      ? '修复成功，已创建调整流水并同步更新用户余额'
+      : '修复成功，已创建调整流水并更新对账结果')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -1479,12 +1901,24 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
       _sum: { amount: true },
     })
 
-    const refundSum = await prisma.order.aggregate({
+    const cashRefundSum = await prisma.order.aggregate({
       where: {
-        status: 'REFUNDED',
+        status: { in: ['REFUNDED', 'CANCELLED'] },
         payMethod: { in: ['WECHAT', 'ALIPAY'] },
       },
       _sum: { refundAmount: true },
+    })
+
+    const customerRefundSum = await prisma.order.aggregate({
+      where: {
+        status: { in: ['REFUNDED', 'CANCELLED'] },
+      },
+      _sum: { refundAmount: true },
+    })
+
+    const balanceRefundSum = await prisma.balanceTransaction.aggregate({
+      where: { type: 'REFUND' },
+      _sum: { totalAmount: true },
     })
 
     // 2. 确权营收累计（含预付/已核销拆分）
@@ -1594,7 +2028,9 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
 
     const rpi = rechargeSum._sum?.amount || 0
     const dpi = directPaySum._sum?.amount || 0
-    const ro = refundSum._sum?.refundAmount || 0
+    const cashRefundOut = cashRefundSum._sum?.refundAmount || 0
+    const customerRefundOut = customerRefundSum._sum?.refundAmount || 0
+    const balanceRefundOut = balanceRefundSum._sum?.totalAmount || 0
     const pdr = prepaidDirectRevenueSum._sum?.amount || 0
     const cdr = confirmedDirectRevenueSum._sum?.amount || 0
     const pmr = prepaidMemberRevenueSum._sum?.principalDeduction || 0
@@ -1614,8 +2050,11 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
       // 现金解缴累计
       totalRechargePrincipalIn: rpi,
       totalDirectPayIn: dpi,
-      totalRefundOut: ro,
-      totalNetCashFlow: rpi + dpi - ro,
+      totalRefundOut: cashRefundOut,
+      totalCashRefundOut: cashRefundOut,
+      totalBalanceRefundOut: balanceRefundOut,
+      totalCustomerRefundOut: customerRefundOut,
+      totalNetCashFlow: rpi + dpi - cashRefundOut,
 
       // 确权营收累计
       totalDirectRevenue: pdr + cdr,

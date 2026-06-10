@@ -117,6 +117,11 @@ async function seed() {
     { key: 'no_show_deadline_minutes', value: { value: 15 }, category: 'booking' },
     { key: 'no_show_penalty_rate', value: { value: 100 }, category: 'booking' },
     { key: 'enable_auto_no_show', value: { value: true }, category: 'booking' },
+    { key: 'reschedule_fee_rate', value: { value: 10 }, category: 'booking' },
+    { key: 'reschedule_deadline_hours', value: { value: 2 }, category: 'booking' },
+    { key: 'reschedule_max_count', value: { value: 1 }, category: 'booking' },
+    { key: 'reschedule_allow_after_start', value: { value: true }, category: 'booking' },
+    { key: 'reschedule_after_start_minutes', value: { value: 15 }, category: 'booking' },
     /* ── payment ── */
     { key: 'payment_wechat', value: { value: true }, category: 'payment' },
     { key: 'payment_alipay', value: { value: true }, category: 'payment' },

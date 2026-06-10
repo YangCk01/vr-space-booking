@@ -1,13 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronLeft, ClipboardList, LogIn, XCircle, MapPin, Clock, Calendar, Users, Ticket, QrCode, Timer } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { getOrders, cancelOrder } from '@/api/orders'
-import { getRefundRules } from '@/api/settings'
+import { apiClient } from '@/api/client'
+import { getRefundRules, getBookingLifecycle } from '@/api/settings'
 import { useAuth } from '@/providers/AuthProvider'
 import { cn } from '@/lib/utils'
 import { SimpleQRCode } from '@/components/SimpleQRCode'
+import { useToast } from '@/hooks/useToast'
 import type { RefundTier, RefundRules } from '@/api/settings'
 
 const tabs = [
@@ -30,6 +32,30 @@ const statusMap: Record<string, { label: string; color: string }> = {
 }
 
 /* ─── 阶梯退费计算（动态规则） ─── */
+function timeToMinutes(t: string) {
+  const [h, m] = t.split(':').map(Number)
+  return h * 60 + m
+}
+function minutesToTime(m: number) {
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+}
+
+function canReschedule(order: any, lifecycle: any) {
+  if (!['PAID', 'READY_TO_VERIFY'].includes(order.status)) return false
+  const booking = order?.booking
+  if (!booking?.date || !booking?.startTime) return false
+  const startDate = new Date(booking.date)
+  const [h, m] = booking.startTime.split(':')
+  startDate.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
+  const now = new Date()
+  const minutesSinceStart = (now.getTime() - startDate.getTime()) / (1000 * 60)
+  const allowAfterStart = lifecycle?.rescheduleAllowAfterStart ?? true
+  const afterStartMinutes = lifecycle?.rescheduleAfterStartMinutes ?? 15
+  if (minutesSinceStart > afterStartMinutes) return false
+  if (minutesSinceStart > 0 && !allowAfterStart) return false
+  return true
+}
+
 function getRefundInfo(order: any, tiers: RefundTier[], cancelHours: number) {
   const booking = order?.booking
   if (!booking?.date || !booking?.startTime) {
@@ -76,12 +102,20 @@ function getRefundInfo(order: any, tiers: RefundTier[], cancelHours: number) {
 
 export default function Orders() {
   const navigate = useNavigate()
-  const { isLoggedIn, refreshUser } = useAuth()
+  const { isLoggedIn, refreshUser, user } = useAuth()
   const queryClient = useQueryClient()
+  const { toast, success: toastSuccess, error: toastError } = useToast()
   const [activeTab, setActiveTab] = useState('all')
   const [cancelId, setCancelId] = useState<string | null>(null)
   const [ticketOpen, setTicketOpen] = useState(false)
   const [ticketOrder, setTicketOrder] = useState<any>(null)
+
+  // 改签弹窗状态
+  const [rescheduleOpen, setRescheduleOpen] = useState(false)
+  const [rescheduleOrder, setRescheduleOrder] = useState<any>(null)
+  const [rescheduleDate, setRescheduleDate] = useState('')
+  const [rescheduleTime, setRescheduleTime] = useState('')
+  const [reschedulePayMethod, setReschedulePayMethod] = useState<'BALANCE' | 'WECHAT' | 'ALIPAY'>('BALANCE')
 
   // 全局 tick 用于倒计时刷新
   const [tick, setTick] = useState(0)
@@ -103,6 +137,31 @@ export default function Orders() {
     staleTime: 1000 * 60 * 5,
   })
 
+  const { data: lifecycleData } = useQuery({
+    queryKey: ['bookingLifecycle'],
+    queryFn: () => getBookingLifecycle(),
+    enabled: isLoggedIn,
+    staleTime: 1000 * 60 * 5,
+  })
+
+  const { data: benefitData } = useQuery({
+    queryKey: ['user-benefits'],
+    queryFn: async () => {
+      const res = await apiClient.get('/user-benefits')
+      return res.data.data as {
+        freeReschedule?: {
+          totalQuota: number
+          usedQuota: number
+          remaining: number
+        }
+      }
+    },
+    enabled: isLoggedIn,
+    staleTime: 1000 * 30,
+  })
+
+  const lateBufferMinutes = lifecycleData?.lateBufferMinutes ?? 10
+
   const refundTiers = refundRulesData?.tiers ?? [
     { hours: 24, rate: 100, label: '开场24小时前' },
     { hours: 2, rate: 50, label: '开场2-24小时' },
@@ -117,13 +176,137 @@ export default function Orders() {
       queryClient.invalidateQueries({ queryKey: ['points-coupons'] })
       refreshUser()
       setCancelId(null)
+      toastSuccess('订单已取消')
+    },
+    onError: (error: any) => {
+      toastError('取消订单失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
     },
   })
+
+  const rescheduleMutation = useMutation({
+    mutationFn: async ({ bookingId, date, startTime, payMethod }: { bookingId: string; date: string; startTime: string; payMethod?: string }) => {
+      const res = await apiClient.post(`/bookings/${bookingId}/reschedule`, { date, startTime, payMethod })
+      return res.data
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
+      queryClient.invalidateQueries({ queryKey: ['user-benefits'] })
+      setRescheduleOpen(false)
+      setRescheduleOrder(null)
+      setRescheduleDate('')
+      setRescheduleTime('')
+      const fee = data.data?.feeAmount ?? 0
+      const delta = data.data?.deltaAmount ?? 0
+      const freeUsed = data.data?.freeRescheduleUsed
+      let msg = '改签成功！'
+      if (freeUsed) msg += '已使用本月免费改签权益，免手续费。'
+      else if (fee > 0) msg += `手续费：¥${(fee / 100).toFixed(2)}。`
+      if (delta > 0) msg += `需补差价：¥${(delta / 100).toFixed(2)}。`
+      else if (delta < 0) msg += `退回差价：¥${(Math.abs(delta) / 100).toFixed(2)}。`
+      toastSuccess(msg)
+    },
+    onError: (error: any) => {
+      toastError('改签失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
+    },
+  })
+
+  // 查询场地信息（用于生成可改签时间段）
+  const { data: venueDetail } = useQuery({
+    queryKey: ['venue-detail', rescheduleOrder?.booking?.venueId],
+    queryFn: () => apiClient.get(`/venues/${rescheduleOrder.booking.venueId}`).then((r) => r.data.data),
+    enabled: !!rescheduleOrder?.booking?.venueId,
+  })
+
+  // 查询目标日期的 bookings（用于冲突检测）
+  const { data: dayBookingsData } = useQuery({
+    queryKey: ['bookings-day', rescheduleOrder?.booking?.venueId, rescheduleDate],
+    queryFn: () => apiClient.get(`/bookings?venueId=${rescheduleOrder.booking.venueId}&date=${rescheduleDate}`).then((r) => r.data.data),
+    enabled: !!rescheduleOrder?.booking?.venueId && !!rescheduleDate,
+  })
+
+  // 计算所有时间段（含状态：available / joinable / full / occupied_by_other_game）
+  const slotOptions = useMemo(() => {
+    if (!venueDetail || !rescheduleOrder?.booking?.startTime || !rescheduleOrder?.booking?.endTime) return []
+    const gameDuration = rescheduleOrder.booking.game?.duration
+      || (timeToMinutes(rescheduleOrder.booking.endTime) - timeToMinutes(rescheduleOrder.booking.startTime))
+    const openMinutes = venueDetail.openTime ? timeToMinutes(venueDetail.openTime) : 9 * 60
+    const closeMinutes = venueDetail.closeTime ? timeToMinutes(venueDetail.closeTime) : 21 * 60
+    const deviceCount = venueDetail.deviceCount || 1
+    const bookings = dayBookingsData || []
+    const selfBookingId = rescheduleOrder.booking.id
+    const myGameId = rescheduleOrder.booking.gameId
+    const myPersonCount = rescheduleOrder.booking.personCount || 1
+
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const isToday = rescheduleDate === todayStr
+    const currentMinutes = now.getHours() * 60 + now.getMinutes()
+    const originalDateStr = rescheduleOrder.booking.date?.slice(0, 10)
+    const originalEndMinutes = timeToMinutes(rescheduleOrder.booking.endTime)
+
+    const slots: { time: string; end: string; status: string; currentCount: number; remainingCount: number }[] = []
+    for (let m = openMinutes; m + gameDuration <= closeMinutes; m += gameDuration) {
+      // 今天且已过当前时间 → 不显示
+      if (isToday && m <= currentMinutes) continue
+
+      // 与原订单同一天且在原订单结束时间之前 → 不显示
+      if (rescheduleDate === originalDateStr && m < originalEndMinutes) continue
+
+      const timeStr = minutesToTime(m)
+      const endStr = minutesToTime(m + gameDuration)
+
+      const overlapping = bookings.filter((b: any) => {
+        if (b.status === 'CANCELLED') return false
+        if (b.id === selfBookingId) return false
+        const bs = timeToMinutes(b.startTime)
+        const be = timeToMinutes(b.endTime)
+        return m < be && (m + gameDuration) > bs
+      })
+
+      if (overlapping.length === 0) {
+        slots.push({ time: timeStr, end: endStr, status: 'available', currentCount: 0, remainingCount: deviceCount })
+      } else {
+        // 检查是否有其他游戏占用
+        const otherGameBooking = overlapping.some((b: any) => b.gameId && b.gameId !== myGameId)
+        if (otherGameBooking) {
+          slots.push({ time: timeStr, end: endStr, status: 'occupied_by_other_game', currentCount: 0, remainingCount: 0 })
+        } else {
+          const sameGameBookings = overlapping.filter((b: any) => b.gameId === myGameId)
+          const currentCount = sameGameBookings.reduce((sum: number, b: any) => sum + (b.personCount || 1), 0)
+          if (currentCount + myPersonCount > deviceCount) {
+            slots.push({ time: timeStr, end: endStr, status: 'full', currentCount, remainingCount: 0 })
+          } else {
+            slots.push({ time: timeStr, end: endStr, status: 'joinable', currentCount, remainingCount: deviceCount - currentCount })
+          }
+        }
+      }
+    }
+    return slots
+  }, [venueDetail, dayBookingsData, rescheduleDate, rescheduleOrder])
 
   const allOrders = data?.data || []
   const orders = activeTab === 'all'
     ? allOrders
-    : allOrders.filter((o: any) => o.status === activeTab)
+    : activeTab === 'PAID'
+      ? allOrders.filter((o: any) => ['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(o.status))
+      : activeTab === 'CANCELLED'
+        ? allOrders.filter((o: any) => ['CANCELLED', 'NO_SHOW', 'REFUNDED'].includes(o.status))
+        : allOrders.filter((o: any) => o.status === activeTab)
+
+  const lastExpiredSyncKey = useRef('')
+  const expiredPendingKey = useMemo(() => {
+    return allOrders
+      .filter((o: any) => o.status === 'PENDING' && o.expireAt && new Date(o.expireAt).getTime() <= Date.now())
+      .map((o: any) => o.id)
+      .sort()
+      .join(',')
+  }, [allOrders, tick])
+
+  useEffect(() => {
+    if (!expiredPendingKey || expiredPendingKey === lastExpiredSyncKey.current) return
+    lastExpiredSyncKey.current = expiredPendingKey
+    queryClient.invalidateQueries({ queryKey: ['orders'] })
+  }, [expiredPendingKey, queryClient])
 
   return (
     <motion.div
@@ -268,6 +451,20 @@ export default function Orders() {
                         取消订单
                       </button>
                     )}
+                    {canReschedule(o, lifecycleData) && (
+                      <button
+                        onClick={() => {
+                          setRescheduleOrder(o)
+                          setRescheduleDate(o.booking?.date ? o.booking.date.slice(0, 10) : '')
+                          setRescheduleTime(o.booking?.startTime || '')
+                          setReschedulePayMethod('BALANCE')
+                          setRescheduleOpen(true)
+                        }}
+                        className="px-3 py-1 rounded-lg text-xs font-medium text-[var(--accent-primary)] border border-[var(--accent-primary)]/30 hover:bg-[var(--accent-primary)]/10 transition-colors"
+                      >
+                        改签
+                      </button>
+                    )}
                   </div>
                 </div>
               </motion.div>
@@ -300,73 +497,41 @@ export default function Orders() {
                 const isPaid = ['PAID', 'READY_TO_VERIFY'].includes(o.status)
                 return (
                   <div className="p-5 space-y-4">
-                    {/* 订单摘要 */}
-                    <div>
-                      <h3 className="text-base font-bold text-[var(--text-primary)] mb-1">{o.venueName}</h3>
-                      <p className="text-xs text-[var(--text-muted)]">{o.bookingTime}</p>
-                      <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                        {o.booking?.game?.title || 'VR体验'} · {o.booking?.personCount || 1}人
-                      </p>
-                      <div className="flex items-center justify-between mt-2">
-                        <span className="text-sm font-bold text-[var(--error)]">¥{((o.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        <button
-                          onClick={() => setCancelId(null)}
-                          className="px-3 py-1 rounded-full text-xs font-medium text-[var(--error)] border border-[var(--error)]/40 hover:bg-[var(--error)]/10 transition-colors flex items-center gap-1"
-                        >
-                          <XCircle className="w-3 h-3" />
-                          取消订单
-                        </button>
-                      </div>
+                    {/* 标题 */}
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-base font-bold text-[var(--text-primary)]">确认取消订单？</h3>
+                      <button onClick={() => setCancelId(null)} className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10 transition-colors">
+                        <XCircle className="w-5 h-5" />
+                      </button>
                     </div>
 
-                    {/* 最迟取消 */}
-                    {isPaid && (
-                      <div className="bg-[var(--bg-elevated)] rounded-xl p-3 space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-[var(--warning)] font-medium">最迟取消</span>
-                          <span className="text-xs text-[var(--text-primary)] font-medium">{info.deadlineText}</span>
-                        </div>
-                        <p className="text-[10px] text-[var(--text-muted)]">{info.isExpired ? '已开场，超过后不可取消' : info.rate === 0 ? '开场前2小时内不可取消' : '按申请取消时间计算退费比例'}</p>
-                      </div>
-                    )}
+                    {/* 订单信息 */}
+                    <div className="bg-[var(--bg-elevated)] rounded-xl p-3 space-y-1">
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">{o.venueName}</p>
+                      <p className="text-xs text-[var(--text-muted)]">{o.bookingTime}</p>
+                      <p className="text-xs text-[var(--text-muted)]">{o.booking?.game?.title || 'VR体验'} · {o.booking?.personCount || 1}人</p>
+                      <p className="text-sm font-bold text-[var(--error)] mt-1">¥{((o.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    </div>
 
-                    {/* 阶梯式退费规则 */}
+                    {/* 退费说明 */}
                     {isPaid && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-medium text-[var(--text-primary)]">阶梯式退费规则</span>
-                          <span className="text-[10px] text-[var(--text-muted)]">按申请取消时间计算</span>
-                        </div>
-                        <div className={cn('grid gap-2', refundTiers.length >= 3 ? 'grid-cols-3' : refundTiers.length === 2 ? 'grid-cols-2' : 'grid-cols-1')}>
-                          {[...refundTiers].sort((a, b) => b.hours - a.hours).map((tier, idx, arr) => {
-                            const nextHours = arr[idx + 1]?.hours ?? 0
-                            const isActive = info.activeTier?.hours === tier.hours
-                            const rangeText = nextHours > 0 ? `开场${nextHours}~${tier.hours}小时` : `开场${tier.hours}小时内`
-                            return (
-                              <div key={tier.hours} className={cn('rounded-lg p-2 text-center border', isActive ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border-subtle)]')}>
-                                <p className={cn('text-sm font-bold', isActive ? 'text-emerald-400' : 'text-[var(--text-muted)]')}>退{tier.rate}%</p>
-                                <p className="text-[10px] text-[var(--text-muted)] mt-0.5">{tier.label || rangeText}</p>
-                              </div>
-                            )
-                          })}
-                          <div className={cn('rounded-lg p-2 text-center border', info.rate === 0 ? 'bg-red-500/10 border-red-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border-subtle)]')}>
-                            <p className={cn('text-sm font-bold', info.rate === 0 ? 'text-red-400' : 'text-[var(--text-muted)]')}>不退款</p>
-                            <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
-                              开场{refundTiers.length > 0 ? Math.min(...refundTiers.map((t) => t.hours)) : 2}小时内
-                            </p>
+                      <div className="space-y-2">
+                        {info.isExpired ? (
+                          <div className="rounded-xl p-3 bg-red-500/10 border border-red-500/20">
+                            <p className="text-sm font-medium text-red-400">已过最迟取消时间</p>
+                            <p className="text-xs text-[var(--text-muted)] mt-0.5">该订单已开场或超出取消时限，不可取消</p>
                           </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 退费金额确认 */}
-                    {isPaid && (
-                      <div className="bg-[var(--bg-elevated)] rounded-xl p-3 space-y-1">
-                        <p className="text-xs font-medium text-[var(--text-primary)]">取消前请确认退费金额</p>
-                        <p className="text-[10px] text-[var(--text-muted)]">
-                          系统已按当前时间自动计算可退金额，确认取消后将退回 <span className={cn('font-bold', info.rate === 0 ? 'text-[var(--error)]' : 'text-emerald-400')}>{info.refundText}</span>
-                          {info.rate === 0 ? `（开场前${cancelHours}小时内取消不予退款）` : ''}
-                        </p>
+                        ) : info.rate === 0 ? (
+                          <div className="rounded-xl p-3 bg-red-500/10 border border-red-500/20">
+                            <p className="text-sm font-medium text-red-400">开场前{cancelHours}小时内不可退款</p>
+                            <p className="text-xs text-[var(--text-muted)] mt-0.5">确认取消后订单将关闭，款项不予退回</p>
+                          </div>
+                        ) : (
+                          <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/20">
+                            <p className="text-sm font-medium text-emerald-400">预计退回 {info.refundText}</p>
+                            <p className="text-xs text-[var(--text-muted)] mt-0.5">{info.activeTier?.label || `按当前退费规则退${info.rate * 100}%`}</p>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -387,6 +552,7 @@ export default function Orders() {
                       </button>
                       <button
                         onClick={() => {
+                          if (!cancelId) return
                           if (isPaid && !info.canCancel) return
                           cancelMutation.mutate(cancelId)
                         }}
@@ -468,6 +634,47 @@ export default function Orders() {
                   </span>
                 </div>
 
+                {/* 开场倒计时 + 最迟入场（仅待核销状态） */}
+                {['PAID', 'READY_TO_VERIFY'].includes(ticketOrder.status) && ticketOrder.booking?.date && ticketOrder.booking?.startTime && (() => {
+                  const startDate = new Date(ticketOrder.booking.date)
+                  const [h, m] = ticketOrder.booking.startTime.split(':')
+                  startDate.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
+                  const diff = startDate.getTime() - Date.now()
+                  const lateEntry = new Date(startDate.getTime() + lateBufferMinutes * 60 * 1000)
+                  const lateEntryStr = `${String(lateEntry.getHours()).padStart(2, '0')}:${String(lateEntry.getMinutes()).padStart(2, '0')}`
+                  if (diff > 0) {
+                    const hours = Math.floor(diff / 3600000)
+                    const mins = Math.floor((diff % 3600000) / 60000)
+                    const secs = Math.floor((diff % 60000) / 1000)
+                    const countdown = hours > 0
+                      ? `${hours}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+                      : `${mins}:${String(secs).padStart(2, '0')}`
+                    return (
+                      <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-blue-400 font-medium">距离开场</span>
+                          <span className="text-sm font-mono font-bold text-blue-400">{countdown}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-[var(--text-muted)]">最迟入场</span>
+                          <span className="text-xs text-[var(--text-primary)]">{ticketOrder.booking.startTime} ~ {lateEntryStr}</span>
+                        </div>
+                        <p className="text-[10px] text-[var(--text-muted)]">
+                          请提前 {lifecycleData?.verifyAdvanceMinutes ?? 15} 分钟到场进行佩戴教学
+                        </p>
+                      </div>
+                    )
+                  }
+                  return (
+                    <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-orange-400 font-medium">场次进行中</span>
+                        <span className="text-xs text-[var(--text-muted)]">最迟入场 {lateEntryStr}</span>
+                      </div>
+                    </div>
+                  )
+                })()}
+
                 {/* 订单信息 */}
                 <div className="space-y-3">
                   <div className="flex items-center gap-3">
@@ -545,6 +752,275 @@ export default function Orders() {
                     </p>
                   </div>
                 )}
+
+                {/* 操作按钮 */}
+                {['PAID', 'READY_TO_VERIFY'].includes(ticketOrder.status) && (
+                  <div className="flex items-center gap-2 pt-2">
+                    {canReschedule(ticketOrder, lifecycleData) && (
+                      <button
+                        onClick={() => {
+                          setRescheduleOrder(ticketOrder)
+                          setRescheduleDate(ticketOrder.booking?.date ? ticketOrder.booking.date.slice(0, 10) : '')
+                          setRescheduleTime(ticketOrder.booking?.startTime || '')
+                          setReschedulePayMethod('BALANCE')
+                          setRescheduleOpen(true)
+                          setTicketOpen(false)
+                        }}
+                        className="flex-1 h-10 rounded-lg text-sm font-medium text-[var(--accent-primary)] border border-[var(--accent-primary)]/30 hover:bg-[var(--accent-primary)]/10 transition-colors"
+                      >
+                        改签
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setCancelId(ticketOrder.id); setTicketOpen(false) }}
+                      className="flex-1 h-10 rounded-lg text-sm font-medium text-[var(--error)] border border-[var(--error)]/30 hover:bg-[var(--error)]/10 transition-colors"
+                    >
+                      取消订单
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Toast */}
+      {toast.visible && (
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -20 }}
+          className={cn(
+            'fixed top-20 left-1/2 -translate-x-1/2 z-[200] px-4 py-2 rounded-xl text-sm text-white shadow-lg max-w-[80%] text-center',
+            toast.type === 'success' ? 'bg-[var(--success)]' : 'bg-[var(--error)]'
+          )}
+        >
+          {toast.message}
+        </motion.div>
+      )}
+
+      {/* 改签弹窗 */}
+      <AnimatePresence>
+        {rescheduleOpen && rescheduleOrder && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-4 pb-6 sm:pb-0"
+            onClick={() => setRescheduleOpen(false)}
+          >
+            <motion.div
+              initial={{ y: 120, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 120, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[var(--bg-card)] rounded-2xl max-w-sm w-full border border-[var(--border-subtle)] shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+            >
+              {/* 弹窗头部 */}
+              <div className="p-5 pb-3 shrink-0">
+                <h3 className="text-base font-bold text-[var(--text-primary)]">预约改签</h3>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">订单：{rescheduleOrder.orderNo}</p>
+              </div>
+
+              {/* 可滚动内容区 */}
+              <div className="px-5 pb-5 overflow-y-auto space-y-4">
+                {/* 原订单信息卡片 */}
+                <div className="bg-[var(--bg-elevated)] rounded-xl p-3 space-y-2">
+                  <p className="text-xs text-[var(--text-muted)]">原订单信息</p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-[var(--text-primary)]">{rescheduleOrder.venueName}</span>
+                    <span className="text-xs text-[var(--text-muted)]">{rescheduleOrder.booking?.game?.title || 'VR体验'}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--text-secondary)]">
+                      {rescheduleOrder.booking?.date?.slice(0, 10)} {rescheduleOrder.booking?.startTime} ~ {rescheduleOrder.booking?.endTime}
+                    </span>
+                    <span className="text-xs text-[var(--text-muted)]">{rescheduleOrder.booking?.personCount || 1}人</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-[var(--border-subtle)]">
+                    <span className="text-xs text-[var(--text-muted)]">实付金额</span>
+                    <span className="text-sm font-bold text-[var(--error)]">¥{((rescheduleOrder.amount || 0) / 100).toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* 日期选择 */}
+                <div>
+                  <label className="text-xs text-[var(--text-secondary)] block mb-2">选择新日期</label>
+                  <div className="flex gap-2 mb-2">
+                    {(() => {
+                      const today = new Date()
+                      const dates: { date: string; label: string }[] = []
+                      for (let i = 0; i < 5; i++) {
+                        const d = new Date(today)
+                        d.setDate(today.getDate() + i)
+                        const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                        const labels = ['今天', '明天', '后天']
+                        dates.push({ date: ds, label: labels[i] || `${d.getMonth() + 1}/${d.getDate()}` })
+                      }
+                      return dates.map((d) => (
+                        <button
+                          key={d.date}
+                          onClick={() => { setRescheduleDate(d.date); setRescheduleTime('') }}
+                          className={cn(
+                            'flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors',
+                            rescheduleDate === d.date
+                              ? 'bg-[var(--accent-primary)] text-white border-[var(--accent-primary)]'
+                              : 'bg-[var(--bg-surface)] text-[var(--text-primary)] border-[var(--border-subtle)] hover:border-[var(--accent-primary)]/50'
+                          )}
+                        >
+                          {d.label}
+                        </button>
+                      ))
+                    })()}
+                  </div>
+                  <input
+                    type="date"
+                    value={rescheduleDate}
+                    onChange={(e) => { setRescheduleDate(e.target.value); setRescheduleTime('') }}
+                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                {/* 场次选择 */}
+                <div>
+                  <label className="text-xs text-[var(--text-secondary)] block mb-2">选择场次</label>
+                  {!rescheduleDate ? (
+                    <p className="text-xs text-[var(--text-muted)] py-3 text-center bg-[var(--bg-elevated)] rounded-lg">请先选择日期</p>
+                  ) : !venueDetail ? (
+                    <div className="py-3 text-center bg-[var(--bg-elevated)] rounded-lg">
+                      <div className="w-4 h-4 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-1" />
+                      <p className="text-xs text-[var(--text-muted)]">加载场次中...</p>
+                    </div>
+                  ) : slotOptions.length === 0 ? (
+                    <p className="text-xs text-[var(--text-muted)] py-3 text-center bg-[var(--bg-elevated)] rounded-lg">该日期暂无可选场次，请尝试其他日期</p>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+                      {slotOptions.map((slot) => {
+                        const disabled = slot.status === 'full' || slot.status === 'occupied_by_other_game'
+                        return (
+                          <button
+                            key={slot.time}
+                            onClick={() => {
+                              if (!disabled) setRescheduleTime(slot.time)
+                            }}
+                            disabled={disabled}
+                            className={cn(
+                              'py-2 rounded-lg text-xs font-medium border transition-colors flex flex-col items-center justify-center leading-tight',
+                              disabled
+                                ? 'bg-[var(--bg-elevated)] text-[var(--text-muted)] border-[var(--border-subtle)] cursor-not-allowed opacity-60'
+                                : rescheduleTime === slot.time
+                                  ? 'bg-[var(--accent-primary)] text-white border-[var(--accent-primary)]'
+                                  : 'bg-[var(--bg-surface)] text-[var(--text-primary)] border-[var(--border-subtle)] hover:border-[var(--accent-primary)]/50'
+                            )}
+                          >
+                            <span className={cn(disabled && 'line-through opacity-70')}>{slot.time}</span>
+                            {slot.status === 'full' && <span className="text-[9px] text-red-400 mt-0.5">已满</span>}
+                            {slot.status === 'occupied_by_other_game' && <span className="text-[9px] text-orange-400 mt-0.5">占用</span>}
+                            {slot.status === 'joinable' && <span className="text-[9px] text-emerald-400 mt-0.5">余{slot.remainingCount}人</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {rescheduleTime && (
+                    <p className="text-xs text-[var(--accent-primary)] mt-2 text-center">
+                      已选择：{rescheduleTime} ~ {slotOptions.find((s) => s.time === rescheduleTime)?.end}
+                    </p>
+                  )}
+                </div>
+
+                {/* 改签规则与费用预估 */}
+                {rescheduleTime && (
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 space-y-1.5">
+                    <p className="text-xs font-medium text-amber-400">改签说明</p>
+                    {(() => {
+                      const feeRate = lifecycleData?.rescheduleFeeRate ?? 10
+                      const originalAmount = rescheduleOrder.amount || 0
+                      const feeAmount = Math.floor(originalAmount * feeRate / 100)
+                      const level = user?.level
+                      const freeUsage = benefitData?.freeReschedule
+                      const freeQuota = freeUsage?.totalQuota ?? (level === 'VIP_PLUS' ? 4 : level === 'VIP' ? 2 : level === 'MEMBER' ? 1 : 0)
+                      const usedQuota = freeUsage?.usedQuota ?? 0
+                      return (
+                        <>
+                          <p className="text-xs text-[var(--text-secondary)]">
+                            手续费：按原订单金额 {feeRate}% 收取（¥{(feeAmount / 100).toFixed(2)}）
+                          </p>
+                          {freeQuota > 0 ? (
+                            <p className="text-xs text-emerald-400">
+                              {level === 'VIP_PLUS' ? 'VIP+' : level === 'VIP' ? 'VIP' : '会员'}每月可免费改签 {freeQuota} 次，已使用 {usedQuota} 次
+                            </p>
+                          ) : (
+                            <p className="text-xs text-[var(--text-muted)]">当前等级无免费改签权益</p>
+                          )}
+                        </>
+                      )
+                    })()}
+                  </div>
+                )}
+
+                {/* 支付方式选择 */}
+                {rescheduleTime && (
+                  <div>
+                    <label className="text-xs text-[var(--text-secondary)] block mb-2">支付方式</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { key: 'BALANCE', label: '余额支付' },
+                        { key: 'WECHAT', label: '微信支付' },
+                        { key: 'ALIPAY', label: '支付宝' },
+                      ].map((m) => (
+                        <button
+                          key={m.key}
+                          onClick={() => setReschedulePayMethod(m.key as any)}
+                          className={cn(
+                            'py-2 rounded-lg text-xs font-medium border transition-colors',
+                            reschedulePayMethod === m.key
+                              ? 'bg-[var(--accent-primary)] text-white border-[var(--accent-primary)]'
+                              : 'bg-[var(--bg-surface)] text-[var(--text-primary)] border-[var(--border-subtle)] hover:border-[var(--accent-primary)]/50'
+                          )}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 底部按钮 */}
+              <div className="p-5 pt-0 shrink-0">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setRescheduleOpen(false)}
+                    className="flex-1 h-10 rounded-lg text-sm font-medium text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-elevated)] transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!rescheduleDate || !rescheduleTime) {
+                        toastError('请选择新日期和场次')
+                        return
+                      }
+                      if (!rescheduleOrder.booking?.id) {
+                        toastError('订单未关联预约')
+                        return
+                      }
+                      rescheduleMutation.mutate({
+                        bookingId: rescheduleOrder.booking.id,
+                        date: rescheduleDate,
+                        startTime: rescheduleTime,
+                        payMethod: reschedulePayMethod,
+                      })
+                    }}
+                    disabled={rescheduleMutation.isPending || !rescheduleTime}
+                    className="flex-1 h-10 rounded-lg text-sm font-medium text-white bg-gradient-accent disabled:opacity-50"
+                  >
+                    {rescheduleMutation.isPending ? '处理中...' : '确认改签'}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </motion.div>

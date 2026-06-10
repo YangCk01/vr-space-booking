@@ -8,8 +8,9 @@ export interface FinanceOverview {
   periodRevenue: number
   periodRefund: number
   periodRecharge: number
+  periodOtherIncome: number
   periodRechargeConsumption: number
-  revenueTrend: Array<{ date: string; revenue: number; refund: number; recharge: number }>
+  revenueTrend: Array<{ date: string; revenue: number; refund: number; recharge: number; otherIncome: number }>
 }
 
 export interface FlowItem {
@@ -55,6 +56,17 @@ export async function getFinanceRefunds(params?: {
 
 export interface DailyReport {
   date: string
+  generated?: boolean
+  generatedAt?: string | null
+  status?: 'DRAFT' | 'GENERATED' | 'HAS_EXCEPTION' | 'READY_TO_CONFIRM' | 'LOCKED' | 'REOPENED'
+  statusLabel?: string
+  pendingExceptionCount?: number
+  confirmedAt?: string | null
+  confirmedByName?: string | null
+  lockedAt?: string | null
+  reopenedAt?: string | null
+  reopenedByName?: string | null
+  reopenReason?: string | null
   rechargePrincipalIn: number
   directPayIn: number
   refundOut: number
@@ -62,11 +74,18 @@ export interface DailyReport {
   directRevenue: number
   memberPrincipalRevenue: number
   totalRecognizedRevenue: number
+  prepaidDirectRevenue?: number
+  confirmedDirectRevenue?: number
+  prepaidMemberRevenue?: number
+  confirmedMemberRevenue?: number
   pointsExchangeCost: number
   pointsGiftCost: number
   couponDiscountCost: number
+  noShowPenalty?: number
   couponGiftCount: number
   experienceGiftCount: number
+  couponCampaignCount?: number
+  experienceCampaignCount?: number
   couponUsedCount: number
   experienceUsedCount: number
   totalPrincipalLiability: number
@@ -88,6 +107,16 @@ export async function getDailyReports(startDate?: string, endDate?: string) {
 export async function generateDailyReport(date: string) {
   const res = await apiClient.post('/finance/generate-report', { date })
   return res.data.data
+}
+
+export async function confirmDailyReport(date: string) {
+  const res = await apiClient.post('/finance/daily-report/confirm', { date })
+  return res.data.data as DailyReport
+}
+
+export async function reopenDailyReport(date: string, reason: string) {
+  const res = await apiClient.post('/finance/daily-report/reopen', { date, reason })
+  return res.data.data as DailyReport
 }
 
 export interface ReconcileItem {
@@ -116,6 +145,8 @@ export interface ReconcileDetailItem {
   diff: number
   unit: string
   reason: string
+  canAutoFix?: boolean
+  fixHint?: string
   link?: string
 }
 
@@ -125,6 +156,40 @@ export interface ReconcileDetailsResult {
   date: string | null
   totalDiff: number
   items: ReconcileDetailItem[]
+}
+
+export interface ReconcileFixResult {
+  alreadyBalanced?: boolean
+  type: string
+  targetId: string
+  diff: number
+  userId?: string
+  reason?: string
+  balanceTransactionId?: string
+  adjustmentId?: string
+  adjustmentNo?: string
+  adjustmentAmount?: number
+  adjustmentPointsAmount?: number
+  executedAt?: string
+  userBefore?: {
+    principalBalance: number
+    bonusBalance: number
+    points: number
+  } | null
+  userAfter?: {
+    principalBalance: number
+    bonusBalance: number
+    points: number
+  } | null
+  txData?: {
+    type?: string
+    amount?: number
+    principalAmount?: number
+    bonusAmount?: number
+    pointsAmount?: number
+    totalAmount?: number
+    remark?: string
+  }
 }
 
 export async function reconcileFinance(date?: string) {
@@ -147,15 +212,19 @@ export async function fixReconcileDiff(params: {
   diff: number
   date?: string
   mode?: string
+  reason: string
 }) {
   const res = await apiClient.post('/finance/fix-reconcile-diff', params)
-  return res.data
+  return res.data as { message: string; data: ReconcileFixResult }
 }
 
 export interface TotalSummary {
   totalRechargePrincipalIn: number
   totalDirectPayIn: number
   totalRefundOut: number
+  totalCashRefundOut?: number
+  totalBalanceRefundOut?: number
+  totalCustomerRefundOut?: number
   totalNetCashFlow: number
   totalDirectRevenue: number
   totalMemberPrincipalRevenue: number
@@ -165,6 +234,8 @@ export interface TotalSummary {
   totalCouponDiscountCost: number
   totalCouponGift: number
   totalExperienceGift: number
+  totalCouponCampaign?: number
+  totalExperienceCampaign?: number
   totalCouponUsed: number
   totalExperienceUsed: number
   totalCouponUnused: number

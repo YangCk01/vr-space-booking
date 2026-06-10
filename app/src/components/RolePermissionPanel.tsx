@@ -428,7 +428,7 @@ export function RolePermissionPanel() {
               <div>
                 <label className="block text-vr-caption text-vrtext-secondary mb-2">权限配置</label>
                 <PermissionMatrix
-                  role={{ id: 'new', name: newRoleForm.name || '新角色', description: '', isSystem: false, permissions: [] } as Role}
+                  role={{ id: 'new', name: newRoleForm.name || '新角色', description: '', isSystem: false, permissions: [], createdAt: '' }}
                   allPermissions={allPermissions}
                   selectedIds={createPerms}
                   onToggle={(id) => {

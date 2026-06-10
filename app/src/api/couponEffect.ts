@@ -21,6 +21,14 @@ export interface CouponEffectSummary {
   totalDiscountCost: number
   pointsTotal: number
   pointsRecipients: number
+  discount?: {
+    giftedCount: number
+    usedCount: number
+  }
+  experience?: {
+    giftedCount: number
+    usedCount: number
+  }
 }
 
 export async function getCouponEffects(params?: {

@@ -8,6 +8,7 @@ import {
   Receipt,
   XCircle,
   RotateCcw,
+  AlertTriangle,
   Calendar,
   ChevronDown,
   Repeat,
@@ -74,10 +75,13 @@ const dateRangeMap: Record<DateRange, string> = {
 const STATUS_COLORS: Record<string, string> = {
   '待支付': '#F59E0B',
   '已支付': '#3B82F6',
-  '已完成': '#10B981',
+  '待核销': '#60A5FA',
+  '游戏中': '#10B981',
+  '已完成': '#059669',
   '已取消': '#64748B',
   '退款中': '#EF4444',
   '已退款': '#8B5CF6',
+  '已作废': '#475569',
 }
 
 const PAYMENT_COLORS: Record<string, string> = {
@@ -1125,6 +1129,49 @@ export default function Analytics() {
                     <span className="text-vr-caption text-vrtext-primary font-medium">{s.count}</span>
                   </div>
                 ))}
+              </div>
+            </PanelCard>
+
+            {/* No-Show 统计 */}
+            <PanelCard delay={0.68}>
+              <div className="flex items-center justify-between mb-1">
+                <PanelTitle icon={<AlertTriangle className="w-4 h-4" />}>爽约率</PanelTitle>
+              </div>
+              <p className="text-vr-caption text-vrtext-tertiary mb-4">
+                爽约订单占总预约的比例
+              </p>
+              <div className="flex items-center justify-center py-4">
+                <div className="relative w-32 h-32">
+                  <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="42" fill="none" stroke="#1E293B" strokeWidth="8" />
+                    <motion.circle
+                      cx="50" cy="50" r="42"
+                      fill="none"
+                      stroke="#EF4444"
+                      strokeWidth="8"
+                      strokeLinecap="round"
+                      strokeDasharray={`${2 * Math.PI * 42}`}
+                      initial={{ strokeDashoffset: 2 * Math.PI * 42 }}
+                      animate={{ strokeDashoffset: 2 * Math.PI * 42 * (1 - (stats?.noShowRate || 0) / 100) }}
+                      transition={{ duration: 1.2, delay: 0.8, ease: 'easeOut' }}
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-2xl font-bold text-vrtext-primary">{stats?.noShowRate || 0}%</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-around pt-3 border-t border-vrborder-subtle">
+                <div className="text-center">
+                  <p className="text-vr-data text-vrtext-primary font-semibold">{stats?.noShowCount || 0}</p>
+                  <p className="text-vr-caption text-vrtext-tertiary">爽约订单</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-vr-data text-vrerror font-semibold">
+                    ¥{((stats?.noShowLoss || 0) / 100).toLocaleString()}
+                  </p>
+                  <p className="text-vr-caption text-vrtext-tertiary">违约金损失</p>
+                </div>
               </div>
             </PanelCard>
 

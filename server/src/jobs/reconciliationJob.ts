@@ -1,5 +1,6 @@
 import cron from 'node-cron'
 import { format, subDays } from 'date-fns'
+import { OrderStatus } from '@prisma/client'
 import { prisma } from '../utils/prisma'
 import { runMatchingEngine } from '../services/reconEngine'
 import { fetchWechatBill, fetchAlipayBill } from '../services/channelBillService'
@@ -14,6 +15,8 @@ const DEFAULT_THRESHOLDS = {
   absoluteAmount: 100 * 100, // ¥100 = 10000 分
   relativeRate: 0.01,        // 1%
 }
+
+const PAID_LIKE_ORDER_STATUSES: OrderStatus[] = ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED', 'NO_SHOW']
 
 async function getThresholds() {
   try {
@@ -49,16 +52,16 @@ export function startReconJob() {
 /**
  * 执行对账（可被定时任务或手动触发复用）
  */
-export async function executeReconciliation(dateStr: string) {
+export async function executeReconciliation(dateStr: string, options: { force?: boolean } = {}) {
   console.log(`[ReconJob] 开始对账: ${dateStr}`)
 
   // 幂等性：检查是否已存在成功批次
   const existing = await prisma.reconBatch.findUnique({
     where: { reconDate: dateStr },
   })
-  if (existing && existing.status === 'SUCCESS') {
+  if (existing && existing.status === 'SUCCESS' && !options.force) {
     console.log(`[ReconJob] ${dateStr} 已成功对账，跳过`)
-    return existing
+    return { ...existing, skipped: true }
   }
 
   // 如果有失败/进行中的批次，复用或新建
@@ -72,6 +75,14 @@ export async function executeReconciliation(dateStr: string) {
       },
     })
   } else {
+    if (options.force) {
+      await prisma.reconException.deleteMany({
+        where: {
+          batchId: batch.id,
+          exceptionStatus: 'PENDING',
+        },
+      })
+    }
     await prisma.reconBatch.update({
       where: { id: batch.id },
       data: { status: 'RUNNING', startedAt: new Date(), errorMessage: null },
@@ -87,7 +98,7 @@ export async function executeReconciliation(dateStr: string) {
     const bizOrders = await prisma.order.count({
       where: {
         paidAt: { gte: dateGte, lte: dateLte },
-        status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
+        status: { in: PAID_LIKE_ORDER_STATUSES },
       },
     })
     const bizRecharges = await prisma.rechargeRecord.count({
@@ -120,7 +131,7 @@ export async function executeReconciliation(dateStr: string) {
     await checkReconcileAlerts(dateStr, dateGte, dateLte)
 
     // ========== 7. 更新批次状态 ==========
-    await prisma.reconBatch.update({
+    const updatedBatch = await prisma.reconBatch.update({
       where: { id: batch.id },
       data: {
         status: 'SUCCESS',
@@ -154,7 +165,7 @@ export async function executeReconciliation(dateStr: string) {
       exceptionTypes: {}, // TODO: 按类型统计
     }).catch((err) => console.error('[ReconJob] 告警推送失败:', err))
 
-    return batch
+    return updatedBatch
   } catch (err) {
     console.error(`[ReconJob] ${dateStr} 对账失败:`, err)
     await prisma.reconBatch.update({
@@ -222,7 +233,7 @@ async function checkReconcileAlerts(dateStr: string, dateGte: Date, dateLte: Dat
   })
   const orderOnlineSum = await prisma.order.aggregate({
     where: {
-      status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
+      status: { in: PAID_LIKE_ORDER_STATUSES },
       payMethod: { in: ['WECHAT', 'ALIPAY'] },
       paidAt: { gte: dateGte, lte: dateLte },
     },
@@ -234,7 +245,7 @@ async function checkReconcileAlerts(dateStr: string, dateGte: Date, dateLte: Dat
   // 4. 消费对账
   const orderConsumeSum = await prisma.order.aggregate({
     where: {
-      status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
+      status: { in: PAID_LIKE_ORDER_STATUSES },
       paidAt: { gte: dateGte, lte: dateLte },
     },
     _sum: { principalDeduction: true, bonusDeduction: true },
@@ -253,15 +264,29 @@ async function checkReconcileAlerts(dateStr: string, dateGte: Date, dateLte: Dat
     where: { type: 'REFUND', createdAt: { gte: dateGte, lte: dateLte } },
     _sum: { totalAmount: true },
   })
-  const orderRefundSum = await prisma.order.aggregate({
+  const refundTxOrders = await prisma.balanceTransaction.findMany({
+    where: {
+      type: 'REFUND',
+      createdAt: { gte: dateGte, lte: dateLte },
+      orderId: { not: null },
+    },
+    select: { orderId: true },
+  })
+  const refundOrderIds = refundTxOrders.map((tx) => tx.orderId).filter(Boolean) as string[]
+  const refundOrders = await prisma.order.findMany({
     where: {
       status: { in: ['REFUNDED', 'CANCELLED'] },
-      updatedAt: { gte: dateGte, lte: dateLte }
+      OR: [
+        { updatedAt: { gte: dateGte, lte: dateLte } },
+        ...(refundOrderIds.length ? [{ id: { in: refundOrderIds } }] : []),
+      ],
     },
-    _sum: { refundAmount: true },
+    select: { id: true, refundAmount: true },
   })
-  const refundDiff = (txRefundSum._sum?.totalAmount || 0) - (orderRefundSum._sum?.refundAmount || 0)
-  checkDimensionAlert(alerts, '退款总额', refundDiff, orderRefundSum._sum?.refundAmount || 0, thresholds)
+  const orderRefundTotal = Array.from(new Map(refundOrders.map((order) => [order.id, order.refundAmount || 0])).values())
+    .reduce((sum, amount) => sum + amount, 0)
+  const refundDiff = (txRefundSum._sum?.totalAmount || 0) - orderRefundTotal
+  checkDimensionAlert(alerts, '退款总额', refundDiff, orderRefundTotal, thresholds)
 
   // 6. 积分对账（兑换消耗）
   const txPointsExchangeDeductSum = await prisma.balanceTransaction.aggregate({
@@ -336,6 +361,6 @@ async function sendReconNotifications(dateStr: string, alerts: string[]) {
 /**
  * 手动触发对账（管理员）
  */
-export async function runManualRecon(dateStr: string) {
-  return executeReconciliation(dateStr)
+export async function runManualRecon(dateStr: string, options: { force?: boolean } = {}) {
+  return executeReconciliation(dateStr, options)
 }

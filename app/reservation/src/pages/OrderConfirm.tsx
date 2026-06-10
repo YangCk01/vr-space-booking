@@ -5,6 +5,7 @@ import { motion } from 'framer-motion'
 import { ChevronLeft, MapPin, Clock, AlertCircle, Coins, Ticket, Check } from 'lucide-react'
 import { createBooking, checkConflict } from '@/api/bookings'
 import { createOrder } from '@/api/orders'
+import { getRefundRules } from '@/api/settings'
 import { getImageUrl } from '@/lib/imageUrl'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/providers/AuthProvider'
@@ -32,6 +33,18 @@ export default function OrderConfirm() {
   const queryClient = useQueryClient()
   const state = location.state as LocationState | null
   const { user, isLoggedIn } = useAuth()
+
+  const { data: refundRulesData } = useQuery({
+    queryKey: ['refundRules'],
+    queryFn: getRefundRules,
+    staleTime: 1000 * 60 * 5,
+  })
+
+  const cancelHours = refundRulesData?.cancelHours ?? 2
+  const refundTiers = refundRulesData?.tiers ?? [
+    { hours: 24, rate: 100, label: '开场24小时前' },
+    { hours: 2, rate: 50, label: '开场2-24小时' },
+  ]
 
   const { data: memberConfig } = useQuery({
     queryKey: ['member-public-config'],
@@ -264,6 +277,13 @@ export default function OrderConfirm() {
                 <p className="text-xs font-bold text-orange-400">重要提示</p>
                 <p className="text-xs text-orange-400/80 mt-0.5">
                   大空间 VR 为定时场次，请务必提前 15 分钟到场进行佩戴教学，迟到将导致游戏时间缩短或无法入场。
+                </p>
+                <p className="text-xs text-orange-400/80 mt-1">
+                  开场前{cancelHours}小时内不可取消。{refundTiers.length > 0 && (
+                    <>退款规则：{refundTiers.map((t, i) => (
+                      <span key={i}>{t.label}退款{t.rate}%{i < refundTiers.length - 1 ? '，' : ''}</span>
+                    ))}。</>
+                  )}
                 </p>
               </div>
             </div>

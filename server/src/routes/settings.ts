@@ -11,6 +11,8 @@ router.get('/member-public', controller.memberPublic)
 router.get('/refund-rules', controller.refundRules)
 // 公开接口：预约配置（供C端使用）
 router.get('/booking-config', controller.bookingConfig)
+// 公开接口：生命周期配置（供C端使用）
+router.get('/booking-lifecycle', controller.bookingLifecycle)
 
 router.use(authenticate, requireRole('SUPER_ADMIN','ADMIN'))
 

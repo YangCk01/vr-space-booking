@@ -10,7 +10,10 @@ import { getUserWallet, hasEnoughBalance, deductProportional } from '../utils/wa
 import { checkBatchLimit } from '../services/riskControlService'
 import { logAudit } from '../middleware/auditLog'
 import { handleEvent } from '../jobs/triggerJob'
+import { expirePendingOrders } from '../jobs/orderTimeoutJob'
+import { processBookingLifecycle } from '../jobs/bookingLifecycleJob'
 import { onCouponUsed } from '../services/campaignRewardService'
+import { releaseEquipment } from '../services/equipmentService'
 
 export const createValidators = [
   body('venueId').notEmpty().withMessage('场地不能为空'),
@@ -28,8 +31,57 @@ function generateOrderNo(): string {
 function dayStart(dateStr: string): Date { return new Date(dateStr + 'T00:00:00.000Z') }
 function dayEnd(dateStr: string): Date { return new Date(dateStr + 'T23:59:59.999Z') }
 
+function getLocalBookingStartTime(date: Date, startTime: string): Date {
+  const dateStr = date.toISOString().split('T')[0]
+  return new Date(`${dateStr}T${startTime}:00+08:00`)
+}
+
+async function getRestoreNoShowTargetStatus(booking: { date: Date; startTime: string } | null) {
+  if (!booking) {
+    return {
+      orderStatus: 'PAID' as const,
+      bookingStatus: 'CONFIRMED' as const,
+    }
+  }
+
+  const settings = await prisma.systemSetting.findMany({
+    where: { key: { in: ['verify_advance_minutes', 'no_show_deadline_minutes'] } },
+  })
+  const map: Record<string, any> = {}
+  for (const setting of settings) {
+    const raw = setting.value as any
+    map[setting.key] = raw?.value ?? raw
+  }
+
+  const verifyAdvanceMinutes = Number(map.verify_advance_minutes ?? 15)
+  const noShowDeadlineMinutes = Number(map.no_show_deadline_minutes ?? 15)
+  const now = new Date()
+  const start = getLocalBookingStartTime(booking.date, booking.startTime)
+  const readyAt = new Date(start.getTime() - verifyAdvanceMinutes * 60 * 1000)
+  const noShowDeadline = new Date(start.getTime() + noShowDeadlineMinutes * 60 * 1000)
+
+  if (now >= noShowDeadline) {
+    throw new Error('该预约已超过爽约截止时间，不能恢复为可核销订单')
+  }
+
+  if (now >= readyAt) {
+    return {
+      orderStatus: 'READY_TO_VERIFY' as const,
+      bookingStatus: 'READY' as const,
+    }
+  }
+
+  return {
+    orderStatus: 'PAID' as const,
+    bookingStatus: 'CONFIRMED' as const,
+  }
+}
+
 export async function list(req: AuthenticatedRequest, res: Response) {
   try {
+    await expirePendingOrders()
+    await processBookingLifecycle()
+
     const { status, search, page = '1', pageSize = '10', startDate, endDate, source } = req.query
     const pageNum = parseInt(page as string, 10)
     const sizeNum = parseInt(pageSize as string, 10)
@@ -124,6 +176,9 @@ export async function list(req: AuthenticatedRequest, res: Response) {
 
 export async function getById(req: AuthenticatedRequest, res: Response) {
   try {
+    await expirePendingOrders()
+    await processBookingLifecycle()
+
     const id = req.params.id as string
     const order = await prisma.order.findUnique({
       where: { id },
@@ -147,6 +202,9 @@ export async function getById(req: AuthenticatedRequest, res: Response) {
 
 export async function getByOrderNo(req: AuthenticatedRequest, res: Response) {
   try {
+    await expirePendingOrders()
+    await processBookingLifecycle()
+
     const orderNo = req.params.orderNo as string
     const order = await prisma.order.findUnique({
       where: { orderNo },
@@ -497,6 +555,8 @@ export async function updateStatus(req: AuthenticatedRequest, res: Response) {
 
 export async function pay(req: AuthenticatedRequest, res: Response) {
   try {
+    await expirePendingOrders()
+
     const id = req.params.id as string
     const method = req.body?.method
 
@@ -509,6 +569,9 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
     }
 
     if (order.status !== 'PENDING') {
+      if (order.status === 'CANCELLED' && order.expireAt && new Date() > order.expireAt) {
+        return error(res, '订单已过期，请重新下单', 400)
+      }
       return error(res, '订单状态不允许支付', 400)
     }
 
@@ -694,8 +757,8 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
 
     const isPaidOrder = ['PAID', 'READY_TO_VERIFY'].includes(order.status)
 
-    // 检查取消预约时限
-    if (order.booking) {
+    // 已付款订单遵守取消/退款时限；未支付订单即使已过期也允许关闭并释放场次。
+    if (isPaidOrder && order.booking) {
       const start = new Date(order.booking.date)
       const [h, m] = order.booking.startTime.split(':')
       start.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
@@ -770,27 +833,31 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
         })
       }
 
-      // 已支付订单取消时收回赠送积分（按实际支付金额计算）
+      // 已支付订单取消时收回赠送积分（查询当时发放记录，确保收回数量一致）
       if (order.userId && isPaidOrder) {
-        const baseAmount = order.payMethod?.startsWith('BALANCE') ? (order.principalDeduction || 0) : (order.amount || 0)
-        const earned = Math.floor(baseAmount / 100 * earnRate)
-        const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
-        const deduct = Math.min(earned, user?.points || 0)
-        if (deduct > 0) {
-          await tx.user.update({
-            where: { id: order.userId },
-            data: { points: { decrement: deduct } },
-          })
-          await tx.balanceTransaction.create({
-            data: {
-              userId: order.userId,
-              type: 'POINTS_REVOKE',
-              amount: 0,
-              pointsAmount: -deduct,
-              orderId: order.id,
-              remark: `订单取消收回赠送积分 ${deduct}`,
-            },
-          })
+        const earnTx = await tx.balanceTransaction.findFirst({
+          where: { orderId: order.id, type: 'POINTS_EARN' },
+        })
+        const earned = earnTx?.pointsAmount || 0
+        if (earned > 0) {
+          const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
+          const deduct = Math.min(earned, user?.points || 0)
+          if (deduct > 0) {
+            await tx.user.update({
+              where: { id: order.userId },
+              data: { points: { decrement: deduct } },
+            })
+            await tx.balanceTransaction.create({
+              data: {
+                userId: order.userId,
+                type: 'POINTS_REVOKE',
+                amount: 0,
+                pointsAmount: -deduct,
+                orderId: order.id,
+                remark: `订单取消收回赠送积分 ${deduct}`,
+              },
+            })
+          }
         }
       }
 
@@ -804,6 +871,14 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
 
       return updated
     })
+
+    if (order.bookingId) {
+      try {
+        await releaseEquipment(order.bookingId)
+      } catch (e) {
+        console.error(`[OrderCancel] Booking ${order.bookingId} 设备释放失败:`, e)
+      }
+    }
 
     // Send cancel notification
     if (order.userId) {
@@ -833,10 +908,152 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
   }
 }
 
+export async function executeOrderRefund(input: {
+  orderIdOrNo: string
+  amount?: number
+  reason: string
+  req?: AuthenticatedRequest
+}) {
+  const refundAmount = Number(input.amount ?? 0)
+  const reason = String(input.reason || '').trim()
+
+  if (!reason) throw new Error('请填写退款原因')
+
+  const order = await prisma.order.findFirst({
+    where: { OR: [{ id: input.orderIdOrNo }, { orderNo: input.orderIdOrNo }] },
+  })
+  if (!order) throw new Error('订单不存在')
+  if (order.status === 'NO_SHOW') {
+    throw new Error('已作废订单请使用退款处置流程')
+  }
+  if (!['PAID', 'READY_TO_VERIFY'].includes(order.status)) {
+    throw new Error('该订单状态不允许退款')
+  }
+
+  const actualRefund = refundAmount > 0 ? refundAmount : order.amount
+  if (!Number.isInteger(actualRefund) || actualRefund <= 0 || actualRefund > order.amount) {
+    throw new Error('退款金额不合法')
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    if (order.userCouponId) {
+      await tx.userCoupon.update({
+        where: { id: order.userCouponId },
+        data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
+      })
+    }
+
+    const updated = await tx.order.update({
+      where: { id: order.id },
+      data: {
+        status: 'REFUNDED',
+        refundAmount: actualRefund,
+      },
+    })
+
+    if (order.userId) {
+      const isBalancePay = order.payMethod?.startsWith('BALANCE')
+      const totalDeducted = (order.principalDeduction || 0) + (order.bonusDeduction || 0)
+      const ratio = totalDeducted > 0 ? actualRefund / totalDeducted : 0
+      const refundPrincipal = isBalancePay
+        ? Math.min(order.principalDeduction || 0, Math.floor((order.principalDeduction || 0) * ratio))
+        : 0
+      const refundBonus = isBalancePay
+        ? Math.min(order.bonusDeduction || 0, actualRefund - refundPrincipal)
+        : 0
+
+      if (isBalancePay && actualRefund > 0) {
+        await tx.user.update({
+          where: { id: order.userId },
+          data: {
+            principalBalance: { increment: refundPrincipal },
+            bonusBalance: { increment: refundBonus },
+          },
+        })
+      }
+
+      await tx.balanceTransaction.create({
+        data: {
+          userId: order.userId,
+          type: 'REFUND',
+          amount: actualRefund,
+          principalAmount: refundPrincipal,
+          bonusAmount: refundBonus,
+          totalAmount: actualRefund,
+          orderId: order.id,
+          remark: isBalancePay
+            ? `订单退款恢复余额（本金¥${refundPrincipal / 100}+赠送¥${refundBonus / 100}），原因：${reason}`
+            : `订单在线支付退款（${order.payMethod} ¥${actualRefund / 100}），原因：${reason}`,
+        },
+      })
+
+      const earnTx = await tx.balanceTransaction.findFirst({
+        where: { orderId: order.id, type: 'POINTS_EARN' },
+      })
+      const earned = earnTx?.pointsAmount || 0
+      const revokeRatio = order.amount > 0 ? actualRefund / order.amount : 1
+      const revokePoints = Math.floor(earned * revokeRatio)
+      const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
+      const deduct = Math.min(revokePoints, user?.points || 0)
+      if (deduct > 0) {
+        await tx.user.update({
+          where: { id: order.userId },
+          data: { points: { decrement: deduct } },
+        })
+        await tx.balanceTransaction.create({
+          data: {
+            userId: order.userId,
+            type: 'POINTS_REVOKE',
+            amount: 0,
+            pointsAmount: -deduct,
+            orderId: order.id,
+            remark: `订单退款收回赠送积分 ${deduct}`,
+          },
+        })
+      }
+    }
+
+    if (order.bookingId) {
+      await tx.booking.update({
+        where: { id: order.bookingId },
+        data: { status: 'CANCELLED' },
+      })
+    }
+
+    return updated
+  })
+
+  await pushAdminNotification(
+    'ADMIN_REFUND_REQUEST',
+    '订单已退款',
+    `订单 ${order.orderNo} 已退款 ¥${(actualRefund / 100).toFixed(2)}，场地：${order.venueName}`
+  )
+
+  const beforeValue = { status: order.status, amount: order.amount, refundAmount: order.refundAmount }
+  const afterValue = { status: 'REFUNDED', refundAmount: actualRefund }
+
+  if (input.req) {
+    await logAudit(input.req, {
+      targetType: 'ORDER',
+      targetId: order.id,
+      targetDesc: `订单 ${order.orderNo}`,
+      action: 'POST',
+      actionName: '订单退款',
+      beforeValue,
+      afterValue,
+      amount: actualRefund,
+      reason,
+    })
+  }
+
+  return { result, order, beforeValue, afterValue, amount: actualRefund, message: '退款成功' }
+}
+
 export async function refund(req: AuthenticatedRequest, res: Response) {
   try {
     const id = req.params.id as string
-    const refundAmount = req.body?.amount
+    const refundAmount = Number(req.body?.amount ?? 0)
+    const reason = String(req.body?.reason || '').trim()
 
     const order = await prisma.order.findFirst({
       where: { OR: [{ id }, { orderNo: id }] },
@@ -845,15 +1062,20 @@ export async function refund(req: AuthenticatedRequest, res: Response) {
       return error(res, '订单不存在', 404)
     }
 
-    if (!['PAID', 'READY_TO_VERIFY', 'NO_SHOW'].includes(order.status)) {
+    if (order.status === 'NO_SHOW') {
+      return error(res, '已作废订单请使用退款处置流程', 400)
+    }
+
+    if (!['PAID', 'READY_TO_VERIFY'].includes(order.status)) {
       return error(res, '该订单状态不允许退款', 400)
     }
 
-    const actualRefund = refundAmount || order.amount
+    const actualRefund = refundAmount > 0 ? refundAmount : order.amount
+    if (!Number.isInteger(actualRefund) || actualRefund <= 0 || actualRefund > order.amount) {
+      return error(res, '退款金额不合法', 400)
+    }
 
     // 余额支付的订单直接退回余额+积分
-    const { earnRate } = await getPointsConfig()
-
     const result = await prisma.$transaction(async (tx) => {
       // 恢复优惠券状态
       if (order.userCouponId) {
@@ -873,39 +1095,55 @@ export async function refund(req: AuthenticatedRequest, res: Response) {
 
       if (order.userId) {
         if (order.payMethod?.startsWith('BALANCE')) {
-          // 恢复双钱包
+          // 按退款金额等比恢复双钱包
+          const totalDeducted = (order.principalDeduction || 0) + (order.bonusDeduction || 0)
+          const ratio = totalDeducted > 0 ? actualRefund / totalDeducted : 0
+          const refundPrincipal = Math.min(order.principalDeduction || 0, Math.floor((order.principalDeduction || 0) * ratio))
+          const refundBonus = Math.min(order.bonusDeduction || 0, actualRefund - refundPrincipal)
           await tx.user.update({
             where: { id: order.userId },
             data: {
-              principalBalance: { increment: order.principalDeduction },
-              bonusBalance: { increment: order.bonusDeduction },
+              principalBalance: { increment: refundPrincipal },
+              bonusBalance: { increment: refundBonus },
             },
           })
         }
 
         // 所有支付方式都创建退款流水
+        const totalDeducted = (order.principalDeduction || 0) + (order.bonusDeduction || 0)
+        const ratio = totalDeducted > 0 ? actualRefund / totalDeducted : 0
+        const refundPrincipal = order.payMethod?.startsWith('BALANCE')
+          ? Math.min(order.principalDeduction || 0, Math.floor((order.principalDeduction || 0) * ratio))
+          : 0
+        const refundBonus = order.payMethod?.startsWith('BALANCE')
+          ? Math.min(order.bonusDeduction || 0, actualRefund - refundPrincipal)
+          : 0
         await tx.balanceTransaction.create({
           data: {
             userId: order.userId,
             type: 'REFUND',
-            amount: order.amount,
-            principalAmount: order.payMethod?.startsWith('BALANCE') ? order.principalDeduction : 0,
-            bonusAmount: order.payMethod?.startsWith('BALANCE') ? order.bonusDeduction : 0,
-            totalAmount: order.amount,
+            amount: actualRefund,
+            principalAmount: refundPrincipal,
+            bonusAmount: refundBonus,
+            totalAmount: actualRefund,
             orderId: order.id,
             remark: order.payMethod?.startsWith('BALANCE')
-              ? `订单退款恢复余额（本金¥${order.principalDeduction / 100}+赠送¥${order.bonusDeduction / 100}）`
-              : `订单在线支付退款（${order.payMethod} ¥${order.amount / 100}）`,
+              ? `订单退款恢复余额（本金¥${refundPrincipal / 100}+赠送¥${refundBonus / 100}）${reason ? '，原因：' + reason : ''}`
+              : `订单在线支付退款（${order.payMethod} ¥${actualRefund / 100}）${reason ? '，原因：' + reason : ''}`,
           },
         })
       }
 
-      // 退款时收回赠送积分（所有支付方式）
+      // 退款时按比例收回赠送积分（查询当时发放记录，确保不会多扣）
       if (order.userId) {
-        const baseAmount = order.payMethod?.startsWith('BALANCE') ? order.principalDeduction : order.amount
-        const earned = Math.floor(baseAmount / 100 * earnRate)
+        const earnTx = await tx.balanceTransaction.findFirst({
+          where: { orderId: order.id, type: 'POINTS_EARN' },
+        })
+        const earned = earnTx?.pointsAmount || 0
+        const revokeRatio = order.amount > 0 ? actualRefund / order.amount : 1
+        const revokePoints = Math.floor(earned * revokeRatio)
         const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
-        const deduct = Math.min(earned, user?.points || 0)
+        const deduct = Math.min(revokePoints, user?.points || 0)
         if (deduct > 0) {
           await tx.user.update({
             where: { id: order.userId },
@@ -960,6 +1198,201 @@ export async function refund(req: AuthenticatedRequest, res: Response) {
   }
 }
 
+type NoShowDispositionAction = 'NO_REFUND' | 'PARTIAL_REFUND' | 'FULL_REFUND'
+
+export async function executeNoShowDisposition(input: {
+  orderIdOrNo: string
+  action: NoShowDispositionAction
+  amount?: number
+  reason: string
+  req?: AuthenticatedRequest
+}) {
+  const { orderIdOrNo, action, reason, req } = input
+  const requestedAmount = Number(input.amount ?? 0)
+
+  if (!['NO_REFUND', 'PARTIAL_REFUND', 'FULL_REFUND'].includes(action)) {
+    throw new Error('请选择有效的处置方式')
+  }
+  if (!reason) {
+    throw new Error('请填写退款处置原因')
+  }
+
+  const order = await prisma.order.findFirst({
+    where: { OR: [{ id: orderIdOrNo }, { orderNo: orderIdOrNo }] },
+  })
+  if (!order) throw new Error('订单不存在')
+  if (order.status !== 'NO_SHOW') {
+    throw new Error('仅已作废订单可进行退款处置')
+  }
+
+  const actualRefund = action === 'NO_REFUND'
+    ? 0
+    : action === 'FULL_REFUND'
+      ? order.amount
+      : requestedAmount
+
+  if (action === 'PARTIAL_REFUND' && (!Number.isInteger(actualRefund) || actualRefund <= 0 || actualRefund >= order.amount)) {
+    throw new Error('部分退款金额必须大于0且小于订单实付金额')
+  }
+  if (action === 'FULL_REFUND' && order.amount <= 0) {
+    throw new Error('订单金额不合法')
+  }
+
+  const retainedPenalty = Math.max(0, order.amount - actualRefund)
+  const originalPenalty = order.penaltyAmount ?? order.amount
+  const reversedPenaltyAmount = Math.max(0, originalPenalty - retainedPenalty)
+
+  const result = await prisma.$transaction(async (tx) => {
+    if (action === 'NO_REFUND') {
+      return tx.order.update({
+        where: { id: order.id },
+        data: {
+          refundAmount: 0,
+          penaltyAmount: order.penaltyAmount ?? order.amount,
+        },
+      })
+    }
+
+    const updated = await tx.order.update({
+      where: { id: order.id },
+      data: {
+        status: 'REFUNDED',
+        refundAmount: actualRefund,
+        penaltyAmount: retainedPenalty,
+      },
+    })
+
+    if (action === 'FULL_REFUND' && order.userCouponId) {
+      const coupon = await tx.userCoupon.findUnique({ where: { id: order.userCouponId } })
+      if (coupon && coupon.status === 'USED') {
+        await tx.userCoupon.update({
+          where: { id: order.userCouponId },
+          data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
+        })
+      }
+    }
+
+    if (order.userId) {
+      const isBalancePay = order.payMethod?.startsWith('BALANCE')
+      const totalDeducted = (order.principalDeduction || 0) + (order.bonusDeduction || 0)
+      const ratio = totalDeducted > 0 ? actualRefund / totalDeducted : 0
+      const refundPrincipal = isBalancePay
+        ? Math.min(order.principalDeduction || 0, Math.floor((order.principalDeduction || 0) * ratio))
+        : 0
+      const refundBonus = isBalancePay
+        ? Math.min(order.bonusDeduction || 0, actualRefund - refundPrincipal)
+        : 0
+
+      if (isBalancePay && actualRefund > 0) {
+        await tx.user.update({
+          where: { id: order.userId },
+          data: {
+            principalBalance: { increment: refundPrincipal },
+            bonusBalance: { increment: refundBonus },
+          },
+        })
+      }
+
+      if (actualRefund > 0) {
+        await tx.balanceTransaction.create({
+          data: {
+            userId: order.userId,
+            type: 'REFUND',
+            amount: actualRefund,
+            principalAmount: refundPrincipal,
+            bonusAmount: refundBonus,
+            totalAmount: actualRefund,
+            orderId: order.id,
+            remark: `已作废订单退款处置：${action === 'FULL_REFUND' ? '全额退款' : '部分退款'} ¥${(actualRefund / 100).toFixed(2)}，保留违约金 ¥${(retainedPenalty / 100).toFixed(2)}，原因：${reason}`,
+          },
+        })
+      }
+
+      const earnTx = await tx.balanceTransaction.findFirst({
+        where: { orderId: order.id, type: 'POINTS_EARN' },
+      })
+      const earned = earnTx?.pointsAmount || 0
+      const revokeRatio = order.amount > 0 ? actualRefund / order.amount : 1
+      const revokePoints = Math.floor(earned * revokeRatio)
+      const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
+      const deduct = Math.min(revokePoints, user?.points || 0)
+      if (deduct > 0) {
+        await tx.user.update({
+          where: { id: order.userId },
+          data: { points: { decrement: deduct } },
+        })
+        await tx.balanceTransaction.create({
+          data: {
+            userId: order.userId,
+            type: 'POINTS_REVOKE',
+            amount: 0,
+            pointsAmount: -deduct,
+            orderId: order.id,
+            remark: `已作废订单退款处置收回赠送积分 ${deduct}`,
+          },
+        })
+      }
+    }
+
+    return updated
+  })
+
+  const beforeValue = { status: order.status, amount: order.amount, penaltyAmount: order.penaltyAmount, refundAmount: order.refundAmount }
+  const afterValue = {
+    status: action === 'NO_REFUND' ? 'NO_SHOW' : 'REFUNDED',
+    refundAmount: actualRefund,
+    retainedPenalty,
+    action,
+    noShowPenaltyReversed: reversedPenaltyAmount > 0,
+    reversedPenaltyAmount,
+  }
+
+  if (req) {
+    await logAudit(req, {
+      targetType: 'ORDER',
+      targetId: order.id,
+      targetDesc: `订单 ${order.orderNo}`,
+      action: 'POST',
+      actionName: '已作废订单退款处置',
+      beforeValue,
+      afterValue,
+      amount: actualRefund,
+      reason,
+    })
+  }
+
+  if (order.userId && actualRefund > 0) {
+    await pushNotification(
+      order.userId,
+      'ORDER_REFUND',
+      '订单退款',
+      `您的订单 ${order.orderNo} 已退款 ¥${(actualRefund / 100).toFixed(2)}`
+    )
+  }
+
+  return {
+    result,
+    order,
+    beforeValue,
+    afterValue,
+    amount: actualRefund,
+    message: action === 'NO_REFUND' ? '已记录不退款处置' : '退款处置完成',
+  }
+}
+
+export async function noShowDisposition(req: AuthenticatedRequest, res: Response) {
+  try {
+    const id = req.params.id as string
+    const action = String(req.body?.action || '').trim() as NoShowDispositionAction
+    const reason = String(req.body?.reason || '').trim()
+    const amount = Number(req.body?.amount ?? 0)
+    const disposition = await executeNoShowDisposition({ orderIdOrNo: id, action, amount, reason, req })
+    return success(res, disposition.result, disposition.message)
+  } catch (err) {
+    return error(res, (err as Error).message, 400)
+  }
+}
+
 
 export const batchVerifyValidators = [
   body('ids').isArray({ min: 1 }).withMessage('订单ID列表不能为空'),
@@ -989,14 +1422,14 @@ export async function batchVerify(req: AuthenticatedRequest, res: Response) {
         throw new Error('部分订单不存在')
       }
 
-      const invalidOrders = orders.filter((o) => o.status !== 'PAID')
+      const invalidOrders = orders.filter((o) => !['PAID', 'READY_TO_VERIFY'].includes(o.status))
       if (invalidOrders.length > 0) {
-        throw new Error(`存在非已支付状态订单，无法核销`)
+        throw new Error(`存在不可核销状态订单，无法核销`)
       }
 
       const updated = await tx.order.updateMany({
-        where: { id: { in: ids }, status: 'PAID' },
-        data: { status: 'COMPLETED' },
+        where: { id: { in: ids }, status: { in: ['PAID', 'READY_TO_VERIFY'] } },
+        data: { status: 'COMPLETED', verifiedAt: new Date() },
       })
 
       // 同步完成关联排场
@@ -1170,16 +1603,47 @@ export async function markNoShow(req: AuthenticatedRequest, res: Response) {
         })
       }
 
-      await tx.balanceTransaction.create({
-        data: {
-          userId: order.userId ?? '',
-          orderId: order.id,
-          type: 'NO_SHOW_PENALTY',
-          amount: penaltyAmount,
-          remark: `店长手动标记爽约，违约金比例 ${penaltyRate}%${reason ? '，原因：' + reason : ''}`,
-        },
-      })
+      if (order.userId) {
+        await tx.balanceTransaction.create({
+          data: {
+            userId: order.userId,
+            orderId: order.id,
+            type: 'NO_SHOW_PENALTY',
+            amount: penaltyAmount,
+            remark: `店长手动标记爽约，违约金比例 ${penaltyRate}%${reason ? '，原因：' + reason : ''}`,
+          },
+        })
+      }
     })
+
+    // 释放设备
+    if (order.bookingId) {
+      try {
+        await releaseEquipment(order.bookingId)
+        console.log(`[markNoShow] Booking ${order.bookingId} 爽约，设备已释放`)
+      } catch (e) {
+        console.error(`[markNoShow] Booking ${order.bookingId} 设备释放失败:`, e)
+      }
+    }
+
+    // 推送爽约通知
+    if (order.userId) {
+      const bookingDate = order.booking?.date
+        ? new Date(order.booking.date).toLocaleDateString('zh-CN')
+        : ''
+      const startTime = order.booking?.startTime || ''
+      const penaltyText = penaltyAmount > 0
+        ? `已扣除违约金 ¥${(penaltyAmount / 100).toFixed(2)}`
+        : '未产生违约金'
+      const reasonMap: Record<string, string> = { manual: '店长手动标记', auto: '系统自动标记' }
+      const reasonText = reason ? (reasonMap[reason] || reason) : ''
+      pushNotification(
+        order.userId,
+        'NO_SHOW',
+        '预约已标记为爽约',
+        `您在 ${bookingDate} ${startTime} 的预约因未到场被标记为爽约，${penaltyText}${reasonText ? '，原因：' + reasonText : ''}`
+      ).catch((e) => console.error('[markNoShow] 推送通知失败:', e))
+    }
 
     return success(res, null, '订单已标记为爽约')
   } catch (err) {
@@ -1187,10 +1651,14 @@ export async function markNoShow(req: AuthenticatedRequest, res: Response) {
   }
 }
 
-/* ─── 手动激活（作废→已核销）─── */
+/* ─── 撤销作废：按预约时间恢复为已付款或待核销 ─── */
 export async function activate(req: AuthenticatedRequest, res: Response) {
   try {
     const id = req.params.id as string
+    const reason = String(req.body?.reason || '').trim()
+    if (!reason) {
+      return error(res, '请填写撤销作废原因', 400)
+    }
 
     const order = await prisma.order.findUnique({
       where: { id },
@@ -1198,14 +1666,16 @@ export async function activate(req: AuthenticatedRequest, res: Response) {
     })
     if (!order) return error(res, '订单不存在', 404)
     if (order.status !== 'NO_SHOW') {
-      return error(res, '仅已作废订单可激活', 400)
+      return error(res, '仅已作废订单可撤销作废', 400)
     }
+
+    const target = await getRestoreNoShowTargetStatus(order.booking)
 
     await prisma.$transaction(async (tx) => {
       await tx.order.update({
         where: { id: order.id },
         data: {
-          status: 'READY_TO_VERIFY',
+          status: target.orderStatus,
           noShowReason: null,
           penaltyAmount: 0,
         },
@@ -1214,26 +1684,37 @@ export async function activate(req: AuthenticatedRequest, res: Response) {
       if (order.bookingId) {
         await tx.booking.update({
           where: { id: order.bookingId },
-          data: { status: 'READY', noShowAt: null },
+          data: { status: target.bookingStatus, noShowAt: null },
         })
       }
 
       // 冲回违约金流水
-      if (order.penaltyAmount && order.penaltyAmount > 0) {
+      if (order.userId && order.penaltyAmount && order.penaltyAmount > 0) {
         await tx.balanceTransaction.create({
           data: {
-            userId: order.userId ?? '',
+            userId: order.userId,
             orderId: order.id,
             type: 'NO_SHOW_REVERSE',
             amount: order.penaltyAmount,
-            remark: '店长手动激活作废订单，冲回违约金',
+            remark: `撤销作废，冲回违约金。原因：${reason}`,
           },
         })
       }
     })
 
-    return success(res, null, '订单已激活')
+    await logAudit(req, {
+      targetType: 'ORDER',
+      targetId: order.id,
+      targetDesc: `订单 ${order.orderNo}`,
+      action: 'POST',
+      actionName: '撤销作废',
+      beforeValue: { status: order.status, penaltyAmount: order.penaltyAmount, noShowReason: order.noShowReason },
+      afterValue: { status: target.orderStatus, bookingStatus: target.bookingStatus, penaltyAmount: 0, noShowReason: null },
+      reason,
+    })
+
+    return success(res, { status: target.orderStatus, bookingStatus: target.bookingStatus }, target.orderStatus === 'READY_TO_VERIFY' ? '订单已恢复为待核销' : '订单已恢复为已付款')
   } catch (err) {
-    return error(res, (err as Error).message, 500)
+    return error(res, (err as Error).message, 400)
   }
 }

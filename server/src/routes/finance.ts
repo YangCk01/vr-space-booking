@@ -15,6 +15,8 @@ router.get('/refunds', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'
 router.get('/daily-report', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.getDailyReport)
 router.get('/daily-reports', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.listDailyReports)
 router.post('/generate-report', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.generateReport)
+router.post('/daily-report/confirm', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.confirmDailyReport)
+router.post('/daily-report/reopen', authenticate, requireRole('SUPER_ADMIN','ADMIN'), financialController.reopenDailyReport)
 
 // 新增：对账
 router.get('/reconcile', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.reconcile)

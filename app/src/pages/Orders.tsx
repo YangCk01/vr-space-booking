@@ -18,14 +18,16 @@ import {
   Receipt,
   CreditCard as PaymentIcon,
   Gamepad2,
+  Headset,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
-import { getOrders, payOrder, cancelOrder, refundOrder, verifyOrder, completeRefundOrder, batchVerifyOrders, batchRefundOrders, markNoShow, activateOrder } from '@/api/orders'
+import { getOrders, payOrder, cancelOrder, verifyOrder, completeRefundOrder, batchVerifyOrders, batchRefundOrders, markNoShow, activateOrder } from '@/api/orders'
+import { createNoShowRefundApproval, createOrderRefundApproval, getApprovals, type ApprovalRequest } from '@/api/approvals'
 import { PaymentMethodModal, ScanBoxSimulator, type PaymentMethod } from '@/components/PaymentModal'
 import { VerifyScanModal } from '@/components/VerifyModal'
-import { cancelBooking } from '@/api/bookings'
 import { apiClient } from '@/api/client'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/authStore'
 import * as XLSX from 'xlsx'
 import {
   Sheet,
@@ -52,8 +54,37 @@ interface Order {
   phone?: string
   bookingTime: string
   createdAt: string
+  paidAt?: string | null
   booking?: { personName: string; personPhone: string; personCount: number; game?: { title: string } }
   payMethod?: string
+  penaltyAmount?: number | null
+}
+
+type RefundDispositionAction = 'NO_REFUND' | 'PARTIAL_REFUND' | 'FULL_REFUND'
+
+const approvalStatusLabel: Record<string, string> = {
+  PENDING: '审批中',
+  APPROVED: '已通过',
+  REJECTED: '已拒绝',
+  CANCELLED: '已取消',
+  EXECUTION_FAILED: '执行失败',
+}
+
+const approvalStatusClass: Record<string, string> = {
+  PENDING: 'border-vrwarning/30 bg-vrwarning/10 text-vrwarning',
+  APPROVED: 'border-vrsuccess/30 bg-vrsuccess/10 text-vrsuccess',
+  REJECTED: 'border-vrerror/30 bg-vrerror/10 text-vrerror',
+  CANCELLED: 'border-vrborder-subtle bg-vrbg-elevated text-vrtext-muted',
+  EXECUTION_FAILED: 'border-vrerror/30 bg-vrerror/10 text-vrerror',
+}
+
+function approvalActionText(approval?: ApprovalRequest | null) {
+  const action = approval?.requestPayload?.action
+  if (action === 'NO_REFUND') return '不退款'
+  if (action === 'PARTIAL_REFUND') return '部分退款'
+  if (action === 'FULL_REFUND') return '全额退款'
+  if (approval?.type === 'ORDER_REFUND') return '订单退款'
+  return '退款审批'
 }
 
 function formatDateTime(iso: string): string {
@@ -69,7 +100,7 @@ function formatDateTime(iso: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日 ${t}`
 }
 
-type OrderStatus = 'all' | 'pending' | 'paid' | 'completed' | 'refunding' | 'refunded' | 'cancelled'
+type OrderStatus = 'all' | 'pending' | 'paid' | 'ready_to_verify' | 'playing' | 'completed' | 'no_show' | 'refunding' | 'refunded' | 'cancelled'
 
 const tabs: { key: OrderStatus; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -95,7 +126,10 @@ const payMethodLabelMap: Record<string, string> = {
 const statusConfig: Record<string, { bg: string; text: string; icon: React.ReactNode }> = {
   pending: { bg: 'bg-vrwarning/15', text: 'text-vrwarning', icon: <Clock className="w-3 h-3" /> },
   paid: { bg: 'bg-vraccent-primary/15', text: 'text-vraccent-primary', icon: <CreditCard className="w-3 h-3" /> },
+  ready_to_verify: { bg: 'bg-vrsuccess/15', text: 'text-vrsuccess', icon: <CheckCircle2 className="w-3 h-3" /> },
+  playing: { bg: 'bg-emerald-500/15', text: 'text-emerald-500', icon: <Gamepad2 className="w-3 h-3" /> },
   completed: { bg: 'bg-vrsuccess/15', text: 'text-vrsuccess', icon: <CheckCircle2 className="w-3 h-3" /> },
+  no_show: { bg: 'bg-vrtext-muted/15', text: 'text-vrtext-muted', icon: <Ban className="w-3 h-3" /> },
   cancelled: { bg: 'bg-vrerror/15', text: 'text-vrerror', icon: <Ban className="w-3 h-3" /> },
   refunding: { bg: 'bg-vrwarning/15', text: 'text-vrwarning', icon: <Clock className="w-3 h-3" /> },
   refunded: { bg: 'bg-vrtext-muted/15', text: 'text-vrtext-muted', icon: <Ban className="w-3 h-3" /> },
@@ -111,9 +145,65 @@ function StatusBadge({ status, statusText }: { status: string; statusText: strin
   )
 }
 
-function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund, onVerify, onMarkNoShow, onActivate, onCompleteRefund, onDelete, payPending, cancelPending, refundPending, verifyPending, markNoShowPending, activatePending, completeRefundPending, deletePending }: {
+function AssignedEquipmentCard({ bookingId, status }: { bookingId: string; status: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['booking-equipment', bookingId],
+    queryFn: () => apiClient.get(`/bookings/${bookingId}/equipment`).then((r) => r.data.data),
+    enabled: !!bookingId,
+  })
+
+  if (isLoading) {
+    return (
+      <div className="bg-vrbg-elevated rounded-lg p-4">
+        <div className="flex items-center gap-2 text-vr-caption text-vrtext-muted">
+          <Headset className="w-4 h-4" />
+          加载设备信息...
+        </div>
+      </div>
+    )
+  }
+
+  const devices = data || []
+  const isReleased = status === 'completed' || status === 'no_show'
+
+  return (
+    <div className="bg-vrbg-elevated rounded-lg p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Headset className="w-4 h-4 text-vrtext-secondary" />
+        <h4 className="text-vr-body-sm text-vrtext-secondary font-medium">已分配设备</h4>
+        <span className={cn(
+          'text-[10px] px-1.5 py-0.5 rounded-full',
+          isReleased ? 'bg-vrtext-muted/10 text-vrtext-muted' : 'bg-vraccent-primary/10 text-vraccent-primary'
+        )}>
+          {isReleased ? '已释放' : `使用中 (${devices.length}台)`}
+        </span>
+      </div>
+      {devices.length === 0 ? (
+        <p className="text-vr-caption text-vrtext-muted">未分配设备</p>
+      ) : (
+        <div className="space-y-1.5">
+          {devices.map((d: any) => (
+            <div key={d.id} className="flex items-center justify-between text-vr-body-sm">
+              <div className="flex items-center gap-2">
+                <span className={cn(
+                  'w-1.5 h-1.5 rounded-full',
+                  isReleased ? 'bg-vrtext-muted' : 'bg-vraccent-primary'
+                )} />
+                <span className="text-vrtext-primary">{d.name}</span>
+                <span className="text-vr-caption text-vrtext-muted font-mono">{d.code}</span>
+              </div>
+              <span className="text-vr-caption text-vrtext-muted">{d.type === 'HEADSET' ? 'VR头盔' : d.type === 'CONTROLLER' ? '手柄' : d.type === 'TRACKER' ? '定位器' : d.type === 'COMPUTER' ? '主机' : d.type}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund, onVerify, onMarkNoShow, onActivate, onCompleteRefund, onDelete, onReschedule, canHandleNoShowRefund, hasPendingNoShowApproval, hasPendingRefundApproval, latestApproval, payPending, cancelPending, refundPending, verifyPending, markNoShowPending, activatePending, completeRefundPending, deletePending }: {
   order: Order | null; open: boolean; onOpenChange: (v: boolean) => void;
-  onPay: (id: string) => void; onCancel: (order: Order) => void; onRefund: (order: Order) => void; onVerify: (id: string) => void; onMarkNoShow: (order: Order) => void; onActivate: (id: string) => void; onCompleteRefund: (id: string) => void; onDelete: (id: string) => void;
+  onPay: (id: string) => void; onCancel: (order: Order) => void; onRefund: (order: Order) => void; onVerify: (id: string) => void; onMarkNoShow: (order: Order) => void; onActivate: (order: Order) => void; onCompleteRefund: (id: string) => void; onDelete: (id: string) => void; onReschedule: (order: Order) => void; canHandleNoShowRefund: boolean; hasPendingNoShowApproval: boolean; hasPendingRefundApproval: boolean; latestApproval?: ApprovalRequest | null;
   payPending: boolean; cancelPending: boolean; refundPending: boolean; verifyPending: boolean; markNoShowPending: boolean; activatePending: boolean; completeRefundPending: boolean; deletePending: boolean;
 }) {
   if (!order) return null
@@ -229,6 +319,55 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
               {({ PENDING: '未付款', PAID: '已付款', READY_TO_VERIFY: '待核销', PLAYING: '游戏中', COMPLETED: '已核销', NO_SHOW: '已作废', CANCELLED: '已取消', REFUNDING: '退款中', REFUNDED: '已退款' } as Record<string,string>)[order.status] || order.status}
             </span>
           </div>
+
+          {latestApproval && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.35, duration: 0.3 }}
+              className={cn(
+                'rounded-xl border p-4 space-y-3',
+                approvalStatusClass[latestApproval.status] || 'border-vrborder-subtle bg-vrbg-elevated text-vrtext-secondary'
+              )}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-vr-body-sm font-semibold">最近审批</h4>
+                  <p className="text-vr-caption opacity-80 mt-0.5">
+                    {approvalActionText(latestApproval)} · ¥{((latestApproval.amount || 0) / 100).toFixed(2)}
+                  </p>
+                </div>
+                <span className="rounded-full bg-black/10 px-2.5 py-1 text-vr-caption font-medium">
+                  {approvalStatusLabel[latestApproval.status] || latestApproval.status}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-vr-caption">
+                <div>
+                  <span className="opacity-70">申请人</span>
+                  <p className="font-medium mt-0.5">{latestApproval.requesterName}</p>
+                </div>
+                <div>
+                  <span className="opacity-70">申请原因</span>
+                  <p className="font-medium mt-0.5 line-clamp-2">{latestApproval.reason}</p>
+                </div>
+              </div>
+              {latestApproval.status === 'REJECTED' && latestApproval.approvalComment && (
+                <div className="rounded-lg bg-black/10 p-3 text-vr-caption leading-5">
+                  拒绝原因：{latestApproval.approvalComment}
+                </div>
+              )}
+              {latestApproval.status === 'EXECUTION_FAILED' && latestApproval.approvalComment && (
+                <div className="rounded-lg bg-black/10 p-3 text-vr-caption leading-5">
+                  执行失败：{latestApproval.approvalComment}
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* 已分配设备 */}
+          {order.bookingId && ['checked_in', 'playing', 'completed', 'no_show'].includes(statusLower) && (
+            <AssignedEquipmentCard bookingId={order.bookingId} status={statusLower} />
+          )}
         </div>
 
         {/* Bottom Actions */}
@@ -254,11 +393,17 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
           {['paid', 'ready_to_verify'].includes(statusLower) && (
             <>
               <button
+                onClick={() => onReschedule(order)}
+                className="flex-1 h-10 rounded-lg border border-vraccent-primary text-vraccent-primary text-vr-body-sm font-medium hover:bg-vraccent-primary/10 transition-colors"
+              >
+                改签
+              </button>
+              <button
                 onClick={() => onRefund(order)}
-                disabled={refundPending}
+                disabled={refundPending || hasPendingRefundApproval}
                 className="flex-1 h-10 rounded-lg border border-vrerror text-vrerror text-vr-body-sm font-medium hover:bg-vrerror/10 transition-colors disabled:opacity-50"
               >
-                {refundPending ? '处理中...' : '申请退款'}
+                {hasPendingRefundApproval ? '审批中' : refundPending ? '提交中...' : '申请退款'}
               </button>
               <button
                 onClick={() => onMarkNoShow(order)}
@@ -267,13 +412,15 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
               >
                 {markNoShowPending ? '处理中...' : '标记爽约'}
               </button>
-              <button
-                onClick={() => onVerify(order.id)}
-                disabled={verifyPending}
-                className="flex-1 h-10 rounded-lg bg-vrsuccess text-white text-vr-body-sm font-medium hover:bg-vrsuccess/90 transition-colors disabled:opacity-50"
-              >
-                {verifyPending ? '处理中...' : '核销订单'}
-              </button>
+              {statusLower === 'ready_to_verify' && (
+                <button
+                  onClick={() => onVerify(order.id)}
+                  disabled={verifyPending}
+                  className="flex-1 h-10 rounded-lg bg-vrsuccess text-white text-vr-body-sm font-medium hover:bg-vrsuccess/90 transition-colors disabled:opacity-50"
+                >
+                  {verifyPending ? '处理中...' : '核销订单'}
+                </button>
+              )}
             </>
           )}
           {statusLower === 'playing' && (
@@ -294,13 +441,36 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
             <>
               {statusLower === 'no_show' && (
                 <button
-                  onClick={() => onActivate(order.id)}
+                  onClick={() => onActivate(order)}
                   disabled={activatePending}
                   className="flex-1 h-10 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
                 >
-                  {activatePending ? '处理中...' : '手动激活'}
+                  {activatePending ? '处理中...' : '撤销作废'}
                 </button>
               )}
+              {statusLower === 'no_show' && canHandleNoShowRefund && (
+                <button
+                  onClick={() => onRefund(order)}
+                  disabled={refundPending || hasPendingNoShowApproval}
+                  className="flex-1 h-10 rounded-lg border border-vrerror text-vrerror text-vr-body-sm font-medium hover:bg-vrerror/10 transition-colors disabled:opacity-50"
+                >
+                  {hasPendingNoShowApproval ? '审批中' : refundPending ? '提交中...' : '申请处置'}
+                </button>
+              )}
+              {statusLower === 'completed' && (() => {
+                const today = new Date().toISOString().slice(0, 10)
+                const bookingDate = order.bookingTime?.split(' ')[0]
+                const isToday = bookingDate === today
+                return isToday ? (
+                  <button
+                    onClick={() => onRefund(order)}
+                    disabled={refundPending || hasPendingRefundApproval}
+                    className="flex-1 h-10 rounded-lg border border-vrerror text-vrerror text-vr-body-sm font-medium hover:bg-vrerror/10 transition-colors disabled:opacity-50"
+                  >
+                    {hasPendingRefundApproval ? '审批中' : refundPending ? '提交中...' : '申请退款'}
+                  </button>
+                ) : null
+              })()}
               <button className={cn('h-10 rounded-lg bg-vrbg-elevated text-vrtext-secondary text-vr-body-sm font-medium cursor-default', statusLower === 'no_show' ? 'flex-1' : 'w-full')}>
                 {statusLower === 'no_show' ? '已作废' : '已核销'}
               </button>
@@ -328,6 +498,7 @@ function OrderDetailSheet({ order, open, onOpenChange, onPay, onCancel, onRefund
 
 export default function Orders() {
   const queryClient = useQueryClient()
+  const currentUser = useAuthStore((s) => s.user)
   const [activeTab, setActiveTab] = useState<OrderStatus>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [startDate, setStartDate] = useState('')
@@ -349,6 +520,20 @@ export default function Orders() {
   const [verifyScanOpen, setVerifyScanOpen] = useState(false)
   const [verifyTargetOrder, setVerifyTargetOrder] = useState<Order | null>(null)
 
+  // 改签弹窗状态
+  const [rescheduleOpen, setRescheduleOpen] = useState(false)
+  const [rescheduleTarget, setRescheduleTarget] = useState<Order | null>(null)
+  const [rescheduleDate, setRescheduleDate] = useState('')
+  const [rescheduleTime, setRescheduleTime] = useState('')
+  const [restoreOpen, setRestoreOpen] = useState(false)
+  const [restoreTarget, setRestoreTarget] = useState<Order | null>(null)
+  const [restoreReason, setRestoreReason] = useState('')
+  const [refundOpen, setRefundOpen] = useState(false)
+  const [refundTarget, setRefundTarget] = useState<Order | null>(null)
+  const [refundAction, setRefundAction] = useState<RefundDispositionAction>('FULL_REFUND')
+  const [refundAmountYuan, setRefundAmountYuan] = useState('')
+  const [refundReason, setRefundReason] = useState('')
+
   useEffect(() => {
     setSelectedIds([])
   }, [activeTab, currentPage, searchQuery, startDate, endDate, sourceFilter])
@@ -369,6 +554,35 @@ export default function Orders() {
     placeholderData: (previousData: any) => previousData, // 切换标签时保持旧数据，减少闪烁
   })
 
+  const { data: approvalData } = useQuery({
+    queryKey: ['approvals', 'order-actions-latest'],
+    queryFn: () => getApprovals({ page: 1, pageSize: 500 }),
+    staleTime: 1000 * 20,
+  })
+
+  const pendingNoShowApprovalMap = useMemo(() => {
+    const items = approvalData?.data || []
+    return new Set<string>(items.filter((item: any) => item.status === 'PENDING' && item.type === 'NO_SHOW_REFUND').map((item: any) => item.targetId))
+  }, [approvalData])
+
+  const pendingRefundApprovalMap = useMemo(() => {
+    const items = approvalData?.data || []
+    return new Set<string>(items.filter((item: any) => item.status === 'PENDING' && item.type === 'ORDER_REFUND').map((item: any) => item.targetId))
+  }, [approvalData])
+
+  const latestApprovalMap = useMemo(() => {
+    const items: ApprovalRequest[] = approvalData?.data || []
+    const map = new Map<string, ApprovalRequest>()
+    for (const item of items) {
+      if (!['NO_SHOW_REFUND', 'ORDER_REFUND'].includes(item.type)) continue
+      const existing = map.get(item.targetId)
+      if (!existing || new Date(item.createdAt).getTime() > new Date(existing.createdAt).getTime()) {
+        map.set(item.targetId, item)
+      }
+    }
+    return map
+  }, [approvalData])
+
   // Sync currentPage when totalPages shrinks (e.g. after filter change or data deletion)
   const total = orderData?.meta?.total || 0
   const totalPages = orderData?.meta?.totalPages || 1
@@ -379,11 +593,14 @@ export default function Orders() {
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ['orders'] })
+    queryClient.invalidateQueries({ queryKey: ['approvals'] })
     queryClient.invalidateQueries({ queryKey: ['bookings'], exact: false })
     queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     queryClient.invalidateQueries({ queryKey: ['revenue'], exact: false })
     queryClient.invalidateQueries({ queryKey: ['venues'], exact: false })
   }
+
+  const canHandleNoShowRefund = ['SUPER_ADMIN', 'ADMIN', 'FINANCE', 'MANAGER', 'OPERATOR'].includes(currentUser?.role || '')
 
   const payMutation = useMutation({
     mutationFn: ({ id, method }: { id: string; method?: string }) => payOrder(id, method || 'CASH'),
@@ -397,47 +614,57 @@ export default function Orders() {
   })
 
   const cancelMutation = useMutation({
-    mutationFn: async (order: Order) => {
-      const result = await cancelOrder(order.id)
-      if (order.bookingId) {
-        try {
-          await cancelBooking(order.bookingId)
-        } catch (e: any) {
-          console.error('取消排场失败:', e)
-          alert('订单已取消，但取消关联排场失败: ' + (e?.response?.data?.message || e?.message || '未知错误'))
-        }
-      }
-      return result
-    },
-    onSuccess: () => {
-      invalidateAll()
-      setDrawerOpen(false)
-    },
-  })
-
-  const refundMutation = useMutation({
-    mutationFn: async (order: Order) => {
-      const result = await refundOrder(order.id)
-      // 退款成功后同步取消关联排场
-      if (order.bookingId) {
-        try {
-          await cancelBooking(order.bookingId)
-          alert('退款成功，关联排场已取消')
-        } catch (e: any) {
-          console.error('取消排场失败:', e)
-          alert('退款成功，但取消关联排场失败: ' + (e?.response?.data?.message || e?.message || '未知错误'))
-        }
-      } else {
-        alert('退款成功（该订单没有关联排场）')
-      }
-      return result
-    },
+    mutationFn: (order: Order) => cancelOrder(order.id),
     onSuccess: () => {
       invalidateAll()
       setDrawerOpen(false)
     },
     onError: (error: any) => {
-      alert('退款失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
+      alert('取消订单失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
+    },
+  })
+
+  const openRefundDialog = (order: Order) => {
+    const defaultRefund = Math.max(0, (order.amount || 0) - (order.penaltyAmount || 0))
+    setRefundTarget(order)
+    setRefundAction(order.status === 'NO_SHOW' ? (defaultRefund > 0 ? 'PARTIAL_REFUND' : 'NO_REFUND') : 'FULL_REFUND')
+    setRefundAmountYuan(((order.status === 'NO_SHOW' ? defaultRefund : order.amount || 0) / 100).toFixed(2))
+    setRefundReason('')
+    setRefundOpen(true)
+  }
+
+  const closeRefundDialog = () => {
+    setRefundOpen(false)
+    setRefundTarget(null)
+    setRefundAction('FULL_REFUND')
+    setRefundAmountYuan('')
+    setRefundReason('')
+  }
+
+  const refundMutation = useMutation({
+    mutationFn: async ({
+      order,
+      action,
+      amount,
+      reason,
+    }: {
+      order: Order
+      action: RefundDispositionAction
+      amount: number
+      reason: string
+    }) => {
+      if (order.status === 'NO_SHOW') {
+        return createNoShowRefundApproval(order.id, { action, amount, reason })
+      }
+      return createOrderRefundApproval(order.id, { amount, reason })
+    },
+    onSuccess: () => {
+      invalidateAll()
+      setDrawerOpen(false)
+      closeRefundDialog()
+    },
+    onError: (error: any) => {
+      alert('提交失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
     },
   })
 
@@ -478,14 +705,47 @@ export default function Orders() {
     },
   })
 
+  const openRestoreDialog = (order: Order) => {
+    setRestoreTarget(order)
+    setRestoreReason('')
+    setRestoreOpen(true)
+  }
+
   const activateMutation = useMutation({
-    mutationFn: activateOrder,
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => activateOrder(id, reason),
     onSuccess: () => {
       invalidateAll()
       setDrawerOpen(false)
+      setRestoreOpen(false)
+      setRestoreTarget(null)
+      setRestoreReason('')
     },
     onError: (error: any) => {
-      alert('激活失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
+      alert('撤销作废失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
+    },
+  })
+
+  const rescheduleMutation = useMutation({
+    mutationFn: async ({ orderId, date, startTime }: { orderId: string; date: string; startTime: string }) => {
+      const res = await apiClient.post(`/bookings/${orderId}/reschedule`, { date, startTime })
+      return res.data
+    },
+    onSuccess: (data: any) => {
+      invalidateAll()
+      setRescheduleOpen(false)
+      setRescheduleTarget(null)
+      const fee = data.data?.feeAmount ?? 0
+      const delta = data.data?.deltaAmount ?? 0
+      const freeUsed = data.data?.freeRescheduleUsed
+      let msg = '改签成功！'
+      if (freeUsed) msg += '已使用本月免费改签权益，免手续费。'
+      else if (fee > 0) msg += `手续费：¥${(fee / 100).toFixed(2)}。`
+      if (delta > 0) msg += `需补差价：¥${(delta / 100).toFixed(2)}。`
+      else if (delta < 0) msg += `退回差价：¥${(Math.abs(delta) / 100).toFixed(2)}。`
+      alert(msg)
+    },
+    onError: (error: any) => {
+      alert('改签失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
     },
   })
 
@@ -522,17 +782,7 @@ export default function Orders() {
   const batchCancelMutation = useMutation({
     mutationFn: async (orders: Order[]) => {
       const results = await Promise.allSettled(
-        orders.map(async (order) => {
-          const result = await cancelOrder(order.id)
-          if (order.bookingId) {
-            try {
-              await cancelBooking(order.bookingId)
-            } catch (e: any) {
-              console.error('取消排场失败:', e)
-            }
-          }
-          return result
-        })
+        orders.map((order) => cancelOrder(order.id))
       )
       const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
       if (failures.length > 0) {
@@ -626,6 +876,7 @@ export default function Orders() {
 
   const selectedOrders = useMemo(() => paginatedOrders.filter(o => selectedIds.includes(o.id)), [paginatedOrders, selectedIds])
   const hasPaidSelected = selectedOrders.some(o => o.status === 'PAID')
+  const hasReadyToVerifySelected = selectedOrders.some(o => o.status === 'READY_TO_VERIFY')
   const hasPendingSelected = selectedOrders.some(o => o.status === 'PENDING')
 
   // 标签计数：优先使用后端返回的 statusCounts（全量统计），否则回退到当前页数据
@@ -838,31 +1089,31 @@ export default function Orders() {
                 <span className="text-vr-body-sm text-vrtext-primary font-medium">
                   已选择 {selectedIds.length} 项
                 </span>
+                {hasReadyToVerifySelected && (
+                  <button
+                    onClick={() => {
+                      const ids = selectedOrders.filter(o => o.status === 'READY_TO_VERIFY').map(o => o.id)
+                      if (!window.confirm(`确定要批量核销 ${ids.length} 个订单吗？`)) return
+                      batchVerifyMutation.mutate(ids)
+                    }}
+                    disabled={batchVerifyMutation.isPending}
+                    className="h-8 px-3 rounded-lg bg-vrsuccess text-white text-vr-body-sm font-medium hover:bg-vrsuccess/90 transition-colors disabled:opacity-50"
+                  >
+                    {batchVerifyMutation.isPending ? '核销中...' : '批量核销'}
+                  </button>
+                )}
                 {hasPaidSelected && (
-                  <>
-                    <button
-                      onClick={() => {
-                        const ids = selectedOrders.filter(o => o.status === 'PAID').map(o => o.id)
-                        if (!window.confirm(`确定要批量核销 ${ids.length} 个订单吗？`)) return
-                        batchVerifyMutation.mutate(ids)
-                      }}
-                      disabled={batchVerifyMutation.isPending}
-                      className="h-8 px-3 rounded-lg bg-vrsuccess text-white text-vr-body-sm font-medium hover:bg-vrsuccess/90 transition-colors disabled:opacity-50"
-                    >
-                      {batchVerifyMutation.isPending ? '核销中...' : '批量核销'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        const ids = selectedOrders.filter(o => o.status === 'PAID').map(o => o.id)
-                        if (!window.confirm(`确定要批量退款 ${ids.length} 个订单吗？`)) return
-                        batchRefundMutation.mutate({ ids, reason: '批量退款' })
-                      }}
-                      disabled={batchRefundMutation.isPending}
-                      className="h-8 px-3 rounded-lg bg-vrerror text-white text-vr-body-sm font-medium hover:bg-vrerror/90 transition-colors disabled:opacity-50"
-                    >
-                      {batchRefundMutation.isPending ? '退款中...' : '批量退款'}
-                    </button>
-                  </>
+                  <button
+                    onClick={() => {
+                      const ids = selectedOrders.filter(o => o.status === 'PAID').map(o => o.id)
+                      if (!window.confirm(`确定要批量退款 ${ids.length} 个订单吗？`)) return
+                      batchRefundMutation.mutate({ ids, reason: '批量退款' })
+                    }}
+                    disabled={batchRefundMutation.isPending}
+                    className="h-8 px-3 rounded-lg bg-vrerror text-white text-vr-body-sm font-medium hover:bg-vrerror/90 transition-colors disabled:opacity-50"
+                  >
+                    {batchRefundMutation.isPending ? '退款中...' : '批量退款'}
+                  </button>
                 )}
                 {hasPendingSelected && (
                   <button
@@ -1001,21 +1252,35 @@ export default function Orders() {
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-3">
                           {order.status.toLowerCase() === 'pending' && (
-                            <button
-                              onClick={() => handleCollect(order)}
-                              className="text-vr-body-sm text-vrwarning hover:underline transition-all"
-                            >
-                              收款
-                            </button>
+                            <>
+                              <button
+                                onClick={() => handleCollect(order)}
+                                className="text-vr-body-sm text-vrwarning hover:underline transition-all"
+                              >
+                                收款
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (!window.confirm(`确定取消订单 ${order.orderNo} 吗？`)) return
+                                  cancelMutation.mutate(order)
+                                }}
+                                disabled={cancelMutation.isPending}
+                                className="text-vr-body-sm text-vrerror hover:underline transition-all disabled:opacity-50"
+                              >
+                                取消
+                              </button>
+                            </>
                           )}
                           {['paid', 'ready_to_verify'].includes(order.status.toLowerCase()) && (
                             <>
-                              <button
-                                onClick={() => { setVerifyTargetOrder(order); setVerifyScanOpen(true) }}
-                                className="text-vr-body-sm text-vrsuccess hover:underline transition-all"
-                              >
-                                核销
-                              </button>
+                              {order.status.toLowerCase() === 'ready_to_verify' && (
+                                <button
+                                  onClick={() => { setVerifyTargetOrder(order); setVerifyScanOpen(true) }}
+                                  className="text-vr-body-sm text-vrsuccess hover:underline transition-all"
+                                >
+                                  核销
+                                </button>
+                              )}
                               <button
                                 onClick={() => { setSelectedOrder(order); markNoShowMutation.mutate(order) }}
                                 className="text-vr-body-sm text-vrwarning hover:underline transition-all"
@@ -1023,10 +1288,11 @@ export default function Orders() {
                                 标记爽约
                               </button>
                               <button
-                                onClick={() => { setSelectedOrder(order); refundMutation.mutate(order) }}
-                                className="text-vr-body-sm text-vrerror hover:underline transition-all"
+                                onClick={() => { setSelectedOrder(order); openRefundDialog(order) }}
+                                disabled={pendingRefundApprovalMap.has(order.id)}
+                                className="text-vr-body-sm text-vrerror hover:underline transition-all disabled:text-vrtext-muted disabled:no-underline disabled:cursor-not-allowed"
                               >
-                                退款
+                                {pendingRefundApprovalMap.has(order.id) ? '审批中' : '申请退款'}
                               </button>
                             </>
                           )}
@@ -1044,17 +1310,20 @@ export default function Orders() {
                           {order.status.toLowerCase() === 'no_show' && (
                             <>
                               <button
-                                onClick={() => activateMutation.mutate(order.id)}
+                                onClick={() => openRestoreDialog(order)}
                                 className="text-vr-body-sm text-vraccent-primary hover:underline transition-all"
                               >
-                                激活
+                                撤销作废
                               </button>
-                              <button
-                                onClick={() => { setSelectedOrder(order); refundMutation.mutate(order) }}
-                                className="text-vr-body-sm text-vrerror hover:underline transition-all"
-                              >
-                                退款
-                              </button>
+                              {canHandleNoShowRefund && (
+                                <button
+                                  onClick={() => { setSelectedOrder(order); openRefundDialog(order) }}
+                                  disabled={pendingNoShowApprovalMap.has(order.id)}
+                                  className="text-vr-body-sm text-vrerror hover:underline transition-all disabled:text-vrtext-muted disabled:no-underline disabled:cursor-not-allowed"
+                                >
+                                  {pendingNoShowApprovalMap.has(order.id) ? '审批中' : '申请处置'}
+                                </button>
+                              )}
                             </>
                           )}
                           {order.status.toLowerCase() === 'refunding' && (
@@ -1147,7 +1416,7 @@ export default function Orders() {
         onOpenChange={setDrawerOpen}
         onPay={(id) => payMutation.mutate({ id, method: 'CASH' })}
         onCancel={(o) => cancelMutation.mutate(o)}
-        onRefund={(o) => refundMutation.mutate(o)}
+        onRefund={openRefundDialog}
         onVerify={(id) => {
           const order = selectedOrder
           if (order) {
@@ -1156,9 +1425,14 @@ export default function Orders() {
           }
         }}
         onMarkNoShow={(o) => markNoShowMutation.mutate(o)}
-        onActivate={(id) => activateMutation.mutate(id)}
+        onActivate={openRestoreDialog}
         onCompleteRefund={(id) => completeRefundMutation.mutate(id)}
         onDelete={(id) => deleteMutation.mutate(id)}
+        onReschedule={(o) => { setRescheduleTarget(o); setRescheduleDate(o.bookingTime?.split(' ')[0] || ''); setRescheduleTime(o.bookingTime?.split(' ')[1]?.split('-')[0] || ''); setRescheduleOpen(true) }}
+        canHandleNoShowRefund={canHandleNoShowRefund}
+        hasPendingNoShowApproval={selectedOrder ? pendingNoShowApprovalMap.has(selectedOrder.id) : false}
+        hasPendingRefundApproval={selectedOrder ? pendingRefundApprovalMap.has(selectedOrder.id) : false}
+        latestApproval={selectedOrder ? latestApprovalMap.get(selectedOrder.id) : null}
         payPending={payMutation.isPending}
         cancelPending={cancelMutation.isPending}
         refundPending={refundMutation.isPending}
@@ -1214,6 +1488,300 @@ export default function Orders() {
         } : null}
         onVerify={(id) => verifyMutation.mutate(id)}
       />
+
+      {/* Restore No-show Modal */}
+      <AnimatePresence>
+        {restoreOpen && restoreTarget && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+            onClick={() => setRestoreOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-vrbg-card border border-vrborder-subtle rounded-2xl p-6 w-full max-w-md shadow-2xl"
+            >
+              <h3 className="text-vr-h3 text-vrtext-primary font-semibold mb-1">撤销作废</h3>
+              <p className="text-vr-caption text-vrtext-muted mb-4">
+                订单：{restoreTarget.orderNo}
+              </p>
+              <div className="rounded-xl border border-vrwarning/30 bg-vrwarning/10 p-3 text-vr-caption text-vrtext-secondary leading-5">
+                确认后订单将从“已作废”恢复为“待核销”，顾客可继续核销入场；爽约状态和违约金记录会被撤销。
+              </div>
+              <div className="mt-4">
+                <label className="text-vr-caption text-vrtext-secondary block mb-1">恢复原因</label>
+                <textarea
+                  value={restoreReason}
+                  onChange={(e) => setRestoreReason(e.target.value)}
+                  placeholder="例如：顾客已到店，因扫码异常被系统自动作废"
+                  className="w-full min-h-24 px-3 py-2 rounded-lg bg-vrbg-surface border border-vrborder-subtle text-vr-body-sm text-vrtext-primary outline-none focus:border-vraccent-primary resize-none"
+                />
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setRestoreOpen(false)}
+                  className="flex-1 h-10 rounded-lg text-vr-body-sm font-medium text-vrtext-secondary bg-vrbg-elevated hover:bg-vrborder-subtle transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => {
+                    const reason = restoreReason.trim()
+                    if (!reason) {
+                      alert('请填写恢复原因')
+                      return
+                    }
+                    activateMutation.mutate({ id: restoreTarget.id, reason })
+                  }}
+                  disabled={activateMutation.isPending}
+                  className="flex-1 h-10 rounded-lg text-vr-body-sm font-medium text-white bg-vraccent-primary hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {activateMutation.isPending ? '处理中...' : '确认恢复'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Refund Disposition Modal */}
+      <AnimatePresence>
+        {refundOpen && refundTarget && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm px-4"
+            onClick={closeRefundDialog}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-vrbg-card border border-vrborder-subtle rounded-2xl p-6 w-full max-w-lg shadow-2xl"
+            >
+              {(() => {
+                const isNoShow = refundTarget.status === 'NO_SHOW'
+                const amount = refundTarget.amount || 0
+                const penalty = refundTarget.penaltyAmount ?? amount
+                const suggestedRefund = Math.max(0, amount - penalty)
+                return (
+                  <>
+                    <h3 className="text-vr-h3 text-vrtext-primary font-semibold mb-1">
+                      {isNoShow ? '申请已作废退款审批' : '订单退款'}
+                    </h3>
+                    <p className="text-vr-caption text-vrtext-muted mb-4">
+                      订单：{refundTarget.orderNo}
+                    </p>
+
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      <div className="rounded-xl bg-vrbg-surface border border-vrborder-subtle p-3">
+                        <p className="text-vr-caption text-vrtext-muted">实付金额</p>
+                        <p className="text-vr-body font-semibold text-vrtext-primary mt-1">¥{(amount / 100).toFixed(2)}</p>
+                      </div>
+                      <div className="rounded-xl bg-vrbg-surface border border-vrborder-subtle p-3">
+                        <p className="text-vr-caption text-vrtext-muted">违约金</p>
+                        <p className="text-vr-body font-semibold text-vrwarning mt-1">¥{(penalty / 100).toFixed(2)}</p>
+                      </div>
+                      <div className="rounded-xl bg-vrbg-surface border border-vrborder-subtle p-3">
+                        <p className="text-vr-caption text-vrtext-muted">建议退回</p>
+                        <p className="text-vr-body font-semibold text-vrsuccess mt-1">¥{(suggestedRefund / 100).toFixed(2)}</p>
+                      </div>
+                    </div>
+
+                    {isNoShow && (
+                      <div className="space-y-2 mb-4">
+                        {[
+                          { key: 'NO_REFUND' as const, title: '不退款', desc: '维持作废结果，仅记录处置原因。' },
+                          { key: 'PARTIAL_REFUND' as const, title: '部分退款', desc: '扣除违约金后退还剩余金额，可手动调整。' },
+                          { key: 'FULL_REFUND' as const, title: '全额退款', desc: '用于门店原因、设备故障或误操作等特殊情况。' },
+                        ].map((item) => (
+                          <button
+                            key={item.key}
+                            type="button"
+                            onClick={() => {
+                              setRefundAction(item.key)
+                              if (item.key === 'NO_REFUND') setRefundAmountYuan('0.00')
+                              if (item.key === 'PARTIAL_REFUND') setRefundAmountYuan((suggestedRefund / 100).toFixed(2))
+                              if (item.key === 'FULL_REFUND') setRefundAmountYuan((amount / 100).toFixed(2))
+                            }}
+                            className={cn(
+                              'w-full text-left rounded-xl border p-3 transition-colors',
+                              refundAction === item.key
+                                ? 'border-vraccent-primary bg-vraccent-primary/10'
+                                : 'border-vrborder-subtle bg-vrbg-surface hover:border-vrborder-strong'
+                            )}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-vr-body-sm font-semibold text-vrtext-primary">{item.title}</span>
+                              <span className={cn(
+                                'w-3 h-3 rounded-full border',
+                                refundAction === item.key ? 'bg-vraccent-primary border-vraccent-primary' : 'border-vrtext-muted'
+                              )} />
+                            </div>
+                            <p className="text-vr-caption text-vrtext-muted mt-1">{item.desc}</p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-vr-caption text-vrtext-secondary block mb-1">退款金额</label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-vrtext-muted text-vr-body-sm">¥</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={refundAmountYuan}
+                            onChange={(e) => setRefundAmountYuan(e.target.value)}
+                            disabled={refundAction === 'NO_REFUND' || refundAction === 'FULL_REFUND'}
+                            className="w-full h-10 pl-8 pr-3 rounded-lg bg-vrbg-surface border border-vrborder-subtle text-vr-body-sm text-vrtext-primary outline-none focus:border-vraccent-primary disabled:opacity-60"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-vr-caption text-vrtext-secondary block mb-1">处置原因</label>
+                        <textarea
+                          value={refundReason}
+                          onChange={(e) => setRefundReason(e.target.value)}
+                          placeholder={isNoShow ? '例如：设备故障导致无法体验，同意退还部分费用' : '例如：用户取消，管理员确认退款'}
+                          className="w-full min-h-24 px-3 py-2 rounded-lg bg-vrbg-surface border border-vrborder-subtle text-vr-body-sm text-vrtext-primary outline-none focus:border-vraccent-primary resize-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-vrwarning/30 bg-vrwarning/10 p-3 text-vr-caption text-vrtext-secondary leading-5 mt-4">
+                      {isNoShow
+                        ? '提交后进入审批中心，管理员/财务/店长按权限通过后才会真正退款或记录不退款处置。'
+                        : '提交后进入审批中心，通过后才会真正退款、关闭订单、释放关联排场，并按退款金额收回对应赠送积分。'}
+                    </div>
+
+                    <div className="flex gap-3 mt-6">
+                      <button
+                        onClick={closeRefundDialog}
+                        className="flex-1 h-10 rounded-lg text-vr-body-sm font-medium text-vrtext-secondary bg-vrbg-elevated hover:bg-vrborder-subtle transition-colors"
+                      >
+                        取消
+                      </button>
+                      <button
+                        onClick={() => {
+                          const reason = refundReason.trim()
+                          if (!reason) {
+                            alert('请填写处置原因')
+                            return
+                          }
+                          const refundCents = refundAction === 'NO_REFUND'
+                            ? 0
+                            : refundAction === 'FULL_REFUND'
+                              ? amount
+                              : Math.round(Number(refundAmountYuan) * 100)
+                          if (refundAction === 'PARTIAL_REFUND' && (!Number.isInteger(refundCents) || refundCents <= 0 || refundCents >= amount)) {
+                            alert('部分退款金额必须大于0且小于订单实付金额')
+                            return
+                          }
+                          refundMutation.mutate({
+                            order: refundTarget,
+                            action: isNoShow ? refundAction : 'FULL_REFUND',
+                            amount: isNoShow ? refundCents : amount,
+                            reason,
+                          })
+                        }}
+                        disabled={refundMutation.isPending}
+                        className="flex-1 h-10 rounded-lg text-vr-body-sm font-medium text-white bg-vrerror hover:bg-vrerror/90 transition-colors disabled:opacity-50"
+                      >
+                        {refundMutation.isPending ? '提交中...' : '提交审批'}
+                      </button>
+                    </div>
+                  </>
+                )
+              })()}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Reschedule Modal */}
+      <AnimatePresence>
+        {rescheduleOpen && rescheduleTarget && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+            onClick={() => setRescheduleOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-vrbg-card border border-vrborder-subtle rounded-2xl p-6 w-full max-w-sm shadow-2xl"
+            >
+              <h3 className="text-vr-h3 text-vrtext-primary font-semibold mb-1">预约改签</h3>
+              <p className="text-vr-caption text-vrtext-muted mb-4">
+                订单：{rescheduleTarget.orderNo}
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-vr-caption text-vrtext-secondary block mb-1">新日期</label>
+                  <input
+                    type="date"
+                    value={rescheduleDate}
+                    onChange={(e) => setRescheduleDate(e.target.value)}
+                    className="w-full h-10 px-3 rounded-lg bg-vrbg-surface border border-vrborder-subtle text-vr-body-sm text-vrtext-primary outline-none focus:border-vraccent-primary"
+                  />
+                </div>
+                <div>
+                  <label className="text-vr-caption text-vrtext-secondary block mb-1">新开始时间</label>
+                  <input
+                    type="time"
+                    value={rescheduleTime}
+                    onChange={(e) => setRescheduleTime(e.target.value)}
+                    className="w-full h-10 px-3 rounded-lg bg-vrbg-surface border border-vrborder-subtle text-vr-body-sm text-vrtext-primary outline-none focus:border-vraccent-primary"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setRescheduleOpen(false)}
+                  className="flex-1 h-10 rounded-lg text-vr-body-sm font-medium text-vrtext-secondary bg-vrbg-elevated hover:bg-vrborder-subtle transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => {
+                    if (!rescheduleDate || !rescheduleTime) {
+                      alert('请选择新日期和时间')
+                      return
+                    }
+                    if (!rescheduleTarget.bookingId) {
+                      alert('订单未关联预约')
+                      return
+                    }
+                    rescheduleMutation.mutate({
+                      orderId: rescheduleTarget.bookingId,
+                      date: rescheduleDate,
+                      startTime: rescheduleTime,
+                    })
+                  }}
+                  disabled={rescheduleMutation.isPending}
+                  className="flex-1 h-10 rounded-lg text-vr-body-sm font-medium text-white bg-vraccent-primary hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {rescheduleMutation.isPending ? '处理中...' : '确认改签'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Layout>
   )
 }

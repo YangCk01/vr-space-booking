@@ -273,7 +273,7 @@ export default function Booking() {
       pageSize: 500,
     }),
   })
-  const allEvents = (bookingData?.data || []).filter((b: Booking) => !['CANCELLED', 'NO_SHOW'].includes(b.status))
+  const allEvents = (bookingData?.data || []).filter((b: Booking) => b.status !== 'CANCELLED')
 
   /* ─── Fetch games ─── */
   const { data: gamesData } = useQuery({
@@ -361,7 +361,7 @@ export default function Booking() {
     const timer = setTimeout(async () => {
       setIsSearchingUser(true)
       try {
-        const res = await getUsers({ search: phone, pageSize: 5, _t: Date.now() })
+        const res = await getUsers({ search: phone, pageSize: 5 })
         const users = res.data || []
         // 精确匹配手机号
         const exactMatch = users.find((u: User) => u.phone === phone)
@@ -538,7 +538,7 @@ export default function Booking() {
   /* ─── Stats ─── */
   const stats = useMemo(() => {
     const todayStr = format(new Date(), 'yyyy-MM-dd')
-    const todayEvents = allEvents.filter((e) => getEventDateStr(e.date) === todayStr)
+    const todayEvents = allEvents.filter((e) => getEventDateStr(e.date) === todayStr && e.status !== 'NO_SHOW')
     return {
       total: todayEvents.length,
       team: todayEvents.filter((e) => e.type === 'TEAM' || e.type === 'team').length,
@@ -801,24 +801,29 @@ export default function Booking() {
                               width: widthStyle,
                             }}
                             className={cn(
-                              'group absolute rounded-md border-l-[3px] px-1.5 py-1 cursor-pointer overflow-hidden',
-                              event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
-                              event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
-                              cfg.bg,
-                              event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
+                              'group absolute rounded-md px-1.5 py-1 cursor-pointer overflow-hidden',
+                              event.status === 'NO_SHOW'
+                                ? 'bg-gray-500/10 border border-gray-400/40 border-dashed'
+                                : cn(
+                                    'border-l-[3px]',
+                                    event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
+                                    event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
+                                    cfg.bg,
+                                    event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
+                                  ),
                               'hover:overflow-visible hover:z-[30] hover:shadow-vr-xl hover:ring-2 hover:ring-white/20 transition-all duration-150 z-20'
                             )}
                           >
-                            <div className="flex items-center gap-1 text-white">
+                            <div className={cn("flex items-center gap-1", event.status === 'NO_SHOW' ? 'text-gray-600' : 'text-white')}>
                               <EventIcon className="w-3 h-3 shrink-0" />
                               <span className="text-vr-caption font-medium truncate">
                                 {cfg.label}
                               </span>
                             </div>
-                            <div className="text-vr-caption text-white/80 mt-0.5 truncate">
+                            <div className={cn("text-vr-caption mt-0.5 truncate", event.status === 'NO_SHOW' ? 'text-gray-500' : 'text-white/80')}>
                               {event.startTime}-{event.endTime}
                             </div>
-                            <div className="text-vr-caption text-white/70 mt-0.5 truncate">
+                            <div className={cn("text-vr-caption mt-0.5 truncate", event.status === 'NO_SHOW' ? 'text-gray-400' : 'text-white/70')}>
                               {event.game?.title || 'VR体验'} · {event.personCount || 1}人
                             </div>
                             {/* Hover tooltip */}
@@ -964,24 +969,29 @@ export default function Booking() {
                                 width: `${colWidth}%`,
                               }}
                               className={cn(
-                                'group absolute rounded-md border-l-[3px] px-1.5 py-1 cursor-pointer overflow-hidden',
-                                event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
-                                event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
-                                cfg.bg,
-                                event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
+                                'group absolute rounded-md px-1.5 py-1 cursor-pointer overflow-hidden',
+                                event.status === 'NO_SHOW'
+                                  ? 'bg-gray-500/10 border border-gray-400/40 border-dashed'
+                                  : cn(
+                                      'border-l-[3px]',
+                                      event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
+                                      event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
+                                      cfg.bg,
+                                      event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
+                                    ),
                                 'hover:overflow-visible hover:z-[30] hover:shadow-vr-xl hover:ring-2 hover:ring-white/20 transition-all duration-150 z-20'
                               )}
                             >
-                              <div className="flex items-center gap-1 text-white">
+                              <div className={cn("flex items-center gap-1", event.status === 'NO_SHOW' ? 'text-gray-600' : 'text-white')}>
                                 <EventIcon className="w-3 h-3 shrink-0" />
                                 <span className="text-vr-caption font-medium truncate">
                                   {cfg.label}
                                 </span>
                               </div>
-                              <div className="text-vr-caption text-white/70 truncate">
+                              <div className={cn("text-vr-caption truncate", event.status === 'NO_SHOW' ? 'text-gray-500' : 'text-white/70')}>
                                 {event.startTime}-{event.endTime}
                               </div>
-                              <div className="text-vr-caption text-white/70 truncate">
+                              <div className={cn("text-vr-caption truncate", event.status === 'NO_SHOW' ? 'text-gray-400' : 'text-white/70')}>
                                 {event.game?.title || 'VR体验'} · {event.personCount || 1}人
                               </div>
                               {/* Hover tooltip */}
@@ -1042,24 +1052,29 @@ export default function Booking() {
                             width: `${subWidth}%`,
                           }}
                           className={cn(
-                            'group absolute rounded-md border-l-[3px] px-1.5 py-1 cursor-pointer overflow-hidden',
-                            event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
-                            event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
-                            cfg.bg,
-                            event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
+                            'group absolute rounded-md px-1.5 py-1 cursor-pointer overflow-hidden',
+                            event.status === 'NO_SHOW'
+                              ? 'bg-gray-500/10 border border-gray-400/40 border-dashed'
+                              : cn(
+                                  'border-l-[3px]',
+                                  event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
+                                  event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
+                                  cfg.bg,
+                                  event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
+                                ),
                             'hover:overflow-visible hover:z-[30] hover:shadow-vr-xl hover:ring-2 hover:ring-white/20 transition-all duration-150 z-20'
                           )}
                         >
-                          <div className="flex items-center gap-1 text-white">
+                          <div className={cn("flex items-center gap-1", event.status === 'NO_SHOW' ? 'text-gray-600' : 'text-white')}>
                             <EventIcon className="w-3 h-3 shrink-0" />
                             <span className="text-vr-caption font-medium truncate">
                               {cfg.label}
                             </span>
                           </div>
-                          <div className="text-vr-caption text-white/70 truncate">
+                          <div className={cn("text-vr-caption truncate", event.status === 'NO_SHOW' ? 'text-gray-500' : 'text-white/70')}>
                             {event.startTime}-{event.endTime}
                           </div>
-                          <div className="text-vr-caption text-white/70 truncate">
+                          <div className={cn("text-vr-caption truncate", event.status === 'NO_SHOW' ? 'text-gray-400' : 'text-white/70')}>
                             {event.game?.title || 'VR体验'} · {event.personCount || 1}人
                           </div>
                           {/* Hover tooltip */}
@@ -1163,6 +1178,7 @@ export default function Booking() {
                           key={event.id}
                           className={cn(
                             'group relative flex items-center gap-1 px-1.5 py-0.5 rounded-sm mb-0.5 cursor-pointer hover:opacity-80 transition-opacity',
+                            event.status === 'NO_SHOW' ? 'bg-gray-500/10 border border-gray-400/30 border-dashed' :
                             event.status === 'PLAYING' ? 'bg-emerald-500/20' :
                             event.status === 'CHECKED_IN' ? 'bg-amber-500/20' :
                             cfg.bg

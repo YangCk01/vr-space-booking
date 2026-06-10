@@ -39,6 +39,7 @@ function mapTypeToSceneKey(type: string): string | null {
     MARKETING: 'scene_marketing',
     POINTS_GIFT: 'scene_points_gift',
     COUPON_GIFT: 'scene_coupon_gift',
+    NO_SHOW: 'scene_no_show',
     ADMIN_PRODUCT_SOLD: 'scene_admin_product_sold',
     ADMIN_LOW_STOCK: 'scene_admin_low_stock',
     ADMIN_NEW_ORDER: 'scene_admin_new_order',

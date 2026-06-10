@@ -1,17 +1,40 @@
 import dotenv from 'dotenv'
+import path from 'path'
+
+// 先加载基础 .env
 dotenv.config()
+
+// 通过 --dev 参数加载开发环境覆盖配置
+if (process.argv.includes('--dev')) {
+  dotenv.config({ path: path.resolve(process.cwd(), '.env.dev'), override: true })
+}
 
 import { createServer } from 'http'
 import { Server as SocketIOServer } from 'socket.io'
 import app from './app'
 import { setSocketIO } from './utils/socket'
 import { prisma } from './utils/prisma'
-import { startReminderJob } from './utils/reminder'
 import cron from 'node-cron'
 import { runDailyReport } from './controllers/financialController'
 import { subDays, format } from 'date-fns'
 
 const PORT = parseInt(process.env.PORT || '4000', 10)
+const jobsEnabled = process.env.ENABLE_JOBS !== 'false'
+const socketOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
+  : process.env.NODE_ENV === 'production'
+    ? ['https://yourdomain.com']
+    : [
+        'http://localhost:3000',
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://localhost:5175',
+        'http://localhost:5176',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:5174',
+        'http://127.0.0.1:5175',
+        'http://127.0.0.1:5176',
+      ]
 
 /* ─── Global error handling ─── */
 process.on('uncaughtException', (err) => {
@@ -30,9 +53,7 @@ const httpServer = createServer(app)
 /* ─── Socket.io ─── */
 const io = new SocketIOServer(httpServer, {
   cors: {
-    origin: process.env.NODE_ENV === 'production'
-      ? (process.env.CORS_ORIGIN?.split(',') || ['https://yourdomain.com'])
-      : ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://127.0.0.1:5174'],
+    origin: socketOrigins,
     credentials: true,
   },
 })
@@ -90,18 +111,19 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 VR Space API server running on port ${PORT}`)
   console.log(`📁 Environment: ${process.env.NODE_ENV || 'development'}`)
   console.log(`🕐 Started at: ${new Date().toISOString()}`)
-  startReminderJob()
 
   // 每日 00:05 执行财务跑批
-  cron.schedule('5 0 * * *', async () => {
-    const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd')
-    console.log(`[Cron] Generating financial report for ${yesterday}`)
-    try {
-      await runDailyReport(yesterday)
-      console.log(`[Cron] Financial report generated for ${yesterday}`)
-    } catch (e) {
-      console.error(`[Cron] Failed to generate report for ${yesterday}:`, e)
-    }
-  })
-  console.log('[Cron] Daily financial report job scheduled (00:05)')
+  if (jobsEnabled) {
+    cron.schedule('5 0 * * *', async () => {
+      const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd')
+      console.log(`[Cron] Generating financial report for ${yesterday}`)
+      try {
+        await runDailyReport(yesterday)
+        console.log(`[Cron] Financial report generated for ${yesterday}`)
+      } catch (e) {
+        console.error(`[Cron] Failed to generate report for ${yesterday}:`, e)
+      }
+    })
+    console.log('[Cron] Daily financial report job scheduled (00:05)')
+  }
 })

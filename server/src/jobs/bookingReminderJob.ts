@@ -27,6 +27,10 @@ export function startBookingReminderJob() {
       const raw = advanceSetting?.value as any
       const verifyAdvanceMinutes = (typeof raw === 'object' && raw !== null && 'value' in raw ? raw.value : raw) ?? 15
 
+      const lateBufferSetting = await prisma.systemSetting.findUnique({ where: { key: 'late_buffer_minutes' } })
+      const rawLate = lateBufferSetting?.value as any
+      const lateBufferMinutes = (typeof rawLate === 'object' && rawLate !== null && 'value' in rawLate ? rawLate.value : rawLate) ?? 10
+
       // 查询未来24小时内的已支付/待核销预约
       const upcomingBookings = await prisma.booking.findMany({
         where: {
@@ -101,6 +105,45 @@ export function startBookingReminderJob() {
             sentReminders.add(keyUrgent)
             console.log(`[ReminderJob] 发送紧急提醒: ${booking.id}`)
           }
+        }
+      }
+
+      // ── 场景4：开场后迟到提醒 ──
+      // 查询状态为 READY（待入场）且开场时间在最近5分钟内的预约
+      const lateBookings = await prisma.booking.findMany({
+        where: {
+          status: 'READY',
+          date: {
+            gte: new Date(now.getTime() - 1 * 60 * 60 * 1000),
+            lte: new Date(now.getTime() + 1 * 60 * 60 * 1000),
+          },
+          order: { status: 'READY_TO_VERIFY' },
+        },
+        include: {
+          order: true,
+          user: true,
+          venue: true,
+        },
+      })
+
+      for (const booking of lateBookings) {
+        if (!booking.userId || !booking.order) continue
+        const start = getBookingStartTime(booking.date, booking.startTime)
+        const diffMs = now.getTime() - start.getTime()
+        const diffMinutes = diffMs / (1000 * 60)
+        const keyLate = `${booking.id}-late`
+
+        // 开场后 0~5 分钟内发送迟到提醒
+        if (diffMinutes >= 0 && diffMinutes <= 5) {
+          if (sentReminders.has(keyLate)) continue
+          await pushNotification(
+            booking.userId,
+            'BOOKING_LATE',
+            '场次已开始',
+            `您的场次已开始，请在 ${lateBufferMinutes} 分钟内到场，超时将无法入场。`
+          )
+          sentReminders.add(keyLate)
+          console.log(`[ReminderJob] 发送开场后迟到提醒: ${booking.id}`)
         }
       }
 

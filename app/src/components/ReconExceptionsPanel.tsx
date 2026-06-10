@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import {
   AlertTriangle, CheckCircle, Clock, Loader2, Play, RefreshCw,
   ShieldAlert, EyeOff, CheckCheck, Calendar, Trash2, Download,
-  Filter,
+  Filter, X,
 } from 'lucide-react'
 import { format, subDays } from 'date-fns'
 import { toast } from 'sonner'
@@ -72,8 +72,8 @@ async function getExceptions(batchId?: string, dateFrom?: string, dateTo?: strin
   return (res.data.data || []) as ReconException[]
 }
 
-async function runRecon(date: string) {
-  const res = await apiClient.post('/recon/run', { date })
+async function runRecon(date: string, force = false) {
+  const res = await apiClient.post('/recon/run', { date, force })
   return res.data
 }
 
@@ -90,8 +90,8 @@ async function clearReconData() {
 const statusMap: Record<string, { label: string; color: string; icon?: any }> = {
   SUCCESS: { label: '成功', color: 'text-emerald-400', icon: CheckCircle },
   FAILED: { label: '失败', color: 'text-red-400', icon: AlertTriangle },
-  RUNNING: { label: '执行中', color: 'text-amber-400', icon: Loader2 },
-  PENDING: { label: '待处理', color: 'text-amber-400', icon: Clock },
+  RUNNING: { label: '执行中', color: 'text-orange-700 dark:text-orange-300', icon: Loader2 },
+  PENDING: { label: '待处理', color: 'text-orange-700 dark:text-orange-300', icon: Clock },
   MANUAL_FIXED: { label: '已人工处理', color: 'text-blue-400', icon: CheckCheck },
   AUTO_FIXED: { label: '已自动修复', color: 'text-emerald-400', icon: CheckCircle },
   FROZEN: { label: '已冻结', color: 'text-red-400', icon: ShieldAlert },
@@ -131,6 +131,14 @@ export default function ReconExceptionsPanel() {
   const [dateFrom, setDateFrom] = useState(defaultStart)
   const [dateTo, setDateTo] = useState(today)
   const [selectedBatch, setSelectedBatch] = useState<string | null>(null)
+  const [actionDraft, setActionDraft] = useState<{
+    exception: ReconException
+    action: string
+    title: string
+    impact: string
+    tone: 'blue' | 'red' | 'violet' | 'gray'
+  } | null>(null)
+  const [actionRemark, setActionRemark] = useState('')
   const queryClient = useQueryClient()
 
   const { data: batches, isLoading: batchesLoading, error: batchesError } = useQuery({
@@ -174,7 +182,7 @@ export default function ReconExceptionsPanel() {
         const d = new Date(start.getTime() + i * 86400000)
         const dateStr = format(d, 'yyyy-MM-dd')
         try {
-          const res = await runRecon(dateStr)
+          const res = await runRecon(dateStr, true)
           if (res?.message?.includes('跳过')) {
             skipped++
           } else {
@@ -201,8 +209,11 @@ export default function ReconExceptionsPanel() {
       handleException(id, action, remark),
     onSuccess: () => {
       toast.success('处理完成')
+      setActionDraft(null)
+      setActionRemark('')
       queryClient.invalidateQueries({ queryKey: ['recon-exceptions'] })
       queryClient.invalidateQueries({ queryKey: ['recon-batches'] })
+      queryClient.invalidateQueries({ queryKey: ['finance'] })
     },
     onError: (err: any) => {
       toast.error(err?.response?.data?.message || '处理失败')
@@ -222,6 +233,31 @@ export default function ReconExceptionsPanel() {
   })
 
   const latestBatch = batches?.[0]
+
+  const openAction = (
+    exception: ReconException,
+    action: string,
+    title: string,
+    impact: string,
+    tone: 'blue' | 'red' | 'violet' | 'gray' = 'blue'
+  ) => {
+    setActionDraft({ exception, action, title, impact, tone })
+    setActionRemark('')
+  }
+
+  const submitAction = () => {
+    if (!actionDraft) return
+    const remark = actionRemark.trim()
+    if (remark.length < 4) {
+      toast.error('请填写至少 4 个字的处理说明')
+      return
+    }
+    handleMut.mutate({
+      id: actionDraft.exception.id,
+      action: actionDraft.action,
+      remark,
+    })
+  }
 
   // ===== 按日期范围统计各维度 =====
   const orderPayMatched = filteredBatches.reduce((s, b) => s + (b.orderPayMatchedCount || 0), 0)
@@ -422,29 +458,29 @@ export default function ReconExceptionsPanel() {
         {/* 2个系统核对 */}
         <div className={cn(
           'border rounded-lg p-3 flex items-center gap-2',
-          pointsTotal === 0 ? 'bg-emerald-500/5 border-emerald-500/20' : pointsPending > 0 ? 'bg-amber-500/5 border-amber-500/20' : 'bg-blue-500/5 border-blue-500/20'
+          pointsTotal === 0 ? 'bg-emerald-500/5 border-emerald-500/20' : pointsPending > 0 ? 'bg-orange-50 border-orange-300 dark:bg-orange-500/10 dark:border-orange-500/30' : 'bg-blue-500/5 border-blue-500/20'
         )}>
-          <div className={cn('w-7 h-7 rounded-full flex items-center justify-center shrink-0', pointsTotal === 0 ? 'bg-emerald-500/10' : 'bg-amber-500/10')}>
-            {pointsTotal === 0 ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> : <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />}
+          <div className={cn('w-7 h-7 rounded-full flex items-center justify-center shrink-0', pointsTotal === 0 ? 'bg-emerald-500/10' : 'bg-orange-100 dark:bg-orange-500/10')}>
+            {pointsTotal === 0 ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> : <AlertTriangle className="w-3.5 h-3.5 text-orange-700 dark:text-orange-300" />}
           </div>
           <div>
             <p className="text-vr-caption text-vrtext-muted">积分核对</p>
-            <p className={cn('text-sm font-bold', pointsTotal === 0 ? 'text-emerald-400' : pointsPending > 0 ? 'text-amber-400' : 'text-blue-400')}>
-              {pointsTotal === 0 ? '正常' : `${pointsPending} 待处理`}
+            <p className={cn('text-sm font-bold', pointsTotal === 0 ? 'text-emerald-400' : pointsPending > 0 ? 'text-orange-700 dark:text-orange-300' : 'text-blue-400')}>
+              {pointsTotal === 0 ? '正常' : pointsPending > 0 ? `${pointsPending} 待处理` : '已核实'}
             </p>
           </div>
         </div>
         <div className={cn(
           'border rounded-lg p-3 flex items-center gap-2',
-          hardwareTotal === 0 ? 'bg-emerald-500/5 border-emerald-500/20' : hardwarePending > 0 ? 'bg-amber-500/5 border-amber-500/20' : 'bg-blue-500/5 border-blue-500/20'
+          hardwareTotal === 0 ? 'bg-emerald-500/5 border-emerald-500/20' : hardwarePending > 0 ? 'bg-orange-50 border-orange-300 dark:bg-orange-500/10 dark:border-orange-500/30' : 'bg-blue-500/5 border-blue-500/20'
         )}>
-          <div className={cn('w-7 h-7 rounded-full flex items-center justify-center shrink-0', hardwareTotal === 0 ? 'bg-emerald-500/10' : 'bg-amber-500/10')}>
-            {hardwareTotal === 0 ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> : <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />}
+          <div className={cn('w-7 h-7 rounded-full flex items-center justify-center shrink-0', hardwareTotal === 0 ? 'bg-emerald-500/10' : 'bg-orange-100 dark:bg-orange-500/10')}>
+            {hardwareTotal === 0 ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> : <AlertTriangle className="w-3.5 h-3.5 text-orange-700 dark:text-orange-300" />}
           </div>
           <div>
             <p className="text-vr-caption text-vrtext-muted">硬件核对</p>
-            <p className={cn('text-sm font-bold', hardwareTotal === 0 ? 'text-emerald-400' : hardwarePending > 0 ? 'text-amber-400' : 'text-blue-400')}>
-              {hardwareTotal === 0 ? '正常' : `${hardwarePending} 待处理`}
+            <p className={cn('text-sm font-bold', hardwareTotal === 0 ? 'text-emerald-400' : hardwarePending > 0 ? 'text-orange-700 dark:text-orange-300' : 'text-blue-400')}>
+              {hardwareTotal === 0 ? '正常' : hardwarePending > 0 ? `${hardwarePending} 待处理` : '已核实'}
             </p>
           </div>
         </div>
@@ -649,7 +685,7 @@ export default function ReconExceptionsPanel() {
                         <span className="flex items-center gap-1.5">
                           <span className={cn(
                             'w-2 h-2 rounded-full',
-                            typeInfo?.severity === 'high' ? 'bg-red-500' : typeInfo?.severity === 'medium' ? 'bg-amber-500' : 'bg-blue-500'
+                            typeInfo?.severity === 'high' ? 'bg-red-500' : typeInfo?.severity === 'medium' ? 'bg-orange-500' : 'bg-blue-500'
                           )} />
                           <span className="text-vrtext-secondary">{typeInfo?.label || exc.exceptionType}</span>
                         </span>
@@ -689,17 +725,14 @@ export default function ReconExceptionsPanel() {
                             {exc.exceptionType === 'LONG' && (
                               <>
                                 <button
-                                  onClick={() => {
-                                    const remark = window.prompt('请输入长款处理备注')
-                                    if (remark !== null) handleMut.mutate({ id: exc.id, action: 'FIX', remark })
-                                  }}
+                                  onClick={() => openAction(exc, 'FIX', '确认长款', '系统将创建调整流水并把该异常标记为已人工处理。', 'blue')}
                                   disabled={handleMut.isPending}
                                   className="px-2 py-1 rounded text-[10px] bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
                                 >
                                   确认长款
                                 </button>
                                 <button
-                                  onClick={() => toast.info('支付渠道未接入，退款功能暂不可用')}
+                                  onClick={() => openAction(exc, 'REFUND', '原路退回长款', '系统将调用渠道退款接口，成功后把该异常标记为已退款。', 'violet')}
                                   disabled={handleMut.isPending}
                                   className="px-2 py-1 rounded text-[10px] bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-colors"
                                 >
@@ -710,17 +743,14 @@ export default function ReconExceptionsPanel() {
                             {exc.exceptionType === 'SHORT' && (
                               <>
                                 <button
-                                  onClick={() => {
-                                    const remark = window.prompt('请输入短款冻结备注')
-                                    if (remark !== null) handleMut.mutate({ id: exc.id, action: 'FREEZE', remark })
-                                  }}
+                                  onClick={() => openAction(exc, 'FREEZE', '冻结权益', '系统将冻结用户可用本金中对应差额，并生成冻结流水。', 'red')}
                                   disabled={handleMut.isPending}
                                   className="px-2 py-1 rounded text-[10px] bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
                                 >
                                   冻结权益
                                 </button>
                                 <button
-                                  onClick={() => handleMut.mutate({ id: exc.id, action: 'IGNORE' })}
+                                  onClick={() => openAction(exc, 'IGNORE', '忽略短款异常', '仅标记为已忽略，不改变用户余额或订单数据。', 'gray')}
                                   disabled={handleMut.isPending}
                                   className="px-2 py-1 rounded text-[10px] bg-gray-500/10 text-gray-400 hover:bg-gray-500/20 transition-colors"
                                 >
@@ -731,17 +761,14 @@ export default function ReconExceptionsPanel() {
                             {['AMOUNT_MISMATCH', 'STATUS_MISMATCH', 'FEE_MISMATCH', 'DUPLICATE', 'UNKNOWN'].includes(exc.exceptionType) && (
                               <>
                                 <button
-                                  onClick={() => {
-                                    const remark = window.prompt('请输入平账备注')
-                                    if (remark !== null) handleMut.mutate({ id: exc.id, action: 'FIX', remark })
-                                  }}
+                                  onClick={() => openAction(exc, 'FIX', '确认已处理', '系统将创建调整流水或积分流水，并把该异常标记为已人工处理。', 'blue')}
                                   disabled={handleMut.isPending}
                                   className="px-2 py-1 rounded text-[10px] bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
                                 >
                                   确认已处理
                                 </button>
                                 <button
-                                  onClick={() => handleMut.mutate({ id: exc.id, action: 'IGNORE' })}
+                                  onClick={() => openAction(exc, 'IGNORE', '忽略该异常', '仅标记为已忽略，不改变用户余额或订单数据。', 'gray')}
                                   disabled={handleMut.isPending}
                                   className="px-2 py-1 rounded text-[10px] bg-gray-500/10 text-gray-400 hover:bg-gray-500/20 transition-colors"
                                 >
@@ -752,17 +779,14 @@ export default function ReconExceptionsPanel() {
                             {exc.exceptionType === 'HARDWARE_MISMATCH' && (
                               <>
                                 <button
-                                  onClick={() => {
-                                    const remark = window.prompt('请输入核实备注')
-                                    if (remark !== null) handleMut.mutate({ id: exc.id, action: 'FIX', remark })
-                                  }}
+                                  onClick={() => openAction(exc, 'FIX', '确认硬件差异已核实', '系统仅记录核实结果并把该异常标记为已人工处理。', 'blue')}
                                   disabled={handleMut.isPending}
                                   className="px-2 py-1 rounded text-[10px] bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
                                 >
                                   已核实
                                 </button>
                                 <button
-                                  onClick={() => handleMut.mutate({ id: exc.id, action: 'IGNORE' })}
+                                  onClick={() => openAction(exc, 'IGNORE', '忽略硬件差异', '仅标记为已忽略，不改变用户余额或订单数据。', 'gray')}
                                   disabled={handleMut.isPending}
                                   className="px-2 py-1 rounded text-[10px] bg-gray-500/10 text-gray-400 hover:bg-gray-500/20 transition-colors"
                                 >
@@ -785,6 +809,98 @@ export default function ReconExceptionsPanel() {
           </div>
         )}
       </div>
+
+      {actionDraft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg bg-vrbg-card border border-vrborder-subtle rounded-xl shadow-xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-vrborder-subtle">
+              <div>
+                <h3 className="text-vr-body font-semibold text-vrtext-primary">{actionDraft.title}</h3>
+                <p className="text-vr-caption text-vrtext-muted mt-1">对账异常处置会写入审计日志</p>
+              </div>
+              <button
+                onClick={() => {
+                  setActionDraft(null)
+                  setActionRemark('')
+                }}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-vrtext-muted hover:text-vrtext-primary hover:bg-vrbg-surface"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-vrbg-surface rounded-lg p-3">
+                  <p className="text-vr-caption text-vrtext-muted">异常类型</p>
+                  <p className="text-vr-body-sm font-medium text-vrtext-primary mt-1">
+                    {exceptionTypeMap[actionDraft.exception.exceptionType]?.label || actionDraft.exception.exceptionType}
+                  </p>
+                </div>
+                <div className="bg-vrbg-surface rounded-lg p-3">
+                  <p className="text-vr-caption text-vrtext-muted">差异值</p>
+                  <p className={cn('text-vr-body-sm font-semibold mt-1', actionDraft.exception.diffAmount > 0 ? 'text-red-400' : 'text-emerald-400')}>
+                    {actionDraft.exception.exceptionType === 'HARDWARE_MISMATCH'
+                      ? `${actionDraft.exception.diffAmount} 人次`
+                      : `¥${(actionDraft.exception.diffAmount / 100).toFixed(2)}`}
+                  </p>
+                </div>
+                <div className="bg-vrbg-surface rounded-lg p-3 col-span-2">
+                  <p className="text-vr-caption text-vrtext-muted">业务单号</p>
+                  <p className="text-vr-body-sm font-mono text-vrtext-primary mt-1">
+                    {actionDraft.exception.bizOrderNo || '-'}
+                  </p>
+                </div>
+              </div>
+
+              <div className={cn(
+                'rounded-lg border p-3 text-vr-body-sm',
+                actionDraft.tone === 'red'
+                  ? 'bg-red-500/10 border-red-500/30 text-red-300'
+                  : actionDraft.tone === 'violet'
+                    ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
+                    : actionDraft.tone === 'gray'
+                      ? 'bg-gray-500/10 border-gray-500/30 text-gray-300'
+                      : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+              )}>
+                {actionDraft.impact}
+              </div>
+
+              <div>
+                <label className="text-vr-caption text-vrtext-muted block mb-1">处理说明</label>
+                <textarea
+                  value={actionRemark}
+                  onChange={(e) => setActionRemark(e.target.value)}
+                  rows={4}
+                  maxLength={300}
+                  placeholder="请填写核实依据、处理原因或沟通记录"
+                  className="w-full px-3 py-2 rounded-lg bg-vrbg-surface border border-vrborder-subtle text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary resize-none"
+                />
+                <p className="text-vr-caption text-vrtext-muted mt-1">{actionRemark.trim().length}/300，至少 4 个字</p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-vrborder-subtle">
+              <button
+                onClick={() => {
+                  setActionDraft(null)
+                  setActionRemark('')
+                }}
+                className="h-9 px-4 rounded-lg bg-vrbg-surface text-vrtext-secondary hover:text-vrtext-primary"
+              >
+                取消
+              </button>
+              <button
+                onClick={submitAction}
+                disabled={handleMut.isPending || actionRemark.trim().length < 4}
+                className="h-9 px-4 rounded-lg bg-vraccent-primary text-white disabled:opacity-50"
+              >
+                {handleMut.isPending ? '处理中...' : '确认处理'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -281,6 +281,8 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
     noShowDeadlineMinutes: s.no_show_deadline_minutes?.value ?? 15,
     noShowPenaltyRate: s.no_show_penalty_rate?.value ?? 100,
     enableAutoNoShow: s.enable_auto_no_show?.value ?? true,
+    rescheduleAllowAfterStart: s.reschedule_allow_after_start?.value ?? true,
+    rescheduleAfterStartMinutes: s.reschedule_after_start_minutes?.value ?? 15,
   })
   const defaultTiers: RefundTier[] = [
     { hours: 24, rate: 100, label: '开场24小时前' },
@@ -306,6 +308,8 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       noShowDeadlineMinutes: s.no_show_deadline_minutes?.value ?? 15,
       noShowPenaltyRate: s.no_show_penalty_rate?.value ?? 100,
       enableAutoNoShow: s.enable_auto_no_show?.value ?? true,
+      rescheduleAllowAfterStart: s.reschedule_allow_after_start?.value ?? true,
+      rescheduleAfterStartMinutes: s.reschedule_after_start_minutes?.value ?? 15,
     })
     const raw = s.booking_refund_tiers?.value
     setTiers(raw && Array.isArray(raw) && raw.length > 0 ? raw : defaultTiers)
@@ -357,6 +361,10 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       setError('违约金比例必须在 0~100 之间')
       return
     }
+    if (values.rescheduleAfterStartMinutes < 0) {
+      setError('开场后可改签分钟数不能为负数')
+      return
+    }
     // 校验阶梯规则
     for (const t of tiers) {
       if (t.hours < 0) { setError('距开场时间不能为负数'); return }
@@ -381,6 +389,8 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       { key: 'no_show_deadline_minutes', value: values.noShowDeadlineMinutes, category: 'booking' },
       { key: 'no_show_penalty_rate', value: values.noShowPenaltyRate, category: 'booking' },
       { key: 'enable_auto_no_show', value: values.enableAutoNoShow, category: 'booking' },
+      { key: 'reschedule_allow_after_start', value: values.rescheduleAllowAfterStart, category: 'booking' },
+      { key: 'reschedule_after_start_minutes', value: values.rescheduleAfterStartMinutes, category: 'booking' },
     ])
   }
 
@@ -540,6 +550,32 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
               </div>
               <Switch checked={values.enableAutoNoShow} onCheckedChange={(v) => update('enableAutoNoShow', v)} />
             </div>
+          </div>
+        </motion.div>
+        {/* ── 改签设置 ── */}
+        <motion.div {...fadeInUp}>
+          <h3 className="text-vr-body-sm font-medium text-vrtext-primary mb-3 pt-2">改签设置</h3>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between py-1">
+              <div>
+                <label className="block text-vr-body-sm text-vrtext-primary">开场后允许改签</label>
+                <p className="text-vr-caption text-vrtext-tertiary">场次开始后是否仍允许顾客改签</p>
+              </div>
+              <Switch checked={values.rescheduleAllowAfterStart} onCheckedChange={(v) => update('rescheduleAllowAfterStart', v)} />
+            </div>
+            {values.rescheduleAllowAfterStart && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.3, ease }}>
+                <label className="block text-vr-caption text-vrtext-secondary mb-1">开场后可改签时长（分钟）</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={values.rescheduleAfterStartMinutes}
+                  onChange={(e) => update('rescheduleAfterStartMinutes', Number(e.target.value))}
+                  className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                />
+                <p className="mt-1 text-vr-caption text-vrtext-tertiary">开场后多少分钟内仍可改签，超过后不可改签</p>
+              </motion.div>
+            )}
           </div>
         </motion.div>
         {error && (

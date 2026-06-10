@@ -56,6 +56,13 @@ export default function Pay() {
   const countdownMs = useCountdown(order?.expireAt)
   const isExpired = countdownMs <= 0 && !!order?.expireAt
 
+  useEffect(() => {
+    if (order?.status === 'PENDING' && isExpired) {
+      queryClient.invalidateQueries({ queryKey: ['order', id] })
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
+    }
+  }, [id, isExpired, order?.status, queryClient])
+
   const amountYuan = ((order?.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const balance = (user?.principalBalance || 0) + (user?.bonusBalance || 0)
   const balanceDisabled = balance < (order?.amount || 0)
@@ -124,6 +131,16 @@ export default function Pay() {
     setShowCancelConfirm(true)
   }
 
+  const goOrders = () => {
+    queryClient.invalidateQueries({ queryKey: ['orders'] })
+    navigate('/orders', { replace: true })
+    window.setTimeout(() => {
+      if (window.location.pathname !== '/orders') {
+        window.location.assign('/orders')
+      }
+    }, 100)
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-[100dvh] flex items-center justify-center">
@@ -138,7 +155,8 @@ export default function Pay() {
         <CreditCard className="w-12 h-12 mb-3 opacity-30" />
         <p className="text-sm">{order ? '该订单已过期或已取消' : '订单不存在'}</p>
         <button
-          onClick={() => navigate('/orders')}
+          type="button"
+          onClick={goOrders}
           className="mt-4 px-6 py-2 rounded-xl text-sm font-medium text-white bg-gradient-accent"
         >
           返回订单列表
@@ -153,7 +171,8 @@ export default function Pay() {
         <CreditCard className="w-12 h-12 mb-3 opacity-30" />
         <p className="text-sm">该订单已支付</p>
         <button
-          onClick={() => navigate('/orders')}
+          type="button"
+          onClick={goOrders}
           className="mt-4 px-6 py-2 rounded-xl text-sm font-medium text-white bg-gradient-accent"
         >
           返回订单列表

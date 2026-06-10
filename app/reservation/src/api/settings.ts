@@ -20,3 +20,20 @@ export async function getBookingConfig() {
   const res = await apiClient.get('/settings/booking-config')
   return res.data.data as { advanceDays: number }
 }
+
+export interface BookingLifecycle {
+  verifyAdvanceMinutes: number
+  lateBufferMinutes: number
+  noShowDeadlineMinutes: number
+  noShowPenaltyRate: number
+  rescheduleFeeRate: number
+  rescheduleDeadlineHours: number
+  rescheduleMaxCount: number
+  rescheduleAllowAfterStart: boolean
+  rescheduleAfterStartMinutes: number
+}
+
+export async function getBookingLifecycle() {
+  const res = await apiClient.get('/settings/booking-lifecycle')
+  return res.data.data as BookingLifecycle
+}

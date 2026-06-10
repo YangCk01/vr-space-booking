@@ -8,6 +8,7 @@ import {
   pay,
   cancel,
   refund,
+  noShowDisposition,
   batchVerify,
   batchRefund,
   markNoShow,
@@ -29,10 +30,11 @@ router.post('/', optionalAuthenticate, createValidators, logOperation({ type: '�
 router.put('/:id/status', authenticate, logOperation({ type: '修改订单状态', content: (req) => `修改订单状态: ${req.params.id} → ${req.body.status}` }), updateStatus)
 router.put('/:id/pay', authenticate, logOperation({ type: '订单支付', content: (req) => `订单支付: ${req.params.id}` }), pay)
 router.put('/:id/cancel', authenticate, logOperation({ type: '取消订单', content: (req) => `取消订单: ${req.params.id}` }), cancel)
-router.put('/:id/refund', authenticate, logOperation({ type: '订单退款', content: (req) => `订单退款: ${req.params.id}` }), refund)
+router.put('/:id/refund', authenticate, requireRole('SUPER_ADMIN'), logOperation({ type: '超管订单退款', content: (req) => `超管订单退款: ${req.params.id}` }), refund)
+router.post('/:id/no-show-disposition', authenticate, requireRole('SUPER_ADMIN'), logOperation({ type: '超管已作废退款处置', content: (req) => `超管已作废退款处置: ${req.params.id}` }), noShowDisposition)
 router.post('/batch-verify', authenticate, requirePermission('order:verify'), batchVerifyValidators, logOperation({ type: '批量核销订单', content: (req) => `批量核销 ${req.body.ids?.length || 0} 个订单` }), batchVerify)
 router.post('/batch-refund', authenticate, requirePermission('order:refund'), batchRefundValidators, logOperation({ type: '批量退款订单', content: (req) => `批量退款 ${req.body.ids?.length || 0} 个订单` }), batchRefund)
 router.post('/:id/mark-no-show', authenticate, requireRole('SUPER_ADMIN','ADMIN','OPERATOR','MANAGER'), logOperation({ type: '标记爽约', content: (req) => `标记订单爽约: ${req.params.id}` }), markNoShow)
-router.post('/:id/activate', authenticate, requireRole('SUPER_ADMIN','ADMIN','OPERATOR','MANAGER'), logOperation({ type: '激活作废订单', content: (req) => `激活作废订单: ${req.params.id}` }), activate)
+router.post('/:id/activate', authenticate, requireRole('SUPER_ADMIN','ADMIN','OPERATOR','MANAGER'), logOperation({ type: '撤销作废订单', content: (req) => `撤销作废订单: ${req.params.id}` }), activate)
 
 export default router

@@ -76,8 +76,16 @@ export async function cancelOrder(id: string) {
   return res.data.data
 }
 
-export async function refundOrder(id: string, amount?: number) {
-  const res = await apiClient.put(`/orders/${id}/refund`, { amount })
+export async function refundOrder(id: string, amount?: number, reason?: string) {
+  const res = await apiClient.put(`/orders/${id}/refund`, { amount, reason })
+  return res.data.data
+}
+
+export async function noShowDisposition(
+  id: string,
+  payload: { action: 'NO_REFUND' | 'PARTIAL_REFUND' | 'FULL_REFUND'; amount?: number; reason: string }
+) {
+  const res = await apiClient.post(`/orders/${id}/no-show-disposition`, payload)
   return res.data.data
 }
 
@@ -106,7 +114,7 @@ export async function markNoShow(id: string, reason?: string) {
   return res.data
 }
 
-export async function activateOrder(id: string) {
-  const res = await apiClient.post(`/orders/${id}/activate`)
+export async function activateOrder(id: string, reason?: string) {
+  const res = await apiClient.post(`/orders/${id}/activate`, { reason })
   return res.data
 }

@@ -59,6 +59,44 @@ export async function bookingConfig(req: Request, res: Response) {
   }
 }
 
+/** 公开接口：返回预约生命周期配置（供C端使用） */
+export async function bookingLifecycle(req: Request, res: Response) {
+  try {
+    const keys = [
+      'verify_advance_minutes',
+      'late_buffer_minutes',
+      'no_show_deadline_minutes',
+      'no_show_penalty_rate',
+      'reschedule_fee_rate',
+      'reschedule_deadline_hours',
+      'reschedule_max_count',
+      'reschedule_allow_after_start',
+      'reschedule_after_start_minutes',
+    ]
+    const settings = await prisma.systemSetting.findMany({
+      where: { key: { in: keys } },
+    })
+    const map: Record<string, any> = {}
+    for (const s of settings) {
+      const raw = s.value as any
+      map[s.key] = raw?.value ?? raw
+    }
+    return success(res, {
+      verifyAdvanceMinutes: map.verify_advance_minutes ?? 15,
+      lateBufferMinutes: map.late_buffer_minutes ?? 10,
+      noShowDeadlineMinutes: map.no_show_deadline_minutes ?? 15,
+      noShowPenaltyRate: map.no_show_penalty_rate ?? 100,
+      rescheduleFeeRate: map.reschedule_fee_rate ?? 10,
+      rescheduleDeadlineHours: map.reschedule_deadline_hours ?? 2,
+      rescheduleMaxCount: map.reschedule_max_count ?? 1,
+      rescheduleAllowAfterStart: map.reschedule_allow_after_start ?? true,
+      rescheduleAfterStartMinutes: map.reschedule_after_start_minutes ?? 15,
+    })
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
 export async function list(req: Request, res: Response) {
   try {
     const category = req.query.category as string | undefined

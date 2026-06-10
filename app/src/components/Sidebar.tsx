@@ -38,6 +38,7 @@ const menuItems: MenuItem[] = [
   { key: 'games', label: '内容管理', icon: 'Gamepad2', path: '/games' },
   { key: 'booking', label: '预约排场', icon: 'CalendarDays', path: '/booking' },
   { key: 'orders', label: '订单管理', icon: 'ClipboardList', path: '/orders' },
+  { key: 'approvals', label: '审批中心', icon: 'ShieldCheck', path: '/approvals' },
   {
     key: 'users',
     label: '会员管理',
@@ -100,6 +101,7 @@ const keyToPermission: Record<string, string | string[]> = {
   games: 'venue:read',
   booking: 'order:read',
   orders: 'order:read',
+  approvals: ['approval:read', 'approval:request'],
   users: 'user:read',
   campaigns: 'marketing:campaign',
   analytics: 'order:read',

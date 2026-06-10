@@ -75,7 +75,7 @@ function formatDate(iso?: string): string {
 }
 
 /* ─── Status Badge ─── */
-type CampaignStatus = 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'ENDED'
+type CampaignStatus = 'DRAFT' | 'RUNNING' | 'PAUSED' | 'ENDED'
 
 const statusConfig: Record<string, { bg: string; text: string; icon: React.ReactNode; label: string }> = {
   DRAFT: { bg: 'bg-vrtext-muted/15', text: 'text-vrtext-muted', icon: <Clock className="w-3 h-3" />, label: '草稿' },

@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ChevronLeft, Crown, Zap, TrendingUp, Gift, Star } from 'lucide-react'
+import { ChevronLeft, Crown, Zap, TrendingUp, Gift, Star, Repeat } from 'lucide-react'
 import { useAuth } from '@/providers/AuthProvider'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
@@ -9,7 +9,7 @@ import { getRechargeConfig } from '@/api/recharges'
 async function getMemberPublicConfig() {
   const res = await apiClient.get('/settings/member-public')
   return res.data.data as {
-    levels: Array<{ key: string; name: string; discount: number; threshold?: number }>
+    levels: Array<{ key: string; name: string; discount: number; threshold?: number; freeRescheduleQuota?: number }>
     points: { earnRate: number; deductRate: number }
   }
 }
@@ -34,6 +34,20 @@ export default function MemberBenefits() {
   const { data: rechargeConfigs } = useQuery({
     queryKey: ['rechargeConfig'],
     queryFn: getRechargeConfig,
+  })
+
+  const { data: benefits } = useQuery({
+    queryKey: ['user-benefits'],
+    queryFn: async () => {
+      const res = await apiClient.get('/user-benefits')
+      return res.data.data as {
+        freeReschedule: {
+          totalQuota: number
+          usedQuota: number
+          remaining: number
+        }
+      }
+    },
   })
 
   const levels = memberConfig?.levels || []
@@ -153,6 +167,25 @@ export default function MemberBenefits() {
                 </p>
               </div>
             </div>
+            {(() => {
+              const quota = currentLevel?.freeRescheduleQuota || 0
+              if (quota <= 0) return null
+              const used = benefits?.freeReschedule?.usedQuota || 0
+              const remaining = Math.max(0, quota - used)
+              return (
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-[var(--accent-primary)]/10 flex items-center justify-center shrink-0">
+                    <Repeat className="w-4 h-4 text-[var(--accent-primary)]" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-[var(--text-primary)]">免费改签</p>
+                    <p className="text-xs text-[var(--text-muted)]">
+                      每月可免费改签 {quota} 次，已使用 {used} 次，剩余 {remaining} 次
+                    </p>
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         </div>
 

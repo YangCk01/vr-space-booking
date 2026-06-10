@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { body, param, validationResult } from 'express-validator'
 import { prisma } from '../utils/prisma'
 import { success, error, paginated } from '../utils/response'
+import { getEquipmentOccupancy } from '../services/equipmentService'
 
 export const createValidators = [
   body('name').notEmpty().withMessage('设备名称不能为空'),
@@ -56,7 +57,15 @@ export async function list(req: Request, res: Response) {
       prisma.equipment.count({ where }),
     ])
 
-    return paginated(res, equipment, pageNum, sizeNum, total)
+    // 查询每个设备的占用情况
+    const equipmentWithOccupancy = await Promise.all(
+      equipment.map(async (eq) => {
+        const occupancy = await getEquipmentOccupancy(eq.id)
+        return { ...eq, occupancy }
+      })
+    )
+
+    return paginated(res, equipmentWithOccupancy, pageNum, sizeNum, total)
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }

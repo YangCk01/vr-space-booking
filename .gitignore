@@ -6,7 +6,9 @@ dist/
 
 # Environment variables
 .env
+.env.dev
 .env.local
+.env.*.local
 .env.production
 
 # OS files
@@ -22,6 +24,7 @@ uploads/
 # Logs
 logs/
 *.log
+*.txt
 
 # Prisma generated
 src/generated/prisma/
@@ -31,6 +34,7 @@ src/generated/prisma/
 
 # Playwright MCP screenshots
 .playwright-mcp/
+artifacts/
 *.pid
 
 # Screenshots from testing
@@ -49,6 +53,7 @@ start-silent.vbs
 
 # Database backups
 *.sql
+!server/prisma/migrations/**/migration.sql
 
 # Embedded PostgreSQL (too large for git)
 tools/pgsql/

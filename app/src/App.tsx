@@ -22,6 +22,7 @@ import CouponEffects from './pages/CouponEffects'
 import VenueAnalytics from './pages/VenueAnalytics'
 import Campaigns from './pages/Campaigns'
 import TriggerRules from './pages/TriggerRules'
+import Approvals from './pages/Approvals'
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/venues" element={<Venues />} />
           <Route path="/booking" element={<Booking />} />
           <Route path="/orders" element={<Orders />} />
+          <Route path="/approvals" element={<Approvals />} />
           <Route path="/users" element={<Users />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/finance" element={<Finance />} />

@@ -70,8 +70,9 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
     const venueCountWhere = venueIds?.length ? { id: { in: venueIds } } : {}
 
     // 当前周期数据
-    const currentBookings = await prisma.order.count({
-      where: { createdAt: { gte: start, lte: end }, status: { notIn: ['PENDING', 'CANCELLED'] }, ...venueWhere },
+    // 预约场次按 Booking.date（预约日期）统计，和排场页保持一致
+    const currentBookings = await prisma.booking.count({
+      where: { date: { gte: start, lte: end }, status: { not: 'CANCELLED' }, ...venueWhereBooking },
     })
     const currentUsed = await prisma.booking.count({
       where: { date: { gte: start, lte: end }, status: 'COMPLETED', ...venueWhereBooking },
@@ -80,23 +81,41 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
       where: { date: { gte: start, lte: end }, status: 'COMPLETED', ...venueWhereBooking },
       _sum: { personCount: true },
     })
-    const currentRevenue = await prisma.order.aggregate({
-      where: { createdAt: { gte: start, lte: end }, status: { in: ['PAID', 'COMPLETED'] }, ...venueWhere },
-      _sum: { amount: true },
+    // 营业额：PAID/COMPLETED 订单全额 + CANCELLED 订单扣除的手续费（差额）
+    const currentPeriodOrders = await prisma.order.findMany({
+      where: { createdAt: { gte: start, lte: end }, status: { in: ['PAID', 'COMPLETED', 'CANCELLED'] }, ...venueWhere },
+      select: { status: true, amount: true, refundAmount: true },
     })
+    let currentRevenue = 0
+    for (const o of currentPeriodOrders) {
+      if (o.status === 'PAID' || o.status === 'COMPLETED') {
+        currentRevenue += o.amount
+      } else if (o.status === 'CANCELLED' && o.refundAmount != null) {
+        currentRevenue += o.amount - o.refundAmount
+      }
+    }
 
     // 上一周期数据
-    const prevBookings = await prisma.order.count({
-      where: { createdAt: { gte: prevStart, lte: prevEnd }, status: { notIn: ['PENDING', 'CANCELLED'] }, ...venueWhere },
+    const prevBookings = await prisma.booking.count({
+      where: { date: { gte: prevStart, lte: prevEnd }, status: { not: 'CANCELLED' }, ...venueWhereBooking },
     })
     const prevPlayers = await prisma.booking.aggregate({
       where: { date: { gte: prevStart, lte: prevEnd }, status: 'COMPLETED', ...venueWhereBooking },
       _sum: { personCount: true },
     })
-    const prevRevenue = await prisma.order.aggregate({
-      where: { createdAt: { gte: prevStart, lte: prevEnd }, status: { in: ['PAID', 'COMPLETED'] }, ...venueWhere },
-      _sum: { amount: true },
+    // 上一周期营业额
+    const prevPeriodOrders = await prisma.order.findMany({
+      where: { createdAt: { gte: prevStart, lte: prevEnd }, status: { in: ['PAID', 'COMPLETED', 'CANCELLED'] }, ...venueWhere },
+      select: { status: true, amount: true, refundAmount: true },
     })
+    let prevRevenue = 0
+    for (const o of prevPeriodOrders) {
+      if (o.status === 'PAID' || o.status === 'COMPLETED') {
+        prevRevenue += o.amount
+      } else if (o.status === 'CANCELLED' && o.refundAmount != null) {
+        prevRevenue += o.amount - o.refundAmount
+      }
+    }
 
     // 场地使用率
     const totalVenues = await prisma.venue.count({ where: venueCountWhere })
@@ -131,6 +150,19 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
       where: { createdAt: { gte: start, lte: end }, status: 'REFUNDED', ...venueWhere },
     })
 
+    // No-Show 统计
+    const noShowCount = await prisma.order.count({
+      where: { createdAt: { gte: start, lte: end }, status: 'NO_SHOW', ...venueWhere },
+    })
+    const noShowLoss = await prisma.order.aggregate({
+      where: { createdAt: { gte: start, lte: end }, status: 'NO_SHOW', ...venueWhere },
+      _sum: { penaltyAmount: true },
+    })
+    const totalAppointments = await prisma.booking.count({
+      where: { date: { gte: start, lte: end }, status: { not: 'CANCELLED' }, ...venueWhereBooking },
+    })
+    const noShowRate = totalAppointments > 0 ? Math.round((noShowCount / totalAppointments) * 100) : 0
+
     // 最新订单
     const latestOrders = await prisma.order.findMany({
       where: { status: { not: 'CANCELLED' }, ...venueWhere },
@@ -142,8 +174,8 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
     const bookingTrend = prevBookings > 0
       ? Math.round(((currentBookings - prevBookings) / prevBookings) * 100)
       : null
-    const revenueTrend = prevRevenue._sum.amount
-      ? Math.round(((currentRevenue._sum.amount || 0) - prevRevenue._sum.amount) / prevRevenue._sum.amount * 100)
+    const revenueTrend = prevRevenue > 0
+      ? Math.round(((currentRevenue || 0) - prevRevenue) / prevRevenue * 100)
       : null
     const prevPlayerCount = prevPlayers._sum.personCount || 0
     const currPlayerCount = currentPlayers._sum.personCount || 0
@@ -152,8 +184,8 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
       : null
 
     // 客单价（分→元）
-    const currentAOV = currentBookings > 0 ? Math.round((currentRevenue._sum.amount || 0) / currentBookings) : 0
-    const prevAOV = prevBookings > 0 ? Math.round((prevRevenue._sum.amount || 0) / prevBookings) : 0
+    const currentAOV = currentBookings > 0 ? Math.round((currentRevenue || 0) / currentBookings) : 0
+    const prevAOV = prevBookings > 0 ? Math.round((prevRevenue || 0) / prevBookings) : 0
     const aovTrend = prevAOV > 0 ? Math.round(((currentAOV - prevAOV) / prevAOV) * 100) : 0
 
     return success(res, {
@@ -162,8 +194,8 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
         yesterdayBookings: prevBookings,
         bookingTrend,
         todayUsed: currentUsed,
-        todayRevenue: currentRevenue._sum.amount || 0,
-        yesterdayRevenue: prevRevenue._sum.amount || 0,
+        todayRevenue: currentRevenue || 0,
+        yesterdayRevenue: prevRevenue || 0,
         revenueTrend,
         usageRate,
         totalVenues,
@@ -178,6 +210,9 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
         aovTrend,
         cancelledOrders,
         refundedOrders,
+        noShowCount,
+        noShowRate,
+        noShowLoss: noShowLoss._sum.penaltyAmount || 0,
       },
       latestOrders,
     })
@@ -686,10 +721,13 @@ export async function orderStatusDistribution(req: AuthenticatedRequest, res: Re
     const statusMap: Record<string, string> = {
       PENDING: '待支付',
       PAID: '已支付',
+      READY_TO_VERIFY: '待核销',
+      PLAYING: '游戏中',
       COMPLETED: '已完成',
       CANCELLED: '已取消',
       REFUNDING: '退款中',
       REFUNDED: '已退款',
+      NO_SHOW: '已作废',
     }
 
     const data = orders.map((o) => ({

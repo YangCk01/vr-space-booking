@@ -5,6 +5,9 @@ const BUILTIN_PERMISSIONS = [
   { code: 'order:refund', name: '订单退款', module: 'order' },
   { code: 'order:verify', name: '订单核销', module: 'order' },
   { code: 'order:export', name: '订单导出', module: 'order' },
+  { code: 'approval:request', name: '审批发起', module: 'approval' },
+  { code: 'approval:approve', name: '审批处理', module: 'approval' },
+  { code: 'approval:read', name: '审批查看', module: 'approval' },
   { code: 'finance:read', name: '财务查看', module: 'finance' },
   { code: 'finance:adjust', name: '财务调整', module: 'finance' },
   { code: 'finance:report', name: '财务报表', module: 'finance' },
@@ -38,19 +41,19 @@ const BUILTIN_ROLES = [
     name: 'OPERATOR',
     description: '运营',
     isSystem: true,
-    permissions: ['order:read', 'order:verify', 'user:read', 'user:edit', 'user:gift', 'marketing:campaign', 'marketing:rule'],
+    permissions: ['order:read', 'order:verify', 'approval:request', 'user:read', 'user:edit', 'user:gift', 'marketing:campaign', 'marketing:rule'],
   },
   {
     name: 'FINANCE',
     description: '财务',
     isSystem: true,
-    permissions: ['order:read', 'order:export', 'finance:read', 'finance:report', 'audit:read'],
+    permissions: ['order:read', 'order:export', 'approval:read', 'approval:approve', 'finance:read', 'finance:report', 'audit:read'],
   },
   {
     name: 'MANAGER',
     description: '店长',
     isSystem: true,
-    permissions: ['order:read', 'order:verify', 'venue:read'],
+    permissions: ['order:read', 'order:verify', 'approval:read', 'approval:request', 'approval:approve', 'venue:read'],
   },
 ]
 

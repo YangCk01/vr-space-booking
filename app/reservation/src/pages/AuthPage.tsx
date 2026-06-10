@@ -151,6 +151,7 @@ export default function AuthPage() {
                   type="date"
                   value={birthday}
                   onChange={(e) => setBirthday(e.target.value)}
+                  max={new Date().toISOString().slice(0, 10)}
                   placeholder="请选择生日"
                   className="w-full h-11 pl-10 pr-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors"
                 />

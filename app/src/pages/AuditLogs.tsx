@@ -257,7 +257,7 @@ export default function AuditLogs() {
     return logs.filter(
       (log) =>
         log.operatorName.toLowerCase().includes(q) ||
-        log.summary.toLowerCase().includes(q) ||
+        log.summary?.toLowerCase().includes(q) ||
         log.targetLabel?.toLowerCase().includes(q)
     )
   }, [logs, searchQuery])

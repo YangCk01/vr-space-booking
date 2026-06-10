@@ -15,6 +15,7 @@ import { loadConfig } from './services/configService'
 import { seedPermissions } from './utils/seedPermissions'
 
 const app = express()
+const jobsEnabled = process.env.ENABLE_JOBS !== 'false'
 
 // 中间件
 const corsOrigin = process.env.CORS_ORIGIN
@@ -44,25 +45,29 @@ app.use('/api', routes)
 // 错误处理
 app.use(errorHandler)
 
-// 启动对账定时任务
-startReconJob()
+if (jobsEnabled) {
+  // 启动对账定时任务
+  startReconJob()
 
-// 启动数据一致性校验定时任务
-startDataConsistencyJob()
+  // 启动数据一致性校验定时任务
+  startDataConsistencyJob()
 
-// 启动 P1 运营增长定时任务
-startUserTagJob()
-startTriggerJob()
-startCouponEffectJob()
+  // 启动 P1 运营增长定时任务
+  startUserTagJob()
+  startTriggerJob()
+  startCouponEffectJob()
 
-// 启动订单超时自动取消任务
-startOrderTimeoutJob()
+  // 启动订单超时自动取消任务
+  startOrderTimeoutJob()
 
-// 启动预约生命周期定时任务（状态自动流转 + No-Show 处理）
-startBookingLifecycleJob()
+  // 启动预约生命周期定时任务（状态自动流转 + No-Show 处理）
+  startBookingLifecycleJob()
 
-// 启动预约提醒定时任务（开场前2小时/15分钟通知）
-startBookingReminderJob()
+  // 启动预约提醒定时任务（开场前2小时/15分钟通知）
+  startBookingReminderJob()
+} else {
+  console.log('[App] Background jobs disabled by ENABLE_JOBS=false')
+}
 
 // 启动时加载系统配置并初始化权限
 seedPermissions()

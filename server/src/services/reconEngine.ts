@@ -1,8 +1,10 @@
-import { PrismaClient } from '@prisma/client'
+import { OrderStatus, PrismaClient } from '@prisma/client'
 import { format } from 'date-fns'
 import { getHardwarePlayerCount, getSystemPlayerCount } from './deviceLogService'
 
 const prisma = new PrismaClient()
+
+const PAID_LIKE_ORDER_STATUSES: OrderStatus[] = ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED', 'NO_SHOW']
 
 interface DateRange {
   gte: Date
@@ -109,6 +111,19 @@ async function createException(
   }
 ) {
   const { remark, ...rest } = data
+  const handled = await prisma.reconException.findFirst({
+    where: {
+      batchId,
+      exceptionType: type as any,
+      exceptionStatus: { not: 'PENDING' },
+      bizType: data.bizType || null,
+      bizOrderNo: data.bizOrderNo || null,
+      diffAmount: data.diffAmount,
+    },
+    orderBy: { handledAt: 'desc' },
+  })
+  if (handled) return handled
+
   return prisma.reconException.create({
     data: {
       batchId,
@@ -128,7 +143,7 @@ async function checkOrderPaymentConsistency(batchId: string, dateRange: DateRang
   const orders = await prisma.order.findMany({
     where: {
       paidAt: dateRange,
-      status: { in: ['PAID', 'COMPLETED', 'REFUNDED'] },
+      status: { in: PAID_LIKE_ORDER_STATUSES },
       payMethod: { in: ['WECHAT', 'ALIPAY'] },
     },
     include: { payments: true },
@@ -292,7 +307,7 @@ async function checkOrderTransactionConsistency(batchId: string, dateRange: Date
   const orders = await prisma.order.findMany({
     where: {
       paidAt: dateRange,
-      status: { in: ['PAID', 'COMPLETED'] },
+      status: { in: PAID_LIKE_ORDER_STATUSES },
       payMethod: { in: ['BALANCE', 'BALANCE_POINTS'] },
     },
     include: {
@@ -303,7 +318,7 @@ async function checkOrderTransactionConsistency(batchId: string, dateRange: Date
   })
 
   for (const order of orders) {
-    const txSum = order.transactions.reduce((s: number, t: { totalAmount: number }) => s + Math.abs(t.totalAmount), 0)
+    const txSum = Math.abs(order.transactions.reduce((s: number, t: { totalAmount: number }) => s + t.totalAmount, 0))
     const expected = order.principalDeduction + order.bonusDeduction
 
     if (txSum === expected) {
@@ -384,22 +399,83 @@ async function checkRechargeConsistency(batchId: string, dateRange: DateRange) {
 async function checkRefundConsistency(batchId: string, dateRange: DateRange) {
   let matched = 0, exceptions = 0, matchedAmount = 0, exceptionAmount = 0
 
-  const orders = await prisma.order.findMany({
+  const refundTxs = await prisma.balanceTransaction.findMany({
     where: {
-      status: 'REFUNDED',
-      updatedAt: dateRange,
+      type: { in: ['REFUND', 'CANCEL_RESTORE'] },
+      createdAt: dateRange,
     },
-    include: {
-      transactions: {
-        where: {
-          type: { in: ['REFUND', 'CANCEL_RESTORE'] },
-        },
-      },
+    select: {
+      id: true,
+      orderId: true,
+      totalAmount: true,
+      remark: true,
     },
   })
 
+  const txOrderIds = refundTxs.map((tx) => tx.orderId).filter(Boolean) as string[]
+  const updatedRefundOrders = await prisma.order.findMany({
+    where: {
+      status: { in: ['REFUNDED', 'CANCELLED'] },
+      updatedAt: dateRange,
+    },
+    select: { id: true },
+  })
+  const orderIds = Array.from(new Set([...txOrderIds, ...updatedRefundOrders.map((order) => order.id)]))
+
+  if (orderIds.length === 0 && refundTxs.length === 0) {
+    return { matched, exceptions, matchedAmount, exceptionAmount }
+  }
+
+  const orders = await prisma.order.findMany({
+    where: {
+      id: { in: orderIds.length ? orderIds : ['__never__'] },
+      status: { in: ['REFUNDED', 'CANCELLED'] },
+    },
+    select: {
+      id: true,
+      orderNo: true,
+      amount: true,
+      refundAmount: true,
+      status: true,
+    },
+  })
+
+  const knownOrderIds = new Set(orders.map((order) => order.id))
+  const txByOrder = new Map<string, number>()
+  for (const tx of refundTxs) {
+    if (!tx.orderId) {
+      exceptions++
+      exceptionAmount += Math.abs(tx.totalAmount || 0)
+      await createException(batchId, 'LONG', {
+        bizType: 'REFUND',
+        bizOrderNo: tx.id,
+        bizAmount: 0,
+        bizStatus: 'UNLINKED',
+        diffAmount: Math.abs(tx.totalAmount || 0),
+        remark: `退款流水未关联订单，金额 ¥${Math.abs(tx.totalAmount || 0) / 100}，需要人工定位来源`,
+      })
+      continue
+    }
+    txByOrder.set(tx.orderId, (txByOrder.get(tx.orderId) || 0) + Math.abs(tx.totalAmount || 0))
+  }
+
+  for (const tx of refundTxs) {
+    if (tx.orderId && !knownOrderIds.has(tx.orderId)) {
+      exceptions++
+      exceptionAmount += Math.abs(tx.totalAmount || 0)
+      await createException(batchId, 'LONG', {
+        bizType: 'REFUND',
+        bizOrderNo: tx.id,
+        bizAmount: 0,
+        bizStatus: 'ORDER_NOT_REFUNDED',
+        diffAmount: Math.abs(tx.totalAmount || 0),
+        remark: `退款流水已发生，但关联订单未处于已退款/已取消状态，金额 ¥${Math.abs(tx.totalAmount || 0) / 100}`,
+      })
+    }
+  }
+
   for (const order of orders) {
-    const txSum = order.transactions.reduce((s, t) => s + Math.abs(t.totalAmount), 0)
+    const txSum = txByOrder.get(order.id) || 0
     const expected = order.refundAmount || order.amount
 
     if (txSum === expected) {
@@ -412,9 +488,9 @@ async function checkRefundConsistency(batchId: string, dateRange: DateRange) {
         bizType: 'ORDER',
         bizOrderNo: order.orderNo,
         bizAmount: expected,
-        bizStatus: 'REFUNDED',
+        bizStatus: order.status,
         diffAmount: Math.abs(txSum - expected),
-        remark: `订单退款金额 ¥${expected / 100} 与退款流水合计 ¥${txSum / 100} 不符`,
+        remark: `订单退款金额 ¥${expected / 100} 与当日退款流水合计 ¥${txSum / 100} 不符`,
       })
     }
   }

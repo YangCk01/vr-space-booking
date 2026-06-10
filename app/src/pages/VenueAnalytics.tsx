@@ -18,6 +18,14 @@ import { getVenues } from '@/api/venues'
 
 type DateRange = 'today' | '7days' | '30days' | 'custom'
 
+interface OccupancyData {
+  date: string
+  hour: number
+  occupancyRate: number
+  bookings: number
+  totalPlayers: number
+}
+
 const dateRangeOptions: { value: DateRange; label: string }[] = [
   { value: 'today', label: '当天' },
   { value: '7days', label: '近7天' },

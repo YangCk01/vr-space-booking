@@ -1,5 +1,70 @@
 import cron from 'node-cron'
 import { prisma } from '../utils/prisma'
+import { releaseEquipment } from '../services/equipmentService'
+
+/**
+ * 关闭已超过支付时限的待支付订单。
+ * 该函数可被定时任务调用，也可在订单列表/详情等入口做兜底同步。
+ */
+export async function expirePendingOrders(now = new Date()) {
+  const expiredOrders = await prisma.order.findMany({
+    where: {
+      status: 'PENDING',
+      expireAt: { lt: now },
+    },
+    select: { id: true, orderNo: true, userCouponId: true, bookingId: true },
+  })
+
+  if (expiredOrders.length === 0) return 0
+
+  let processed = 0
+  for (const order of expiredOrders) {
+    try {
+      let shouldReleaseEquipment = false
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.order.updateMany({
+          where: {
+            id: order.id,
+            status: 'PENDING',
+            expireAt: { lt: now },
+          },
+          data: { status: 'CANCELLED', cancelledAt: now },
+        })
+
+        if (updated.count === 0) return
+
+        // 恢复优惠券（如果已被预占）
+        if (order.userCouponId) {
+          const coupon = await tx.userCoupon.findUnique({ where: { id: order.userCouponId } })
+          if (coupon && coupon.status === 'USED') {
+            await tx.userCoupon.update({
+              where: { id: order.userCouponId },
+              data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
+            })
+          }
+        }
+
+        if (order.bookingId) {
+          await tx.booking.update({
+            where: { id: order.bookingId },
+            data: { status: 'CANCELLED' },
+          })
+          shouldReleaseEquipment = true
+        }
+
+        processed += 1
+      })
+
+      if (shouldReleaseEquipment && order.bookingId) {
+        await releaseEquipment(order.bookingId)
+      }
+    } catch (e) {
+      console.error(`[OrderTimeoutJob] 取消订单 ${order.orderNo || order.id} 失败:`, e)
+    }
+  }
+
+  return processed
+}
 
 /**
  * 每分钟执行一次：自动取消过期的待支付订单
@@ -7,55 +72,10 @@ import { prisma } from '../utils/prisma'
 export function startOrderTimeoutJob() {
   cron.schedule('* * * * *', async () => {
     try {
-      const now = new Date()
-      // 查找已过期且仍为 PENDING 的订单
-      const expiredOrders = await prisma.order.findMany({
-        where: {
-          status: 'PENDING',
-          expireAt: { lt: now },
-        },
-        select: { id: true, userCouponId: true },
-      })
-
-      if (expiredOrders.length === 0) return
-
-      console.log(`[OrderTimeoutJob] 发现 ${expiredOrders.length} 个过期订单，开始自动取消`)
-
-      for (const order of expiredOrders) {
-        try {
-          await prisma.$transaction(async (tx) => {
-            // 恢复优惠券（如果已被预占）
-            if (order.userCouponId) {
-              const coupon = await tx.userCoupon.findUnique({ where: { id: order.userCouponId } })
-              if (coupon && coupon.status === 'USED') {
-                await tx.userCoupon.update({
-                  where: { id: order.userCouponId },
-                  data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
-                })
-              }
-            }
-
-            // 同步取消关联排场
-            const o = await tx.order.findUnique({ where: { id: order.id }, select: { bookingId: true } })
-            if (o?.bookingId) {
-              await tx.booking.update({
-                where: { id: o.bookingId },
-                data: { status: 'CANCELLED' },
-              })
-            }
-
-            // 取消订单
-            await tx.order.update({
-              where: { id: order.id },
-              data: { status: 'CANCELLED', cancelledAt: now },
-            })
-          })
-        } catch (e) {
-          console.error(`[OrderTimeoutJob] 取消订单 ${order.id} 失败:`, e)
-        }
+      const processed = await expirePendingOrders()
+      if (processed > 0) {
+        console.log(`[OrderTimeoutJob] 自动取消 ${processed} 个过期待支付订单`)
       }
-
-      console.log(`[OrderTimeoutJob] 自动取消完成`)
     } catch (e) {
       console.error('[OrderTimeoutJob] 执行失败:', e)
     }

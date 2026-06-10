@@ -56,6 +56,7 @@ function StatusBadge({ status, text }: { status: string; text: string }) {
     paid: { bg: 'bg-vraccent-primary/15', text: 'text-vraccent-primary' },
     completed: { bg: 'bg-vrsuccess/15', text: 'text-vrsuccess' },
     cancelled: { bg: 'bg-vrerror/15', text: 'text-vrerror' },
+    no_show: { bg: 'bg-gray-500/15', text: 'text-gray-500' },
   }
   const c = config[status] || config.disabled
   return (
@@ -232,8 +233,11 @@ function ScheduleTimeline({ venues, bookings }: { venues: Venue[]; bookings: Boo
     return { startHour: startH, endHour: endH, totalHours: hours, timeSlots: slots }
   }, [venues])
 
-  const getEventStyle = (type: string) => {
-    switch (type) {
+  const getEventStyle = (booking: Booking) => {
+    if (booking.status === 'NO_SHOW') {
+      return 'bg-gray-500/20 border border-gray-400/40 border-dashed'
+    }
+    switch (booking.type) {
       case 'TEAM': return 'bg-gradient-to-r from-vraccent-primary to-vraccent-secondary'
       case 'INDIVIDUAL': return 'bg-gradient-to-r from-vrpurple to-vrindigo'
       case 'CORPORATE': return 'bg-vrwarning'
@@ -361,7 +365,7 @@ function ScheduleTimeline({ venues, bookings }: { venues: Venue[]; bookings: Boo
                           transition={{ duration: 0.25, delay: 0.2 + gIdx * 0.06 + bIdx * 0.04 }}
                           className={cn(
                             'absolute rounded-xl px-3 text-white text-sm font-medium cursor-pointer hover:brightness-110 transition-all shadow-lg flex items-center',
-                            getEventStyle(booking.type)
+                            getEventStyle(booking)
                           )}
                           style={{
                             left: leftPos,
@@ -510,6 +514,7 @@ function LatestOrders({ orders }: { orders: any[] }) {
     CANCELLED: '已取消',
     REFUNDING: '退款中',
     REFUNDED: '已退款',
+    NO_SHOW: '未到场',
   }
 
   const total = displayOrders.length
@@ -672,9 +677,10 @@ export default function Home() {
   const rawVenues = venueData?.data || []
   const venues = rawVenues.map((v: any) => {
     const venueBookings = todayBookings.filter((b: any) => b.venueId === v.id)
+    const activeBookings = venueBookings.filter((b: any) => b.status !== 'NO_SHOW')
     const now = new Date()
     const currentHour = now.getHours()
-    const currentBooking = venueBookings.find((b: any) => {
+    const currentBooking = activeBookings.find((b: any) => {
       const startHour = parseInt(b.startTime?.split(':')[0] || '0')
       const endHour = parseInt(b.endTime?.split(':')[0] || '0')
       return currentHour >= startHour && currentHour < endHour
@@ -697,11 +703,11 @@ export default function Home() {
       ...v,
       status: statusMap[v.status] || v.status?.toLowerCase() || 'free',
       statusText: statusTextMap[v.status] || v.status,
-      todayBookings: venueBookings.length,
+      todayBookings: activeBookings.length,
       currentSlot: currentBooking
         ? `${currentBooking.startTime}-${currentBooking.endTime}`
-        : venueBookings.length > 0
-          ? `${venueBookings[0].startTime}-${venueBookings[0].endTime}`
+        : activeBookings.length > 0
+          ? `${activeBookings[0].startTime}-${activeBookings[0].endTime}`
           : null,
     }
   })

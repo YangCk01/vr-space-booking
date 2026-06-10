@@ -111,6 +111,7 @@ model Booking {
   user        User?         @relation(fields: [userId], references: [id])
   venue       Venue         @relation(fields: [venueId], references: [id])
   order       Order?
+  assignedEquipments BookingEquipment[]
 }
 
 model Order {
@@ -147,6 +148,8 @@ model Order {
   verifiedAt        DateTime?
   playingStartedAt  DateTime?
   playingEndedAt    DateTime?
+  rescheduleCount   Int                  @default(0)
+  rescheduleFeeAmount Int                @default(0)
   transactions       BalanceTransaction[]
   booking            Booking?             @relation(fields: [bookingId], references: [id])
   user               User?                @relation(fields: [userId], references: [id])
@@ -155,6 +158,39 @@ model Order {
 
   @@index([userId])
   @@index([status])
+  @@index([createdAt])
+}
+
+model ApprovalRequest {
+  id              String         @id @default(uuid())
+  type            ApprovalType
+  status          ApprovalStatus @default(PENDING)
+  targetType      String
+  targetId        String
+  targetDesc      String?
+  requesterId     String
+  requesterName   String
+  requesterRole   String
+  approverId      String?
+  approverName    String?
+  approverRole    String?
+  requestPayload  Json
+  beforeValue     Json?
+  afterValue      Json?
+  amount          Int?
+  reason          String
+  approvalComment String?
+  executedAt      DateTime?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([type])
+  @@index([status])
+  @@index([targetType, targetId])
+  @@index([requesterId])
+  @@index([approverId])
   @@index([createdAt])
 }
 
@@ -187,6 +223,38 @@ model Equipment {
   updatedAt    DateTime            @updatedAt
   venue        Venue?              @relation(fields: [venueId], references: [id])
   maintenances MaintenanceRecord[]
+  bookingAssignments BookingEquipment[]
+}
+
+model BookingEquipment {
+  id          String    @id @default(uuid())
+  bookingId   String
+  equipmentId String
+  assignedAt  DateTime  @default(now())
+  releasedAt  DateTime?
+
+  booking     Booking     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  equipment   Equipment   @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, equipmentId])
+  @@index([bookingId])
+  @@index([equipmentId])
+  @@index([assignedAt])
+}
+
+model UserBenefitUsage {
+  id          String   @id @default(uuid())
+  userId      String
+  benefitType String   // 'FREE_RESCHEDULE'
+  periodStart DateTime @db.Date  // 周期开始日期（每月1号）
+  periodEnd   DateTime @db.Date  // 周期结束日期
+  totalQuota  Int      @default(0)
+  usedQuota   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, benefitType, periodStart])
+  @@index([userId])
 }
 
 model MaintenanceRecord {
@@ -290,6 +358,18 @@ model Game {
 model DailyFinancialReport {
   id                      String   @id @default(uuid())
   date                    String   @unique
+  status                  String   @default("DRAFT")
+  generatedAt             DateTime?
+  generatedById           String?
+  generatedByName         String?
+  confirmedAt             DateTime?
+  confirmedById           String?
+  confirmedByName         String?
+  lockedAt                DateTime?
+  reopenedAt              DateTime?
+  reopenedById            String?
+  reopenedByName          String?
+  reopenReason            String?
   rechargePrincipalIn     Int      @default(0)
   directPayIn             Int      @default(0)
   refundOut               Int      @default(0)
@@ -316,8 +396,45 @@ model DailyFinancialReport {
   confirmedDirectRevenue  Int      @default(0)
   prepaidMemberRevenue    Int      @default(0)
   confirmedMemberRevenue  Int      @default(0)
+  // 营业外收入-违约金（No-Show 爽约沉淀 + 取消手续费）
+  noShowPenalty           Int      @default(0)
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
+
+  @@index([status])
+  @@index([generatedAt])
+  @@index([confirmedAt])
+}
+
+model FinanceAdjustment {
+  id              String   @id @default(uuid())
+  adjustmentNo    String   @unique
+  source          String
+  type            String
+  status          String   @default("EXECUTED")
+  targetType      String
+  targetId        String
+  targetDesc      String?
+  amount          Int      @default(0)
+  pointsAmount    Int      @default(0)
+  beforeValue     Json?
+  afterValue      Json?
+  reason          String
+  operatorId      String
+  operatorName    String
+  operatorRole    String
+  auditLogId      String?
+  approvalId      String?
+  executedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([source])
+  @@index([type])
+  @@index([status])
+  @@index([targetType, targetId])
+  @@index([operatorId])
+  @@index([createdAt])
 }
 
 model Notification {
@@ -635,6 +752,27 @@ enum PaymentStatus {
   PENDING
 }
 
+enum ApprovalType {
+  NO_SHOW_REFUND
+  ORDER_REFUND
+  BALANCE_ADJUST
+  POINTS_ADJUST
+  COUPON_GIFT
+  ORDER_RESTORE
+  ORDER_STATUS_CHANGE
+  BATCH_REFUND
+  BATCH_CANCEL
+  BATCH_VERIFY
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  EXECUTION_FAILED
+}
+
 enum TransactionType {
   RECHARGE
   DEDUCT
@@ -648,6 +786,9 @@ enum TransactionType {
   NO_SHOW_PENALTY
   NO_SHOW_REVERSE
   STANDBY_SALE
+  RESCHEDULE_FEE
+  RESCHEDULE_REFUND
+  RESCHEDULE_SURCHARGE
 }
 
 enum EquipmentType {

@@ -75,7 +75,7 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
         createdAt: { gte: start, lte: end },
         ...(venueId ? { venueId: venueId as string } : {}),
       },
-      select: { createdAt: true, amount: true, status: true, refundAmount: true },
+      select: { createdAt: true, amount: true, status: true, refundAmount: true, penaltyAmount: true, rescheduleFeeAmount: true },
       orderBy: { createdAt: 'asc' },
     }),
     // 每日充值（趋势）
@@ -87,13 +87,13 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
   ])
 
   // Build daily trend map
-  const trendMap = new Map<string, { revenue: number; refund: number; recharge: number }>()
+  const trendMap = new Map<string, { revenue: number; refund: number; recharge: number; otherIncome: number }>()
   const dateKeys: string[] = []
   let cursor = new Date(start)
   while (cursor <= end) {
     const key = format(cursor, 'yyyy-MM-dd')
     dateKeys.push(key)
-    trendMap.set(key, { revenue: 0, refund: 0, recharge: 0 })
+    trendMap.set(key, { revenue: 0, refund: 0, recharge: 0, otherIncome: 0 })
     cursor = new Date(cursor.getTime() + 86400000)
   }
 
@@ -106,6 +106,21 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
     }
     if (o.status === 'REFUNDED' && o.refundAmount) {
       entry.refund += o.refundAmount
+    }
+    // 取消订单：扣除的手续费作为营业外收入
+    if (o.status === 'CANCELLED' && o.refundAmount != null) {
+      const cancelFee = o.amount - o.refundAmount
+      if (cancelFee > 0) {
+        entry.otherIncome += cancelFee
+      }
+    }
+    // No-Show 违约金作为营业外收入
+    if (o.status === 'NO_SHOW' && o.penaltyAmount) {
+      entry.otherIncome += o.penaltyAmount
+    }
+    // 改签手续费作为营业外收入
+    if (o.rescheduleFeeAmount && o.rescheduleFeeAmount > 0) {
+      entry.otherIncome += o.rescheduleFeeAmount
     }
   }
 
@@ -120,12 +135,19 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
     revenue: trendMap.get(date)!.revenue,
     refund: trendMap.get(date)!.refund,
     recharge: trendMap.get(date)!.recharge,
+    otherIncome: trendMap.get(date)!.otherIncome,
   }))
 
   // Aggregate period totals from trend data
   const periodRevenue = revenueTrend.reduce((s, d) => s + d.revenue, 0)
   const periodRefund = revenueTrend.reduce((s, d) => s + d.refund, 0)
   const periodRecharge = revenueTrend.reduce((s, d) => s + d.recharge, 0)
+  const periodOtherIncome = revenueTrend.reduce((s, d) => s + d.otherIncome, 0)
+
+  // 今日营业外收入
+  const todayKey = format(now, 'yyyy-MM-dd')
+  const todayEntry = trendMap.get(todayKey)
+  const todayOtherIncome = todayEntry?.otherIncome || 0
 
   // Member recharge consumption: orders paid with BALANCE or BALANCE_POINTS within period
   const rechargeConsumption = await prisma.order.aggregate({
@@ -142,10 +164,12 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
     todayRevenue: todayRevenue._sum.amount || 0,
     todayRefund: todayRefund._sum.refundAmount || 0,
     todayRecharge: todayRecharge._sum.amount || 0,
+    todayOtherIncome,
     totalUserBalance: (totalUserBalance._sum.principalBalance || 0) + (totalUserBalance._sum.bonusBalance || 0),
     periodRevenue,
     periodRefund,
     periodRecharge,
+    periodOtherIncome,
     periodRechargeConsumption: rechargeConsumption._sum.amount || 0,
     revenueTrend,
   })

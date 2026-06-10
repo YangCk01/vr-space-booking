@@ -272,6 +272,7 @@ export default function AccountSettings() {
                 type="date"
                 value={birthday}
                 onChange={(e) => setBirthday(e.target.value)}
+                max={new Date().toISOString().slice(0, 10)}
                 placeholder="请选择生日（选填）"
                 className="w-full h-10 bg-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
               />
