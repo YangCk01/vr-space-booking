@@ -5,7 +5,7 @@ import { success, error } from '../utils/response'
 import { pushNotification } from './notificationController'
 import { AuthenticatedRequest } from '../types'
 import { addDays } from 'date-fns'
-import { checkGiftRisk, checkBatchLimit, recordGiftOperation } from '../services/riskControlService'
+import { checkGiftRisk, checkCouponGiftRisk, checkBatchLimit, recordGiftOperation } from '../services/riskControlService'
 import { logAudit } from '../middleware/auditLog'
 
 /* ─── Validators ─── */
@@ -133,6 +133,7 @@ export async function giftCoupon(req: AuthenticatedRequest, res: Response) {
     if (type === 'DISCOUNT' && (!discountRate || discountRate < 1 || discountRate > 99)) {
       return error(res, '折扣券折扣率必须在 1-99 之间', 400)
     }
+    await checkCouponGiftRisk(1)
 
     const now = new Date()
     const validTo = addDays(now, validityDays)
@@ -351,6 +352,7 @@ export async function batchGiftCoupon(req: AuthenticatedRequest, res: Response) 
     if (type === 'DISCOUNT' && (!discountRate || discountRate < 1 || discountRate > 99)) {
       return error(res, '折扣券折扣率必须在 1-99 之间', 400)
     }
+    await checkCouponGiftRisk(users.length)
 
     const now = new Date()
     const validTo = addDays(now, validityDays)

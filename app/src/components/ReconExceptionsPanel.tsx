@@ -198,6 +198,7 @@ export default function ReconExceptionsPanel() {
       toast.success(`对账完成: ${data.success} 天成功, ${data.skipped} 天已存在, 共 ${data.total} 天`)
       queryClient.invalidateQueries({ queryKey: ['recon-batches'] })
       queryClient.invalidateQueries({ queryKey: ['recon-exceptions'] })
+      queryClient.invalidateQueries({ queryKey: ['finance'] })
     },
     onError: (err: any) => {
       toast.error(err?.message || '对账失败，请检查后端服务是否已重启')
@@ -226,6 +227,7 @@ export default function ReconExceptionsPanel() {
       toast.success(`已清空 ${data.data?.deletedBatches || 0} 个批次、${data.data?.deletedExceptions || 0} 条异常`)
       queryClient.invalidateQueries({ queryKey: ['recon-batches'] })
       queryClient.invalidateQueries({ queryKey: ['recon-exceptions'] })
+      queryClient.invalidateQueries({ queryKey: ['finance'] })
     },
     onError: (err: any) => {
       toast.error(err?.response?.data?.message || '清理失败')

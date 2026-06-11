@@ -20,7 +20,14 @@
 
 ## 文档目录
 
-- `docs/` - 产品、财务、对账、发版、验收等文档。
+- `docs/project-overview.md` - 项目总览、目录结构、主要模块说明。
+- `docs/development-roadmap-v2.md` - 当前保留的开发路线图。
+- `docs/no-show-handling-design.md` - 爽约/超时未到场处理方案。
+- `docs/reconciliation-design.md` - 财务对账和风控设计方案。
+- `docs/agents/` - Agent 技能配置，包括 issue tracker、triage 标签和领域文档读取规则。
+- `docs/adr/` - 架构决策记录目录，后续新增 ADR 时使用。
+
+已删除旧版路线图、一次性验收报告和过期发布核对清单，避免继续引用已取消或已迁移的页面。
 
 ## 本地产物
 

@@ -36,7 +36,6 @@ import {
   Pie,
   Cell,
 } from 'recharts'
-import * as XLSX from 'xlsx'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
 import {
@@ -70,6 +69,21 @@ import { getVenues } from '@/api/venues'
 import { getOrderByNo } from '@/api/orders'
 import ReconExceptionsPanel from '@/components/ReconExceptionsPanel'
 import DeviceLogPanel from '@/components/DeviceLogPanel'
+import ReconcileAlertConfigPanel from '@/components/ReconcileAlertConfigPanel'
+import ReconcileDetailSheet from '@/components/finance/ReconcileDetailSheet'
+import {
+  describeFixEffect,
+  formatReconValue,
+  getReconPlainText,
+  reconcileTypeMap,
+} from '@/lib/financeReconcile'
+import {
+  exportFlowToExcel,
+  payMethodColorMap,
+  payMethodLabelMap,
+  typeColorMap,
+  typeLabelMap,
+} from '@/lib/financeFlow'
 
 type TabKey = 'overview' | 'flow' | 'refunds' | 'recon' | 'deviceLogs'
 type ReconSubTab = 'daily' | 'exceptions'
@@ -82,107 +96,12 @@ const tabs = [
   { key: 'deviceLogs' as TabKey, label: '设备日志' },
 ]
 
-const typeLabelMap: Record<string, string> = {
-  ORDER: '订单收入',
-  REFUND: '退款',
-  RECHARGE: '充值',
-  BALANCE_DEDUCT: '余额扣款',
-  BALANCE_REFUND: '余额退款',
-}
-
-const reconcileTypeMap: Record<string, string> = {
-  '本金余额': 'BALANCE_PRINCIPAL',
-  '赠送余额': 'BALANCE_BONUS',
-  '积分余额': 'BALANCE_POINTS',
-  '充值本金': 'RECHARGE_PRINCIPAL',
-  '充值赠送': 'RECHARGE_BONUS',
-  '在线支付金额': 'DIRECT_PAY',
-  '消费本金': 'CONSUME_PRINCIPAL',
-  '消费赠送': 'CONSUME_BONUS',
-  '退款总额': 'REFUND',
-  '消费赠送积分': 'POINTS_EARN',
-  '管理员赠送积分': 'POINTS_GIFT',
-  '积分兑换消耗': 'POINTS_EXCHANGE',
-  '手动发放折扣券': 'COUPON_GIFT',
-  '手动发放体验券': 'EXPERIENCE_GIFT',
-  '活动发放折扣券': 'COUPON_CAMPAIGN',
-  '活动发放体验券': 'EXPERIENCE_CAMPAIGN',
-  '折扣券核销': 'COUPON_USED',
-  '体验券核销': 'EXPERIENCE_USED',
-}
-
-const typeColorMap: Record<string, string> = {
-  ORDER: '#10B981',
-  REFUND: '#EF4444',
-  RECHARGE: '#3B82F6',
-  BALANCE_DEDUCT: '#F59E0B',
-  BALANCE_REFUND: '#8B5CF6',
-}
-
-const payMethodLabelMap: Record<string, string> = {
-  WECHAT: '微信支付',
-  ALIPAY: '支付宝',
-  BALANCE: '余额支付',
-  BALANCE_POINTS: '余额+积分',
-  CASH: '现金',
-  CARD: '刷卡',
-}
-
-const payMethodColorMap: Record<string, string> = {
-  WECHAT: '#10B981',
-  ALIPAY: '#3B82F6',
-  BALANCE: '#F59E0B',
-  BALANCE_POINTS: '#F59E0B',
-  CASH: '#64748B',
-  CARD: '#8B5CF6',
-}
-
 const tooltipStyle = {
   backgroundColor: '#1E293B',
   border: '1px solid #334155',
   borderRadius: '8px',
   padding: '8px 12px',
   boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-}
-
-function formatReconValue(value: number, unit?: string) {
-  if (unit === '元') return `¥${(value / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  return `${value.toLocaleString()}${unit || '分'}`
-}
-
-function getReconPlainText(item: { name: string; diff: number; unit?: string; note?: string }) {
-  const abs = formatReconValue(Math.abs(item.diff), item.unit)
-  if (item.diff === 0) {
-    return {
-      title: `${item.name} 已平衡`,
-      desc: '系统账和业务账一致，无需处理。',
-      suggestion: '无需操作',
-      tone: 'green',
-    }
-  }
-
-  const direction = item.diff > 0 ? '系统账比业务账多' : '系统账比业务账少'
-  const isBalance = item.name.includes('余额') || item.name.includes('本金') || item.name.includes('赠送') || item.name.includes('积分')
-  const suggestion = isBalance
-    ? '建议查看明细，确认具体会员后生成调整单。'
-    : '建议先查看明细，确认订单/流水来源；不能自动修复的，走人工处置。'
-
-  return {
-    title: `${direction} ${abs}`,
-    desc: item.note || `${item.name} 存在差异，需要定位到具体记录。`,
-    suggestion,
-    tone: 'red',
-  }
-}
-
-function describeFixEffect(result?: ReconcileFixResult | null) {
-  if (!result?.txData) return '已创建财务调整单并写入审计记录。'
-  const effects: string[] = []
-  if (result.txData.principalAmount) effects.push(`本金 ${formatReconValue(result.txData.principalAmount, '元')}`)
-  if (result.txData.bonusAmount) effects.push(`赠送余额 ${formatReconValue(result.txData.bonusAmount, '元')}`)
-  if (result.txData.pointsAmount) effects.push(`积分 ${result.txData.pointsAmount > 0 ? '+' : ''}${result.txData.pointsAmount}`)
-  if (!effects.length && result.txData.totalAmount) effects.push(`金额 ${formatReconValue(result.txData.totalAmount, '元')}`)
-  return effects.length ? `本次调整：${effects.join('，')}` : '已创建财务调整单并写入审计记录。'
 }
 
 /* ─── Helpers ─── */
@@ -205,29 +124,6 @@ function useCountUp(target: number, duration = 800) {
   })
 
   return val
-}
-
-/* ─── Export helper ─── */
-function exportFlowToExcel(items: FlowItem[], filename: string) {
-  const rows = items.map((i) => ({
-    时间: i.createdAt ? format(new Date(i.createdAt), 'yyyy-MM-dd HH:mm:ss') : '-',
-    类型: typeLabelMap[i.type] || i.type,
-    订单号: i.orderNo,
-    用户: i.userName,
-    手机号: i.userPhone,
-    金额: i.amount / 100,
-    支付方式: payMethodLabelMap[i.payMethod] || i.payMethod || '-',
-    备注: i.remark,
-  }))
-
-  const ws = XLSX.utils.json_to_sheet(rows)
-  ws['!cols'] = [
-    { wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 12 },
-    { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 16 },
-  ]
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, '收支明细')
-  XLSX.writeFile(wb, filename)
 }
 
 /* ─── Main Page ─── */
@@ -374,8 +270,13 @@ export default function Finance() {
       // 刷新明细和对账结果
       queryClient.invalidateQueries({ queryKey: ['finance', 'reconcile-detail'] })
       queryClient.invalidateQueries({ queryKey: ['finance', 'reconcile'] })
+      queryClient.invalidateQueries({ queryKey: ['finance', 'daily'] })
+      queryClient.invalidateQueries({ queryKey: ['finance', 'total-summary'] })
+      queryClient.invalidateQueries({ queryKey: ['recon-batches'] })
+      queryClient.invalidateQueries({ queryKey: ['recon-exceptions'] })
       await Promise.all([
         refetchReconcile(),
+        refetchDailyReport(),
         queryClient.refetchQueries({ queryKey: ['finance', 'reconcile-detail', reconcileDetailParams] }),
       ])
     },
@@ -1166,6 +1067,8 @@ export default function Finance() {
                 </button>
               </div>
 
+              <ReconcileAlertConfigPanel />
+
               {/* Reconcile result */}
               {reconcileData && (
                 <div className={cn(
@@ -1788,214 +1691,20 @@ export default function Finance() {
         </SheetContent>
       </Sheet>
 
-      {/* Reconcile Detail Sheet */}
-      <Sheet open={reconcileDetailOpen} onOpenChange={setReconcileDetailOpen}>
-        <SheetContent className="w-[620px] bg-vrbg-card border-vrborder-subtle overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle className="text-vrtext-primary">差异定位与修复</SheetTitle>
-            <SheetDescription className="text-vrtext-secondary">
-              {reconcileDetailData ? `已定位 ${reconcileDetailData.items.length} 条差异记录，先核实再生成调整单` : '加载中...'}
-            </SheetDescription>
-          </SheetHeader>
-
-          {fixResult && (
-            <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
-              <div className="flex items-start gap-3">
-                <CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />
-                <div className="flex-1">
-                  <p className="text-vr-body-sm font-semibold text-emerald-300">修复已生效</p>
-                  <p className="text-vr-caption text-vrtext-secondary mt-1">{describeFixEffect(fixResult)}</p>
-                  <div className="grid grid-cols-2 gap-2 mt-3 text-vr-caption">
-                    <div className="rounded-lg bg-vrbg-surface p-2">
-                      <p className="text-vrtext-muted">调整单号</p>
-                      <p className="font-mono text-vrtext-primary mt-0.5">{fixResult.adjustmentNo || '-'}</p>
-                    </div>
-                    <div className="rounded-lg bg-vrbg-surface p-2">
-                      <p className="text-vrtext-muted">余额流水</p>
-                      <p className="font-mono text-vrtext-primary mt-0.5">{fixResult.balanceTransactionId?.slice(0, 8) || '-'}</p>
-                    </div>
-                    <div className="rounded-lg bg-vrbg-surface p-2">
-                      <p className="text-vrtext-muted">修复前本金/赠送/积分</p>
-                      <p className="text-vrtext-primary mt-0.5">
-                        {formatReconValue(fixResult.userBefore?.principalBalance || 0, '元')} / {formatReconValue(fixResult.userBefore?.bonusBalance || 0, '元')} / {(fixResult.userBefore?.points || 0).toLocaleString()}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-vrbg-surface p-2">
-                      <p className="text-vrtext-muted">修复后本金/赠送/积分</p>
-                      <p className="text-vrtext-primary mt-0.5">
-                        {formatReconValue(fixResult.userAfter?.principalBalance || 0, '元')} / {formatReconValue(fixResult.userAfter?.bonusBalance || 0, '元')} / {(fixResult.userAfter?.points || 0).toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setFixResult(null)}
-                  className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-muted hover:text-vrtext-primary hover:bg-vrbg-surface"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="mt-4 space-y-3">
-            {reconcileDetailData?.items.map((item) => {
-              const plain = getReconPlainText({ name: item.title, diff: item.diff, unit: item.unit, note: item.reason })
-              return (
-                <div key={item.id} className="bg-vrbg-surface rounded-xl p-4 border border-vrborder-subtle">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-vr-body-sm text-vrtext-primary font-semibold">{item.title}</p>
-                      {item.subtitle && (
-                        <p className="text-vr-caption text-vrtext-tertiary mt-1">{item.subtitle}</p>
-                      )}
-                      <p className="text-vr-body-sm text-red-300 font-medium mt-2">{plain.title}</p>
-                    </div>
-                    {item.diff !== 0 && reconcileDetailParams && item.canAutoFix !== false && (
-                      <button
-                        onClick={() => {
-                          setFixDraft(item)
-                          setFixReason('')
-                          setFixResult(null)
-                        }}
-                        disabled={fixReconcileDiffMut.isPending}
-                        className="shrink-0 h-8 px-3 rounded-lg bg-vraccent-primary text-white text-vr-caption hover:opacity-90 disabled:opacity-50"
-                      >
-                        生成调整单
-                      </button>
-                    )}
-                    {item.diff !== 0 && item.canAutoFix === false && (
-                      <span className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-vr-caption text-slate-600 dark:bg-slate-700/50 dark:text-slate-300">
-                        需人工处理
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2 mt-3 text-vr-caption">
-                    <div className="rounded-lg bg-vrbg-card p-2">
-                      <p className="text-vrtext-muted">系统账</p>
-                      <p className="text-vrtext-primary font-medium mt-0.5">{formatReconValue(item.actual, item.unit)}</p>
-                    </div>
-                    <div className="rounded-lg bg-vrbg-card p-2">
-                      <p className="text-vrtext-muted">业务账</p>
-                      <p className="text-vrtext-primary font-medium mt-0.5">{formatReconValue(item.expected, item.unit)}</p>
-                    </div>
-                    <div className="rounded-lg bg-vrbg-card p-2">
-                      <p className="text-vrtext-muted">需要调整</p>
-                      <p className="text-red-400 font-semibold mt-0.5">{item.diff > 0 ? '+' : ''}{formatReconValue(item.diff, item.unit)}</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 rounded-lg bg-orange-50 border border-orange-300 px-3 py-2 dark:bg-orange-500/10 dark:border-orange-500/30">
-                    <p className="text-vr-caption text-orange-800 dark:text-orange-200">定位原因：{item.reason}</p>
-                    <p className="text-vr-caption text-vrtext-secondary mt-1">
-                      处理建议：{item.canAutoFix === false
-                        ? (item.fixHint || '该差异不能自动生成调整单，请先人工核实原始记录。')
-                        : (item.fixHint || '确认这条记录确实需要平账后，再生成调整单；不确定时先联系财务复核。')}
-                    </p>
-                  </div>
-                </div>
-              )
-            })}
-            {reconcileDetailData && reconcileDetailData.items.length === 0 && (
-              <div className="text-center text-vr-caption text-vrtext-tertiary py-8">暂无差异明细</div>
-            )}
-          </div>
-
-          {fixDraft && reconcileDetailParams && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-              <div className="w-full max-w-lg rounded-xl border border-vrborder-subtle bg-vrbg-card shadow-xl">
-                <div className="flex items-start justify-between gap-3 border-b border-vrborder-subtle px-5 py-4">
-                  <div>
-                    <h3 className="text-vr-body font-semibold text-vrtext-primary">确认生成财务调整单</h3>
-                    <p className="text-vr-caption text-vrtext-muted mt-1">系统会写入余额流水、调整单和审计记录。</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setFixDraft(null)
-                      setFixReason('')
-                    }}
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-vrtext-muted hover:text-vrtext-primary hover:bg-vrbg-surface"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="p-5 space-y-4">
-                  <div className="rounded-lg bg-vrbg-surface p-4">
-                    <p className="text-vr-body-sm font-medium text-vrtext-primary">{fixDraft.title}</p>
-                    {fixDraft.subtitle && <p className="text-vr-caption text-vrtext-muted mt-1">{fixDraft.subtitle}</p>}
-                    <div className="grid grid-cols-3 gap-2 mt-3 text-vr-caption">
-                      <div>
-                        <p className="text-vrtext-muted">系统账</p>
-                        <p className="text-vrtext-primary font-medium">{formatReconValue(fixDraft.actual, fixDraft.unit)}</p>
-                      </div>
-                      <div>
-                        <p className="text-vrtext-muted">业务账</p>
-                        <p className="text-vrtext-primary font-medium">{formatReconValue(fixDraft.expected, fixDraft.unit)}</p>
-                      </div>
-                      <div>
-                        <p className="text-vrtext-muted">调整额</p>
-                        <p className="text-red-400 font-semibold">{fixDraft.diff > 0 ? '+' : ''}{formatReconValue(fixDraft.diff, fixDraft.unit)}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-orange-300 bg-orange-50 p-3 text-vr-caption text-orange-800 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
-                    生成调整单后会立即修改关联会员余额或积分。请确认这不是渠道漏单、重复支付或订单状态未同步导致的临时差异。
-                  </div>
-
-                  <div>
-                    <label className="block text-vr-caption text-vrtext-muted mb-1">修复原因</label>
-                    <textarea
-                      value={fixReason}
-                      onChange={(e) => setFixReason(e.target.value)}
-                      rows={4}
-                      maxLength={300}
-                      placeholder="例如：已与收银流水核对，会员余额少记，生成调整单补齐"
-                      className="w-full rounded-lg border border-vrborder-subtle bg-vrbg-surface px-3 py-2 text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary resize-none"
-                    />
-                    <p className="text-vr-caption text-vrtext-muted mt-1">{fixReason.trim().length}/300，至少 4 个字</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end gap-2 border-t border-vrborder-subtle px-5 py-4">
-                  <button
-                    onClick={() => {
-                      setFixDraft(null)
-                      setFixReason('')
-                    }}
-                    className="h-9 px-4 rounded-lg bg-vrbg-surface text-vrtext-secondary hover:text-vrtext-primary"
-                  >
-                    取消
-                  </button>
-                  <button
-                    onClick={() => {
-                      const reason = fixReason.trim()
-                      if (reason.length < 4) {
-                        toast.error('请填写至少 4 个字的修复原因')
-                        return
-                      }
-                      fixReconcileDiffMut.mutate({
-                        type: reconcileDetailParams.type,
-                        targetId: fixDraft.id,
-                        diff: fixDraft.diff,
-                        date: reconcileDetailParams.date,
-                        mode: reconcileDetailData?.mode,
-                        reason,
-                      })
-                    }}
-                    disabled={fixReconcileDiffMut.isPending || fixReason.trim().length < 4}
-                    className="h-9 px-4 rounded-lg bg-vraccent-primary text-white disabled:opacity-50"
-                  >
-                    {fixReconcileDiffMut.isPending ? '生成中...' : '确认生成调整单'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </SheetContent>
-      </Sheet>
+      <ReconcileDetailSheet
+        open={reconcileDetailOpen}
+        onOpenChange={setReconcileDetailOpen}
+        detailData={reconcileDetailData}
+        detailParams={reconcileDetailParams}
+        fixResult={fixResult}
+        onClearFixResult={() => setFixResult(null)}
+        fixDraft={fixDraft}
+        setFixDraft={setFixDraft}
+        fixReason={fixReason}
+        setFixReason={setFixReason}
+        isFixPending={fixReconcileDiffMut.isPending}
+        onSubmitFix={(params) => fixReconcileDiffMut.mutate(params)}
+      />
 
     </Layout>
   )

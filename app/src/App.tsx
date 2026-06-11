@@ -15,9 +15,7 @@ import Accounts from './pages/Accounts'
 import Reservation from './pages/Reservation'
 import Login from './pages/Login'
 import AuditLogs from './pages/AuditLogs'
-import SystemConfig from './pages/SystemConfig'
 import Roles from './pages/Roles'
-import SystemHealth from './pages/SystemHealth'
 import CouponEffects from './pages/CouponEffects'
 import VenueAnalytics from './pages/VenueAnalytics'
 import Campaigns from './pages/Campaigns'
@@ -45,9 +43,7 @@ export default function App() {
           <Route path="/accounts" element={<Accounts />} />
           <Route path="/reservation" element={<Reservation />} />
           <Route path="/audit-logs" element={<AuditLogs />} />
-          <Route path="/system-config" element={<SystemConfig />} />
           <Route path="/roles" element={<Roles />} />
-          <Route path="/system-health" element={<SystemHealth />} />
           <Route path="/coupon-effects" element={<CouponEffects />} />
           <Route path="/venue-analytics" element={<VenueAnalytics />} />
           <Route path="/campaigns" element={<Campaigns />} />

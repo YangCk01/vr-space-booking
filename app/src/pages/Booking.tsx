@@ -20,10 +20,11 @@ import { getGames } from '@/api/games'
 import type { Game } from '@/api/games'
 import { getUsers } from '@/api/users'
 import type { User } from '@/api/users'
-import { getSettings } from '@/api/settings'
+import { getSystemConfigs } from '@/api/systemConfig'
 import { getBookings, createBooking, checkConflict } from '@/api/bookings'
 import type { Booking } from '@/api/bookings'
 import { createOrder } from '@/api/orders'
+import { buildMemberLevelsFromConfig } from '@/lib/memberLevels'
 import {
   format,
   startOfWeek,
@@ -42,7 +43,6 @@ import { zhCN } from 'date-fns/locale'
 /* ─── View type ─── */
 type ViewType = 'day' | 'week' | 'month'
 
-/* ─── Animation ─── */
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number]
 
 /* ─── Helper: parse venue open/close hour ─── */
@@ -304,12 +304,12 @@ export default function Booking() {
   const [slotStatus, setSlotStatus] = useState<{ status: string; currentCount: number; remainingCount: number; maxCount: number } | null>(null)
 
   /* ─── Member levels config (for discount) ─── */
-  const { data: settings } = useQuery({
-    queryKey: ['settings', 'member'],
-    queryFn: () => getSettings('member'),
+  const { data: systemConfigs } = useQuery({
+    queryKey: ['systemConfigs'],
+    queryFn: () => getSystemConfigs(),
     staleTime: 60000,
   })
-  const memberLevels = (settings?.member_levels?.value || []) as Array<{ key: string; name: string; discount: number }>
+  const memberLevels = useMemo(() => buildMemberLevelsFromConfig(systemConfigs), [systemConfigs])
 
   /* ─── Real balance & discount ─── */
   const realBalance = useMemo(() => {

@@ -1,6 +1,7 @@
 import { OrderStatus, PrismaClient } from '@prisma/client'
 import { format } from 'date-fns'
 import { getHardwarePlayerCount, getSystemPlayerCount } from './deviceLogService'
+import { findHandledReconException } from './reconExceptionState'
 
 const prisma = new PrismaClient()
 
@@ -32,28 +33,28 @@ export async function runMatchingEngine(batchId: string, dateStr: string) {
   let exceptionAmount = 0
 
   // ========== 1. 订单-支付一致性核对 ==========
-  const orderPayResult = await checkOrderPaymentConsistency(batchId, dateRange)
+  const orderPayResult = await checkOrderPaymentConsistency(batchId, dateStr, dateRange)
   matchedCount += orderPayResult.matched
   exceptionCount += orderPayResult.exceptions
   matchedAmount += orderPayResult.matchedAmount
   exceptionAmount += orderPayResult.exceptionAmount
 
   // ========== 2. 订单-余额变动核对（余额支付订单）==========
-  const orderTxResult = await checkOrderTransactionConsistency(batchId, dateRange)
+  const orderTxResult = await checkOrderTransactionConsistency(batchId, dateStr, dateRange)
   matchedCount += orderTxResult.matched
   exceptionCount += orderTxResult.exceptions
   matchedAmount += orderTxResult.matchedAmount
   exceptionAmount += orderTxResult.exceptionAmount
 
   // ========== 3. 充值一致性核对 ==========
-  const rechargeResult = await checkRechargeConsistency(batchId, dateRange)
+  const rechargeResult = await checkRechargeConsistency(batchId, dateStr, dateRange)
   matchedCount += rechargeResult.matched
   exceptionCount += rechargeResult.exceptions
   matchedAmount += rechargeResult.matchedAmount
   exceptionAmount += rechargeResult.exceptionAmount
 
   // ========== 4. 退款一致性核对 ==========
-  const refundResult = await checkRefundConsistency(batchId, dateRange)
+  const refundResult = await checkRefundConsistency(batchId, dateStr, dateRange)
   matchedCount += refundResult.matched
   exceptionCount += refundResult.exceptions
   matchedAmount += refundResult.matchedAmount
@@ -100,6 +101,7 @@ export async function runMatchingEngine(batchId: string, dateStr: string) {
 
 async function createException(
   batchId: string,
+  dateStr: string,
   type: string,
   data: {
     bizType?: string
@@ -111,16 +113,11 @@ async function createException(
   }
 ) {
   const { remark, ...rest } = data
-  const handled = await prisma.reconException.findFirst({
-    where: {
-      batchId,
-      exceptionType: type as any,
-      exceptionStatus: { not: 'PENDING' },
-      bizType: data.bizType || null,
-      bizOrderNo: data.bizOrderNo || null,
-      diffAmount: data.diffAmount,
-    },
-    orderBy: { handledAt: 'desc' },
+  const handled = await findHandledReconException(dateStr, {
+    exceptionType: type,
+    bizType: data.bizType,
+    bizOrderNo: data.bizOrderNo,
+    diffAmount: data.diffAmount,
   })
   if (handled) return handled
 
@@ -136,7 +133,7 @@ async function createException(
 }
 
 // ========== 核对 1：订单-支付一致性 ==========
-async function checkOrderPaymentConsistency(batchId: string, dateRange: DateRange) {
+async function checkOrderPaymentConsistency(batchId: string, dateStr: string, dateRange: DateRange) {
   let matched = 0, exceptions = 0, matchedAmount = 0, exceptionAmount = 0
 
   // 只核对外部支付订单（微信/支付宝），余额支付走核对 2
@@ -159,7 +156,7 @@ async function checkOrderPaymentConsistency(batchId: string, dateRange: DateRang
     } else {
       exceptions++
       exceptionAmount += Math.abs(paymentSum - expected)
-      await createException(batchId, 'AMOUNT_MISMATCH', {
+      await createException(batchId, dateStr, 'AMOUNT_MISMATCH', {
         bizType: 'ORDER',
         bizOrderNo: order.orderNo,
         bizAmount: expected,
@@ -237,7 +234,7 @@ async function checkHardwareConsistency(batchId: string, dateStr: string) {
       for (const order of orders) {
         exceptions++
         exceptionAmount += order.booking?.personCount || 1
-        await createException(batchId, 'HARDWARE_MISMATCH', {
+        await createException(batchId, dateStr, 'HARDWARE_MISMATCH', {
           bizType: 'HARDWARE',
           bizOrderNo: order.orderNo,
           bizAmount: order.amount,
@@ -273,7 +270,7 @@ async function checkHardwareConsistency(batchId: string, dateStr: string) {
       for (const order of orders) {
         exceptions++
         exceptionAmount += order.booking?.personCount || 1
-        await createException(batchId, 'HARDWARE_MISMATCH', {
+        await createException(batchId, dateStr, 'HARDWARE_MISMATCH', {
           bizType: 'HARDWARE',
           bizOrderNo: order.orderNo,
           bizAmount: order.amount,
@@ -301,7 +298,7 @@ async function checkHardwareConsistency(batchId: string, dateStr: string) {
 }
 
 // ========== 核对 2：订单-余额变动一致性（余额支付订单）==========
-async function checkOrderTransactionConsistency(batchId: string, dateRange: DateRange) {
+async function checkOrderTransactionConsistency(batchId: string, dateStr: string, dateRange: DateRange) {
   let matched = 0, exceptions = 0, matchedAmount = 0, exceptionAmount = 0
 
   const orders = await prisma.order.findMany({
@@ -327,7 +324,7 @@ async function checkOrderTransactionConsistency(batchId: string, dateRange: Date
     } else {
       exceptions++
       exceptionAmount += Math.abs(txSum - expected)
-      await createException(batchId, 'AMOUNT_MISMATCH', {
+      await createException(batchId, dateStr, 'AMOUNT_MISMATCH', {
         bizType: 'ORDER',
         bizOrderNo: order.orderNo,
         bizAmount: expected,
@@ -342,7 +339,7 @@ async function checkOrderTransactionConsistency(batchId: string, dateRange: Date
 }
 
 // ========== 核对 3：充值一致性 ==========
-async function checkRechargeConsistency(batchId: string, dateRange: DateRange) {
+async function checkRechargeConsistency(batchId: string, dateStr: string, dateRange: DateRange) {
   let matched = 0, exceptions = 0, matchedAmount = 0, exceptionAmount = 0
 
   const recharges = await prisma.rechargeRecord.findMany({
@@ -381,7 +378,7 @@ async function checkRechargeConsistency(batchId: string, dateRange: DateRange) {
     } else {
       exceptions++
       exceptionAmount += Math.abs(txSum - expected)
-      await createException(batchId, 'AMOUNT_MISMATCH', {
+      await createException(batchId, dateStr, 'AMOUNT_MISMATCH', {
         bizType: 'RECHARGE',
         bizOrderNo: recharge.id,
         bizAmount: expected,
@@ -396,7 +393,7 @@ async function checkRechargeConsistency(batchId: string, dateRange: DateRange) {
 }
 
 // ========== 核对 4：退款一致性 ==========
-async function checkRefundConsistency(batchId: string, dateRange: DateRange) {
+async function checkRefundConsistency(batchId: string, dateStr: string, dateRange: DateRange) {
   let matched = 0, exceptions = 0, matchedAmount = 0, exceptionAmount = 0
 
   const refundTxs = await prisma.balanceTransaction.findMany({
@@ -446,7 +443,7 @@ async function checkRefundConsistency(batchId: string, dateRange: DateRange) {
     if (!tx.orderId) {
       exceptions++
       exceptionAmount += Math.abs(tx.totalAmount || 0)
-      await createException(batchId, 'LONG', {
+      await createException(batchId, dateStr, 'LONG', {
         bizType: 'REFUND',
         bizOrderNo: tx.id,
         bizAmount: 0,
@@ -463,7 +460,7 @@ async function checkRefundConsistency(batchId: string, dateRange: DateRange) {
     if (tx.orderId && !knownOrderIds.has(tx.orderId)) {
       exceptions++
       exceptionAmount += Math.abs(tx.totalAmount || 0)
-      await createException(batchId, 'LONG', {
+      await createException(batchId, dateStr, 'LONG', {
         bizType: 'REFUND',
         bizOrderNo: tx.id,
         bizAmount: 0,
@@ -484,7 +481,7 @@ async function checkRefundConsistency(batchId: string, dateRange: DateRange) {
     } else {
       exceptions++
       exceptionAmount += Math.abs(txSum - expected)
-      await createException(batchId, 'AMOUNT_MISMATCH', {
+      await createException(batchId, dateStr, 'AMOUNT_MISMATCH', {
         bizType: 'ORDER',
         bizOrderNo: order.orderNo,
         bizAmount: expected,
@@ -524,7 +521,7 @@ async function checkPointsConsistency(batchId: string, _dateStr: string) {
     } else {
       exceptions++
       exceptionAmount += Math.abs(txSum - user.points)
-      await createException(batchId, 'STATUS_MISMATCH', {
+      await createException(batchId, _dateStr, 'STATUS_MISMATCH', {
         bizType: 'USER',
         bizOrderNo: user.id,
         bizAmount: user.points,

@@ -50,6 +50,27 @@ export async function checkGiftRisk(userId: string, operatorId: string, points: 
   }
 }
 
+export async function checkCouponGiftRisk(count: number) {
+  const dailyLimit = getConfig<number>('coupon_gift_daily_limit', 10)
+  if (dailyLimit === undefined || dailyLimit <= 0) return
+
+  const todayStart = new Date()
+  todayStart.setHours(0, 0, 0, 0)
+  const todayEnd = new Date()
+  todayEnd.setHours(23, 59, 59, 999)
+
+  const todayTotal = await prisma.userCoupon.count({
+    where: {
+      source: 'MANUAL_GIFT',
+      createdAt: { gte: todayStart, lte: todayEnd },
+    },
+  })
+
+  if (todayTotal + count > dailyLimit) {
+    throw new Error(`单日优惠券赠送上限为 ${dailyLimit} 张，今日已赠送 ${todayTotal} 张，超出限制`)
+  }
+}
+
 export function checkBatchLimit(count: number, maxCount: number) {
   if (count > maxCount) {
     throw new Error(`批量操作数量超出限制，单次最多 ${maxCount} 条`)

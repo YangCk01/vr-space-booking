@@ -949,12 +949,12 @@ model DataCheckResult {
 
 **告警**：
 - 校验失败时推送通知给 SUPER_ADMIN
-- 失败详情写入 `DataCheckResult`，后台「系统健康」页面查看
+- 失败详情写入 `DataCheckResult`，由后台对账中心、审计日志或通知中心承接查看
 
 **验收标准**：
 - [ ] `user.balance` 字段从数据库删除，系统正常运行
 - [ ] 某用户余额不一致，次日 03:00 后管理员收到通知
-- [ ] 「系统健康」页面显示历史校验记录
+- [ ] 对账中心或审计入口可追踪历史校验记录
 
 ---
 
@@ -1133,7 +1133,7 @@ Week 8    [体验收尾]
 | `POST /users/batch-gift-points` | 新增 | P2 |
 | `POST /orders/batch-verify` | 新增 | P2 |
 | `GET /analytics/venue-occupancy` | 新增 | P3 |
-| `PUT /system-config/:key` | 新增 | P2 |
+| `PUT /system-configs/:key` | 底层业务配置接口，前端按业务模块分散承接 | P2 |
 
 ### 5.3 风险与应对
 

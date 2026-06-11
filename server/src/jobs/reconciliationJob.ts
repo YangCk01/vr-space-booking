@@ -7,6 +7,7 @@ import { fetchWechatBill, fetchAlipayBill } from '../services/channelBillService
 import { fetchBankStatement } from '../services/bankStatementService'
 import { fetchDeviceLogs } from '../services/deviceLogService'
 import { sendReconAlert } from '../services/notificationService'
+import { summarizePendingReconExceptions } from '../services/reconExceptionState'
 
 /**
  * 告警阈值（后续从 SystemConfig 读取）
@@ -20,16 +21,23 @@ const PAID_LIKE_ORDER_STATUSES: OrderStatus[] = ['PAID', 'COMPLETED', 'REFUNDED'
 
 async function getThresholds() {
   try {
-    const [absConfig, relConfig] = await Promise.all([
+    const [enabledConfig, lowerAbsConfig, absConfig, relConfig] = await Promise.all([
+      prisma.systemConfig.findUnique({ where: { key: 'recon_alert_enabled' } }),
+      prisma.systemConfig.findUnique({ where: { key: 'recon_alert_amount_threshold' } }),
       prisma.systemConfig.findUnique({ where: { key: 'RECON_ALERT_ABSOLUTE_AMOUNT' } }),
       prisma.systemConfig.findUnique({ where: { key: 'RECON_ALERT_RELATIVE_RATE' } }),
     ])
     return {
-      absoluteAmount: absConfig ? parseInt(absConfig.value, 10) : DEFAULT_THRESHOLDS.absoluteAmount,
+      enabled: enabledConfig ? enabledConfig.value === 'true' || enabledConfig.value === '1' : true,
+      absoluteAmount: lowerAbsConfig
+        ? parseInt(lowerAbsConfig.value, 10)
+        : absConfig
+          ? parseInt(absConfig.value, 10)
+          : DEFAULT_THRESHOLDS.absoluteAmount,
       relativeRate: relConfig ? parseFloat(relConfig.value) : DEFAULT_THRESHOLDS.relativeRate,
     }
   } catch {
-    return DEFAULT_THRESHOLDS
+    return { enabled: true, ...DEFAULT_THRESHOLDS }
   }
 }
 
@@ -130,6 +138,8 @@ export async function executeReconciliation(dateStr: string, options: { force?: 
     // ========== 6. 差异阈值告警检查 ==========
     await checkReconcileAlerts(dateStr, dateGte, dateLte)
 
+    const pendingSummary = await summarizePendingReconExceptions(batch.id)
+
     // ========== 7. 更新批次状态 ==========
     const updatedBatch = await prisma.reconBatch.update({
       where: { id: batch.id },
@@ -139,9 +149,9 @@ export async function executeReconciliation(dateStr: string, options: { force?: 
         channelTotalCount,
         bankTotalCount,
         matchedCount: engineResult.matchedCount,
-        exceptionCount: engineResult.exceptionCount,
+        exceptionCount: pendingSummary.count,
         matchedAmount: engineResult.matchedAmount,
-        exceptionAmount: engineResult.exceptionAmount,
+        exceptionAmount: pendingSummary.amount,
         // 各维度明细
         orderPayMatchedCount: engineResult.orderPayMatched,
         orderPayExceptionCount: engineResult.orderPayExceptions,
@@ -155,15 +165,17 @@ export async function executeReconciliation(dateStr: string, options: { force?: 
       },
     })
 
-    console.log(`[ReconJob] ${dateStr} 对账完成: 匹配${engineResult.matchedCount}笔, 异常${engineResult.exceptionCount}笔`)
+    console.log(`[ReconJob] ${dateStr} 对账完成: 匹配${engineResult.matchedCount}笔, 待处理异常${pendingSummary.count}笔`)
 
     // 推送告警通知（异步，不阻塞主流程）
-    sendReconAlert({
-      reconDate: dateStr,
-      exceptionCount: engineResult.exceptionCount,
-      matchedCount: engineResult.matchedCount,
-      exceptionTypes: {}, // TODO: 按类型统计
-    }).catch((err) => console.error('[ReconJob] 告警推送失败:', err))
+    if (pendingSummary.count > 0) {
+      sendReconAlert({
+        reconDate: dateStr,
+        exceptionCount: pendingSummary.count,
+        matchedCount: engineResult.matchedCount,
+        exceptionTypes: {}, // TODO: 按类型统计
+      }).catch((err) => console.error('[ReconJob] 告警推送失败:', err))
+    }
 
     return updatedBatch
   } catch (err) {
@@ -185,6 +197,10 @@ export async function executeReconciliation(dateStr: string, options: { force?: 
  */
 async function checkReconcileAlerts(dateStr: string, dateGte: Date, dateLte: Date) {
   const thresholds = await getThresholds()
+  if (!thresholds.enabled) {
+    console.log(`[ReconJob] ${dateStr} 对账告警已关闭，跳过通知阈值检查`)
+    return
+  }
   const alerts: string[] = []
 
   // 1. 余额恒等式（总对账）
@@ -321,7 +337,7 @@ function checkDimensionAlert(
   name: string,
   diff: number,
   expected: number,
-  thresholds: { absoluteAmount: number; relativeRate: number }
+  thresholds: { absoluteAmount: number; relativeRate: number; enabled?: boolean }
 ) {
   if (diff === 0) return
   // 必告警：余额维度 diff ≠ 0（已在前面处理）

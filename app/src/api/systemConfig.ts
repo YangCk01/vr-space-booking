@@ -3,10 +3,10 @@ import { apiClient } from './client'
 export interface SystemConfig {
   id: string
   key: string
-  value: string
+  value: any
   category: string
   label: string
-  type: 'text' | 'number' | 'boolean'
+  type: 'text' | 'number' | 'boolean' | 'STRING' | 'NUMBER' | 'BOOLEAN' | 'JSON'
   description?: string
   updatedBy?: string
   updatedByName?: string
@@ -18,7 +18,7 @@ export async function getSystemConfigs() {
   return res.data.data as SystemConfig[]
 }
 
-export async function updateSystemConfig(key: string, value: string) {
-  const res = await apiClient.put('/system-configs', { key, value })
+export async function updateSystemConfig(key: string, value: any) {
+  const res = await apiClient.put(`/system-configs/${encodeURIComponent(key)}`, { value })
   return res.data.data
 }

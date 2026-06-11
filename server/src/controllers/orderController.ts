@@ -1054,147 +1054,16 @@ export async function refund(req: AuthenticatedRequest, res: Response) {
     const id = req.params.id as string
     const refundAmount = Number(req.body?.amount ?? 0)
     const reason = String(req.body?.reason || '').trim()
-
-    const order = await prisma.order.findFirst({
-      where: { OR: [{ id }, { orderNo: id }] },
-    })
-    if (!order) {
-      return error(res, '订单不存在', 404)
-    }
-
-    if (order.status === 'NO_SHOW') {
-      return error(res, '已作废订单请使用退款处置流程', 400)
-    }
-
-    if (!['PAID', 'READY_TO_VERIFY'].includes(order.status)) {
-      return error(res, '该订单状态不允许退款', 400)
-    }
-
-    const actualRefund = refundAmount > 0 ? refundAmount : order.amount
-    if (!Number.isInteger(actualRefund) || actualRefund <= 0 || actualRefund > order.amount) {
-      return error(res, '退款金额不合法', 400)
-    }
-
-    // 余额支付的订单直接退回余额+积分
-    const result = await prisma.$transaction(async (tx) => {
-      // 恢复优惠券状态
-      if (order.userCouponId) {
-        await tx.userCoupon.update({
-          where: { id: order.userCouponId },
-          data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
-        })
-      }
-
-      const updated = await tx.order.update({
-        where: { id: order.id },
-        data: {
-          status: 'REFUNDED',
-          refundAmount: actualRefund,
-        },
-      })
-
-      if (order.userId) {
-        if (order.payMethod?.startsWith('BALANCE')) {
-          // 按退款金额等比恢复双钱包
-          const totalDeducted = (order.principalDeduction || 0) + (order.bonusDeduction || 0)
-          const ratio = totalDeducted > 0 ? actualRefund / totalDeducted : 0
-          const refundPrincipal = Math.min(order.principalDeduction || 0, Math.floor((order.principalDeduction || 0) * ratio))
-          const refundBonus = Math.min(order.bonusDeduction || 0, actualRefund - refundPrincipal)
-          await tx.user.update({
-            where: { id: order.userId },
-            data: {
-              principalBalance: { increment: refundPrincipal },
-              bonusBalance: { increment: refundBonus },
-            },
-          })
-        }
-
-        // 所有支付方式都创建退款流水
-        const totalDeducted = (order.principalDeduction || 0) + (order.bonusDeduction || 0)
-        const ratio = totalDeducted > 0 ? actualRefund / totalDeducted : 0
-        const refundPrincipal = order.payMethod?.startsWith('BALANCE')
-          ? Math.min(order.principalDeduction || 0, Math.floor((order.principalDeduction || 0) * ratio))
-          : 0
-        const refundBonus = order.payMethod?.startsWith('BALANCE')
-          ? Math.min(order.bonusDeduction || 0, actualRefund - refundPrincipal)
-          : 0
-        await tx.balanceTransaction.create({
-          data: {
-            userId: order.userId,
-            type: 'REFUND',
-            amount: actualRefund,
-            principalAmount: refundPrincipal,
-            bonusAmount: refundBonus,
-            totalAmount: actualRefund,
-            orderId: order.id,
-            remark: order.payMethod?.startsWith('BALANCE')
-              ? `订单退款恢复余额（本金¥${refundPrincipal / 100}+赠送¥${refundBonus / 100}）${reason ? '，原因：' + reason : ''}`
-              : `订单在线支付退款（${order.payMethod} ¥${actualRefund / 100}）${reason ? '，原因：' + reason : ''}`,
-          },
-        })
-      }
-
-      // 退款时按比例收回赠送积分（查询当时发放记录，确保不会多扣）
-      if (order.userId) {
-        const earnTx = await tx.balanceTransaction.findFirst({
-          where: { orderId: order.id, type: 'POINTS_EARN' },
-        })
-        const earned = earnTx?.pointsAmount || 0
-        const revokeRatio = order.amount > 0 ? actualRefund / order.amount : 1
-        const revokePoints = Math.floor(earned * revokeRatio)
-        const user = await tx.user.findUnique({ where: { id: order.userId }, select: { points: true } })
-        const deduct = Math.min(revokePoints, user?.points || 0)
-        if (deduct > 0) {
-          await tx.user.update({
-            where: { id: order.userId },
-            data: { points: { decrement: deduct } },
-          })
-          await tx.balanceTransaction.create({
-            data: {
-              userId: order.userId,
-              type: 'POINTS_REVOKE',
-              amount: 0,
-              pointsAmount: -deduct,
-              orderId: order.id,
-              remark: `订单退款收回赠送积分 ${deduct}`,
-            },
-          })
-        }
-      }
-
-      // 同步取消关联排场
-      if (order.bookingId) {
-        await tx.booking.update({
-          where: { id: order.bookingId },
-          data: { status: 'CANCELLED' },
-        })
-      }
-
-      return updated
+    const disposition = await executeOrderRefund({
+      orderIdOrNo: id,
+      amount: refundAmount,
+      reason: reason || '管理员退款',
+      req,
     })
 
-    // 管理员通知：退款
-    await pushAdminNotification(
-      'ADMIN_REFUND_REQUEST',
-      '订单已退款',
-      `订单 ${order.orderNo} 已退款 ¥${(actualRefund / 100).toFixed(2)}，场地：${order.venueName}`
-    )
-
-    await logAudit(req, {
-      targetType: 'ORDER',
-      targetId: order.id,
-      targetDesc: `订单 ${order.orderNo}`,
-      action: 'POST',
-      actionName: '订单退款',
-      beforeValue: { status: order.status, amount: order.amount, refundAmount: order.refundAmount },
-      afterValue: { status: 'REFUNDED', refundAmount: actualRefund },
-      amount: actualRefund,
-      reason: req.body?.reason || '管理员退款',
-    })
-
-    return success(res, result, '退款成功')
+    return success(res, disposition.result, disposition.message)
   } catch (err) {
-    return error(res, (err as Error).message, 500)
+    return error(res, (err as Error).message, 400)
   }
 }
 

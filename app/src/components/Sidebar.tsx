@@ -68,10 +68,6 @@ const menuItems: MenuItem[] = [
     label: '系统设置',
     icon: 'Settings',
     path: '/settings',
-    children: [
-      { key: 'system-config', label: '业务规则', path: '/system-config' },
-      { key: 'system-health', label: '系统健康', path: '/system-health' },
-    ],
   },
 ]
 
@@ -113,8 +109,6 @@ const keyToPermission: Record<string, string | string[]> = {
   'coupon-effects': 'marketing:campaign',
   'venue-analytics': 'venue:read',
   settings: 'setting:read',
-  'system-config': 'setting:write',
-  'system-health': 'setting:read',
 }
 
 function isItemVisible(item: MenuItem, user: { role: string; permissions?: string[] } | null): boolean {

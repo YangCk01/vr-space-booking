@@ -172,12 +172,14 @@ export async function handleException(req: AuthenticatedRequest, res: Response) 
       await handleRefund(exception, cleanRemark)
     }
 
+    const nextHandleRemark = mergeExceptionHandleRemark(exception.handleRemark, cleanRemark)
+
     const updated = await prisma.reconException.update({
       where: { id },
       data: {
         exceptionStatus: mapActionToStatus(action) as any,
         handleAction: action,
-        handleRemark: cleanRemark,
+        handleRemark: nextHandleRemark,
         handlerId,
         handlerName,
         handledAt: new Date(),
@@ -385,6 +387,19 @@ function mapActionToStatus(action: string): string {
     case 'REFUND': return 'REFUNDED'
     case 'IGNORE': return 'IGNORED'
     default: return 'PENDING'
+  }
+}
+
+function mergeExceptionHandleRemark(existing: string | null, remark: string) {
+  if (!existing) return remark
+  try {
+    const data = JSON.parse(existing)
+    return JSON.stringify({
+      ...data,
+      handleRemark: remark,
+    })
+  } catch {
+    return remark
   }
 }
 

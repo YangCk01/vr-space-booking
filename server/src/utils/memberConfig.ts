@@ -39,10 +39,11 @@ export async function getMemberLevels() {
   const thresholds = getConfig<number[]>('member_level_thresholds', [0, 1000, 2000, 5000])!
   const discounts = getConfig<number[]>('member_discount_rates', [100, 95, 90, 85])!
   const quotas = getConfig<number[]>('member_free_reschedule_quotas', [0, 1, 2, 4])!
+  const names = getConfig<string[]>('member_level_names', DEFAULT_LEVEL_NAMES)!
 
   return DEFAULT_LEVEL_KEYS.map((key, i) => ({
     key,
-    name: DEFAULT_LEVEL_NAMES[i] || key,
+    name: names[i] || DEFAULT_LEVEL_NAMES[i] || key,
     discount: Number(discounts[i]) || 100,
     threshold: Number(thresholds[i]) || 0,
     freeRescheduleQuota: Number(quotas[i]) || 0,

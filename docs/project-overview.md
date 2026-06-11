@@ -140,12 +140,11 @@ d:\VR\
 │
 ├── docs/                        # 项目文档
 │   ├── project-layout.md        # 项目布局说明
-│   ├── development-roadmap.md   # 开发路线图 v1
-│   ├── development-roadmap-v2.md# 开发路线图 v2
-│   ├── acceptance-report.md     # 验收报告
+│   ├── development-roadmap-v2.md# 当前保留的开发路线图
 │   ├── no-show-handling-design.md # 爽约处理设计
 │   ├── reconciliation-design.md # 财务对账系统设计
-│   └── release-checklist-v1.5.x.md # v1.5.x 版本功能清单
+│   ├── agents/                  # Agent 技能配置
+│   └── adr/                     # 架构决策记录
 │
 └── tools/                       # 工具
     └── pgsql/                   # PostgreSQL 绿色版
@@ -347,7 +346,7 @@ CONFIRMED → READY → CHECKED_IN → PLAYING → COMPLETED
 | auditLog.ts | /api/audit-logs | 审计日志 |
 | notifications.ts | /api/notifications | 通知消息 |
 | role.ts | /api/roles | 角色管理 |
-| systemConfig.ts | /api/system-config | 系统配置 |
+| systemConfig.ts | /api/system-configs | 底层业务配置接口，前端入口已拆分到会员营销和财务对账中心 |
 | settings.ts | /api/settings | 系统设置 |
 | upload.ts | /api/upload | 文件上传 |
 | debug.ts | /api/debug | 调试接口 |

@@ -49,9 +49,10 @@ import {
 } from '@/components/ui/alert-dialog'
 import { getUsers, createUser, updateUser, deleteUser, batchGiftPoints, batchGiftCoupon } from '@/api/users'
 import type { User as ApiUser } from '@/api/users'
-import { getSettings } from '@/api/settings'
+import { getSystemConfigs } from '@/api/systemConfig'
 import { giftPoints, giftCoupon, getPointsGiftRecords, getCouponGiftRecords } from '@/api/gift'
 import { getUserRechargeRecords } from '@/api/finance'
+import { buildMemberLevelsFromConfig } from '@/lib/memberLevels'
 
 function useDynamicLevelTabs(levels: Array<{ key: string; name: string }>) {
   return [
@@ -83,12 +84,12 @@ const configKeyToEnum: Record<string, string> = {
 }
 
 function useMemberLevels() {
-  const { data: settings } = useQuery({
-    queryKey: ['settings', 'member'],
-    queryFn: () => getSettings('member'),
+  const { data: systemConfigs } = useQuery({
+    queryKey: ['systemConfigs'],
+    queryFn: () => getSystemConfigs(),
     staleTime: 60000,
   })
-  const levels = (settings?.member_levels?.value || []) as Array<{ key: string; name: string; discount: number }>
+  const levels = buildMemberLevelsFromConfig(systemConfigs, ['普通用户', '会员用户', 'VIP用户', 'VIP+'])
 
   const levelMap: Record<string, string> = {}
   const reverseMap: Record<string, string> = {}

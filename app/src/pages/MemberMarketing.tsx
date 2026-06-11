@@ -39,6 +39,7 @@ import {
 import type { PointsProduct, PointsOrder } from '@/api/points'
 import { uploadFile } from '@/api/upload'
 import { getImageUrl } from '@/lib/imageUrl'
+import { getSystemConfigs, updateSystemConfig } from '@/api/systemConfig'
 
 const ease = [0.16, 1, 0.3, 1] as [number, number, number, number]
 
@@ -55,11 +56,25 @@ const staggerContainer = {
 type TabKey = 'tiers' | 'points' | 'mall' | 'orders'
 
 const tabs = [
-  { key: 'tiers' as TabKey, label: '充值档位', icon: Crown },
+  { key: 'tiers' as TabKey, label: '等级与权益', icon: Crown },
   { key: 'points' as TabKey, label: '积分规则', icon: Coins },
   { key: 'mall' as TabKey, label: '积分商城管理', icon: Gift },
   { key: 'orders' as TabKey, label: '商城订单', icon: ShoppingBag },
 ]
+
+function configValue<T>(configs: Array<{ key: string; value: any }> | undefined, key: string, fallback: T): T {
+  const item = configs?.find((c) => c.key === key)
+  if (!item) return fallback
+  return item.value as T
+}
+
+function yuanToFen(value: number) {
+  return Math.round((Number(value) || 0) * 100)
+}
+
+function fenToYuan(value: number) {
+  return Math.round((Number(value) || 0)) / 100
+}
 
 const productTypeMap: Record<string, { label: string; icon: typeof Ticket; color: string }> = {
   EXPERIENCE_TICKET: { label: '体验券', icon: Ticket, color: 'text-vraccent-primary bg-vraccent-primary/10' },
@@ -88,8 +103,11 @@ function RechargeTiersSection() {
     queryKey: ['settings'],
     queryFn: () => getSettings(),
   })
+  const { data: systemConfigs } = useQuery({
+    queryKey: ['systemConfigs'],
+    queryFn: () => getSystemConfigs(),
+  })
 
-  const s = settings || {}
   const initialized = useRef(false)
 
   const defaultTiers = [
@@ -99,29 +117,54 @@ function RechargeTiersSection() {
     { amount: 5000, bonus: 1000, level: 'VIP+' },
   ]
   const defaultLevels = [
-    { key: 'NORMAL', name: '普通会员', discount: 100, threshold: 0 },
-    { key: 'MEMBER', name: '银卡会员', discount: 95, threshold: 1000 },
-    { key: 'VIP', name: '金卡会员', discount: 90, threshold: 2000 },
-    { key: 'VIP+', name: '钻石会员', discount: 85, threshold: 5000 },
+    { key: 'NORMAL', name: '普通会员', discount: 100, threshold: 0, freeRescheduleQuota: 0 },
+    { key: 'MEMBER', name: '银卡会员', discount: 95, threshold: 100, freeRescheduleQuota: 1 },
+    { key: 'VIP', name: '金卡会员', discount: 90, threshold: 500, freeRescheduleQuota: 2 },
+    { key: 'VIP+', name: '钻石会员', discount: 85, threshold: 1000, freeRescheduleQuota: 4 },
   ]
 
   const [tiers, setTiers] = useState<{ amount: number; bonus: number; level: string }[]>(defaultTiers)
-  const [levels, setLevels] = useState<{ key: string; name: string; discount: number; threshold: number }[]>(defaultLevels)
+  const [levels, setLevels] = useState<{ key: string; name: string; discount: number; threshold: number; freeRescheduleQuota: number }[]>(defaultLevels)
 
   useEffect(() => {
-    if (settings && !initialized.current) {
+    if (settings && systemConfigs && !initialized.current) {
       initialized.current = true
       setTiers(settings.recharge_tiers?.value ?? defaultTiers)
-      setLevels(settings.member_levels?.value ?? defaultLevels)
+      const storedLevels = settings.member_levels?.value ?? defaultLevels
+      const names = configValue<string[]>(systemConfigs, 'member_level_names', ['普通会员', '银卡会员', '金卡会员', '钻石会员'])
+      const thresholds = configValue<number[]>(systemConfigs, 'member_level_thresholds', [0, 10000, 50000, 100000])
+      const discounts = configValue<number[]>(systemConfigs, 'member_discount_rates', [100, 95, 90, 85])
+      const quotas = configValue<number[]>(systemConfigs, 'member_free_reschedule_quotas', [0, 1, 2, 4])
+      setLevels(storedLevels.map((level: any, idx: number) => ({
+        ...level,
+        key: level.key === 'VIP+' ? 'VIP_PLUS' : level.key,
+        name: names[idx] ?? level.name,
+        discount: Number(discounts[idx] ?? level.discount ?? 100),
+        threshold: fenToYuan(Number(thresholds[idx] ?? yuanToFen(level.threshold || 0))),
+        freeRescheduleQuota: Number(quotas[idx] ?? 0),
+      })))
     }
-  }, [settings])
+  }, [settings, systemConfigs])
 
   const [saved, setSaved] = useState(false)
 
   const mutation = useMutation({
-    mutationFn: bulkSaveSettings,
+    mutationFn: async () => {
+      const normalizedLevels = levels.map((l) => ({ ...l, key: l.key === 'VIP_PLUS' ? 'VIP+' : l.key }))
+      await Promise.all([
+        updateSystemConfig('member_level_names', levels.map((l) => l.name)),
+        updateSystemConfig('member_level_thresholds', levels.map((l) => yuanToFen(l.threshold))),
+        updateSystemConfig('member_discount_rates', levels.map((l) => Number(l.discount) || 100)),
+        updateSystemConfig('member_free_reschedule_quotas', levels.map((l) => Number(l.freeRescheduleQuota) || 0)),
+        bulkSaveSettings([
+          { key: 'recharge_tiers', value: tiers, category: 'member' },
+          { key: 'member_levels', value: normalizedLevels, category: 'member' },
+        ]),
+      ])
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
+      queryClient.invalidateQueries({ queryKey: ['systemConfigs'] })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     },
@@ -132,7 +175,8 @@ function RechargeTiersSection() {
 
   const updateTierByLevel = (levelKey: string, k: 'amount' | 'bonus', v: number) => {
     setTiers((prev) => {
-      const idx = prev.findIndex((t) => t.level === levelKey)
+      const compatibleKey = levelKey === 'VIP_PLUS' ? 'VIP+' : levelKey
+      const idx = prev.findIndex((t) => t.level === levelKey || t.level === compatibleKey)
       if (idx >= 0) {
         const next = [...prev]
         next[idx] = { ...next[idx], [k]: v }
@@ -142,32 +186,27 @@ function RechargeTiersSection() {
     })
   }
 
-  const addLevelAndTier = () => {
-    const newKey = `LEVEL_${Date.now()}`
-    setLevels((prev) => [...prev, { key: newKey, name: '新等级', discount: 100, threshold: 0 }])
-    setTiers((prev) => [...prev, { amount: 0, bonus: 0, level: newKey }])
-  }
-
-  const removeLevelAndTier = (idx: number) => {
-    const levelKey = levels[idx].key
-    setLevels((prev) => prev.filter((_, i) => i !== idx))
-    setTiers((prev) => prev.filter((t) => t.level !== levelKey))
-  }
-
   const handleSave = () => {
-    mutation.mutate([
-      { key: 'recharge_tiers', value: tiers, category: 'member' },
-      { key: 'member_levels', value: levels, category: 'member' },
-    ])
+    mutation.mutate()
   }
 
   return (
     <motion.div variants={staggerContainer} initial="initial" animate="animate">
-      <div className="space-y-3 max-w-3xl">
+      <div className="mb-4 max-w-5xl rounded-xl border border-vrborder-subtle bg-vrbg-card p-4">
+        <div className="flex items-start justify-between gap-4 mb-3">
+          <div>
+            <h2 className="text-vr-h4 text-vrtext-primary font-semibold">会员等级与权益规则</h2>
+            <p className="text-vr-caption text-vrtext-tertiary mt-1">
+              控制会员升级门槛、订单折扣和每月免费改签次数，保存后会影响新订单和会员权益展示。
+            </p>
+          </div>
+        </div>
+        <div className="space-y-3">
         {levels.map((l, i) => {
-          const tier = tiers.find((t) => t.level === l.key) || { amount: 0, bonus: 0, level: l.key }
+          const compatibleKey = l.key === 'VIP_PLUS' ? 'VIP+' : l.key
+          const tier = tiers.find((t) => t.level === l.key || t.level === compatibleKey) || { amount: 0, bonus: 0, level: l.key }
           return (
-            <motion.div key={l.key} {...fadeInUp} className="grid grid-cols-5 gap-3 p-3 bg-vrbg-elevated rounded-lg items-end">
+            <motion.div key={l.key} {...fadeInUp} className="grid grid-cols-1 md:grid-cols-6 gap-3 p-3 bg-vrbg-elevated rounded-lg items-end">
               <div>
                 <label className="block text-vr-caption text-vrtext-secondary mb-1">等级名称</label>
                 <input
@@ -178,20 +217,12 @@ function RechargeTiersSection() {
                 />
               </div>
               <div>
-                <label className="block text-vr-caption text-vrtext-secondary mb-1">充值金额（元）</label>
+                <label className="block text-vr-caption text-vrtext-secondary mb-1">累计消费（元）</label>
                 <input
                   type="number"
-                  value={tier.amount}
-                  onChange={(e) => updateTierByLevel(l.key, 'amount', Number(e.target.value))}
-                  className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
-                />
-              </div>
-              <div>
-                <label className="block text-vr-caption text-vrtext-secondary mb-1">赠送金额（元）</label>
-                <input
-                  type="number"
-                  value={tier.bonus}
-                  onChange={(e) => updateTierByLevel(l.key, 'bonus', Number(e.target.value))}
+                  min={0}
+                  value={l.threshold}
+                  onChange={(e) => updateLevel(i, 'threshold', Number(e.target.value))}
                   className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
                 />
               </div>
@@ -206,21 +237,38 @@ function RechargeTiersSection() {
                   className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
                 />
               </div>
-              <button
-                onClick={() => removeLevelAndTier(i)}
-                className="p-2 rounded-lg text-vrtext-muted hover:text-vrerror hover:bg-vrerror/10 transition-colors self-center"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              <div>
+                <label className="block text-vr-caption text-vrtext-secondary mb-1">免费改签/月</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={l.freeRescheduleQuota}
+                  onChange={(e) => updateLevel(i, 'freeRescheduleQuota', Number(e.target.value))}
+                  className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+                />
+              </div>
+              <div>
+                <label className="block text-vr-caption text-vrtext-secondary mb-1">充值档位（元）</label>
+                <input
+                  type="number"
+                  value={tier.amount}
+                  onChange={(e) => updateTierByLevel(l.key, 'amount', Number(e.target.value))}
+                  className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+                />
+              </div>
+              <div>
+                <label className="block text-vr-caption text-vrtext-secondary mb-1">充值赠送（元）</label>
+                <input
+                  type="number"
+                  value={tier.bonus}
+                  onChange={(e) => updateTierByLevel(l.key, 'bonus', Number(e.target.value))}
+                  className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+                />
+              </div>
             </motion.div>
           )
         })}
-        <button
-          onClick={addLevelAndTier}
-          className="flex items-center gap-2 px-4 py-2 border border-vrborder-hover rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated transition-colors"
-        >
-          <Plus className="w-4 h-4" />新增档位
-        </button>
+        </div>
       </div>
 
       <motion.div {...fadeInUp} className="pt-6 max-w-xl">
@@ -252,43 +300,62 @@ function RechargeTiersSection() {
 /* ─── Points Rules Section ─── */
 function PointsRulesSection() {
   const queryClient = useQueryClient()
-  const { data: settings } = useQuery({
-    queryKey: ['settings'],
-    queryFn: () => getSettings(),
+  const { data: systemConfigs } = useQuery({
+    queryKey: ['systemConfigs'],
+    queryFn: () => getSystemConfigs(),
   })
 
-  const [points, setPoints] = useState({ earnRate: 1, deductRate: 100 })
+  const [points, setPoints] = useState({
+    earnRate: 1,
+    deductRate: 100,
+    pointsGiftDailyLimit: 10000,
+    couponGiftDailyLimit: 10,
+  })
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    if (settings) {
+    if (systemConfigs) {
+      const earnRatio = configValue<number>(systemConfigs, 'points_earn_ratio', 100)
       setPoints({
-        earnRate: settings.points_earn_rate?.value ?? 1,
-        deductRate: settings.points_deduct_rate?.value ?? 100,
+        earnRate: earnRatio > 0 ? 100 / earnRatio : 1,
+        deductRate: configValue<number>(systemConfigs, 'points_deduct_ratio', 100),
+        pointsGiftDailyLimit: configValue<number>(systemConfigs, 'points_gift_daily_limit', 10000),
+        couponGiftDailyLimit: configValue<number>(systemConfigs, 'coupon_gift_daily_limit', 10),
       })
     }
-  }, [settings])
+  }, [systemConfigs])
 
   const mutation = useMutation({
-    mutationFn: bulkSaveSettings,
+    mutationFn: async () => {
+      const earnRate = Number(points.earnRate) || 1
+      await Promise.all([
+        updateSystemConfig('points_earn_ratio', Math.max(1, Math.round(100 / earnRate))),
+        updateSystemConfig('points_deduct_ratio', Math.max(1, Math.round(Number(points.deductRate) || 100))),
+        updateSystemConfig('points_gift_daily_limit', Math.max(0, Math.round(Number(points.pointsGiftDailyLimit) || 0))),
+        updateSystemConfig('coupon_gift_daily_limit', Math.max(0, Math.round(Number(points.couponGiftDailyLimit) || 0))),
+      ])
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] })
+      queryClient.invalidateQueries({ queryKey: ['systemConfigs'] })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     },
   })
 
   const handleSave = () => {
-    mutation.mutate([
-      { key: 'points_earn_rate', value: points.earnRate, category: 'member' },
-      { key: 'points_deduct_rate', value: points.deductRate, category: 'member' },
-    ])
+    mutation.mutate()
   }
 
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="max-w-xl">
-      <div className="space-y-4">
-        <div>
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="max-w-4xl">
+      <div className="rounded-xl border border-vrborder-subtle bg-vrbg-card p-4 mb-4">
+        <h2 className="text-vr-h4 text-vrtext-primary font-semibold">积分与赠送风控</h2>
+        <p className="text-vr-caption text-vrtext-tertiary mt-1">
+          控制消费得分、积分抵扣和人工赠送上限。赠送上限用于防止误操作或异常批量发放。
+        </p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="rounded-xl border border-vrborder-subtle bg-vrbg-card p-4">
           <label className="block text-vr-caption text-vrtext-secondary mb-1">消费积分比例（每消费1元得X积分）</label>
           <input
             type="number"
@@ -297,8 +364,9 @@ function PointsRulesSection() {
             onChange={(e) => setPoints((p) => ({ ...p, earnRate: Number(e.target.value) }))}
             className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
           />
+          <p className="text-vr-caption text-vrtext-tertiary mt-2">例如填 1，表示消费 ¥1 赠送 1 积分。</p>
         </div>
-        <div>
+        <div className="rounded-xl border border-vrborder-subtle bg-vrbg-card p-4">
           <label className="block text-vr-caption text-vrtext-secondary mb-1">积分抵扣比例（X积分抵扣1元）</label>
           <input
             type="number"
@@ -306,6 +374,29 @@ function PointsRulesSection() {
             onChange={(e) => setPoints((p) => ({ ...p, deductRate: Number(e.target.value) }))}
             className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
           />
+          <p className="text-vr-caption text-vrtext-tertiary mt-2">例如填 100，表示 100 积分可抵扣 ¥1。</p>
+        </div>
+        <div className="rounded-xl border border-vrborder-subtle bg-vrbg-card p-4">
+          <label className="block text-vr-caption text-vrtext-secondary mb-1">单日积分赠送上限</label>
+          <input
+            type="number"
+            min={0}
+            value={points.pointsGiftDailyLimit}
+            onChange={(e) => setPoints((p) => ({ ...p, pointsGiftDailyLimit: Number(e.target.value) }))}
+            className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+          />
+          <p className="text-vr-caption text-vrtext-tertiary mt-2">超过上限时，人工赠送积分会被系统拦截。</p>
+        </div>
+        <div className="rounded-xl border border-vrborder-subtle bg-vrbg-card p-4">
+          <label className="block text-vr-caption text-vrtext-secondary mb-1">单日优惠券赠送上限</label>
+          <input
+            type="number"
+            min={0}
+            value={points.couponGiftDailyLimit}
+            onChange={(e) => setPoints((p) => ({ ...p, couponGiftDailyLimit: Number(e.target.value) }))}
+            className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+          />
+          <p className="text-vr-caption text-vrtext-tertiary mt-2">用于会员营销和手动发券场景，避免单日异常发放。</p>
         </div>
       </div>
 
@@ -990,7 +1081,7 @@ export default function MemberMarketing() {
         <div className="mb-6">
           <h1 className="text-vr-h1 text-vrtext-primary font-semibold">会员营销</h1>
           <p className="text-vr-body text-vrtext-tertiary mt-1">
-            配置会员等级、充值档位、积分规则和积分商城
+            配置会员等级权益、积分规则、赠送风控和积分商城
           </p>
         </div>
 
