@@ -1,19 +1,5 @@
 import axios from 'axios'
-
-// 根据当前端口自动判断 API 地址
-// 5173/5174 = 测试环境 (4000)
-// 5175/5176 = 开发环境 (4001)
-const currentPort = window.location.port
-const isDevEnv = currentPort === '5175' || currentPort === '5176'
-const defaultApiUrl = isDevEnv
-  ? 'http://localhost:4001/api'
-  : 'http://192.168.2.200:4000/api'
-const defaultApiBase = isDevEnv
-  ? 'http://localhost:4001'
-  : 'http://192.168.2.200:4000'
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || defaultApiUrl
-const API_BASE_HOST = import.meta.env.VITE_API_BASE_URL || defaultApiBase
+import { API_BASE_HOST, API_BASE_URL } from '@/lib/apiBase'
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,

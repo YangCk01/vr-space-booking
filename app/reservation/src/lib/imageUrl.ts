@@ -1,8 +1,16 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'
+import { API_BASE_HOST } from './apiBase'
 
 export function getImageUrl(image?: string | null, fallback = '/venue-a.jpg'): string {
   if (!image) return fallback
-  if (image.startsWith('http')) return image
-  if (image.startsWith('/uploads/')) return `${API_BASE}${image}`
+  if (image.startsWith('http')) {
+    try {
+      const url = new URL(image)
+      if (url.pathname.startsWith('/uploads/')) return `${API_BASE_HOST}${url.pathname}`
+    } catch {
+      return image
+    }
+    return image
+  }
+  if (image.startsWith('/uploads/')) return `${API_BASE_HOST}${image}`
   return image
 }

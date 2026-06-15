@@ -1,13 +1,20 @@
-import { apiClient } from './client'
+import { API_BASE_URL } from '@/lib/apiBase'
 
-export async function uploadFile(type: 'venues' | 'logos' | 'avatars' | 'games' | 'products', file: File) {
+export async function uploadFile(type: 'venues' | 'logos' | 'avatars' | 'games' | 'products' | 'pages', file: File) {
   const formData = new FormData()
   formData.append('file', file)
 
-  const res = await apiClient.post(`/upload/${type}`, formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
+  const token = localStorage.getItem('accessToken')
+  const res = await fetch(`${API_BASE_URL}/upload/${type}`, {
+    method: 'POST',
+    headers: token ? { Authorization: 'Bearer ' + token } : {},
+    body: formData,
   })
-  return res.data.data as { url: string; filename: string; size: number }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: '上传失败' }))
+    throw new Error(err.message || '上传失败')
+  }
+
+  return (await res.json()).data as { url: string; filename: string; size: number }
 }

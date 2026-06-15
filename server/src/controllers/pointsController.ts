@@ -236,7 +236,8 @@ export async function exchangeProduct(req: AuthenticatedRequest, res: Response) 
       await pushAdminNotification(
         'ADMIN_PRODUCT_SOLD',
         '积分商品被兑换',
-        `用户兑换了「${updatedProduct.name}」，消耗 ${updatedProduct.pointsCost} 积分`
+        `用户兑换了「${updatedProduct.name}」，消耗 ${updatedProduct.pointsCost} 积分`,
+        'USER'
       )
       if (updatedProduct.stock > 0 && updatedProduct.stock <= 5) {
         await pushAdminNotification(
@@ -353,7 +354,8 @@ export async function createPointsOrder(req: AuthenticatedRequest, res: Response
       await pushAdminNotification(
         'ADMIN_PRODUCT_SOLD',
         '积分商品被下单',
-        `用户下单了「${updatedProduct.name}」，订单号 ${result.order.orderNo}，消耗 ${updatedProduct.pointsCost} 积分`
+        `用户下单了「${updatedProduct.name}」，订单号 ${result.order.orderNo}，消耗 ${updatedProduct.pointsCost} 积分`,
+        'USER'
       )
       if (updatedProduct.stock > 0 && updatedProduct.stock <= 5) {
         await pushAdminNotification(

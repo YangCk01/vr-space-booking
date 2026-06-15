@@ -7,6 +7,7 @@ export interface Game {
   description?: string | null
   notice?: string | null
   coverImage?: string | null
+  videoUrl?: string | null
   detailImages: string[]
   price: number
   duration: number

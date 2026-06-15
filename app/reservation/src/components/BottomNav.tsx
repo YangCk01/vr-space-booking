@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 
 const tabs = [
   { key: 'home', label: '首页', icon: Home, path: '/' },
-  { key: 'venues', label: '门店', icon: Gamepad2, path: '/venues' },
+  { key: 'venues', label: '体验', icon: Gamepad2, path: '/venues' },
   { key: 'orders', label: '订单', icon: ClipboardList, path: '/orders' },
   { key: 'profile', label: '我的', icon: User, path: '/profile' },
 ]
@@ -14,7 +14,7 @@ export default function BottomNav({ fixed = true }: { fixed?: boolean }) {
 
   return (
     <nav className={cn(
-      'bottom-0 left-0 right-0 z-40 bg-[rgba(10,14,39,0.95)] backdrop-blur-lg border-t border-[var(--border-subtle)]',
+      'bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-[var(--border-subtle)] shadow-[0_-10px_30px_rgba(15,23,42,0.08)]',
       fixed ? 'fixed' : 'absolute'
     )}
       style={{ paddingBottom: 'var(--safe-bottom)' }}
@@ -36,9 +36,6 @@ export default function BottomNav({ fixed = true }: { fixed?: boolean }) {
             >
               <div className={cn('relative', isActive && 'scale-110')}>
                 <Icon className="w-5 h-5" />
-                {isActive && (
-                  <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-[var(--accent-primary)]" />
-                )}
               </div>
               <span className="text-[10px] font-medium">{tab.label}</span>
             </Link>

@@ -15,6 +15,7 @@ import AccountRecords from './pages/AccountRecords'
 import MemberBenefits from './pages/MemberBenefits'
 import Coupons from './pages/Coupons'
 import HelpFeedback from './pages/HelpFeedback'
+import StoreContact from './pages/StoreContact'
 import AccountSettings from './pages/AccountSettings'
 import ChangePhonePage from './pages/ChangePhonePage'
 import ChangePasswordPage from './pages/ChangePasswordPage'
@@ -27,7 +28,7 @@ import { ScrollContainerContext } from './hooks/useScrollContainer'
 export default function App() {
   const location = useLocation()
   // 隐藏底部导航的页面
-  const hideNav = ['/confirm', '/success', '/login', '/recharge', '/game', '/pay', '/account-records', '/member-benefits', '/coupons', '/help', '/account-settings', '/points-mall', '/points-orders', '/change-phone', '/change-password'].some((p) => location.pathname.startsWith(p))
+  const hideNav = ['/confirm', '/success', '/login', '/recharge', '/game', '/pay', '/account-records', '/member-benefits', '/coupons', '/help', '/account-settings', '/points-mall', '/points-orders', '/change-phone', '/change-password', '/store-contact'].some((p) => location.pathname.startsWith(p))
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="/member-benefits" element={<MemberBenefits />} />
         <Route path="/coupons" element={<Coupons />} />
         <Route path="/help" element={<HelpFeedback />} />
+        <Route path="/store-contact" element={<StoreContact />} />
         <Route path="/account-settings" element={<AccountSettings />} />
         <Route path="/change-phone" element={<ChangePhonePage />} />
         <Route path="/change-password" element={<ChangePasswordPage />} />

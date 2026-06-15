@@ -131,15 +131,18 @@ export default function Pay() {
     setShowCancelConfirm(true)
   }
 
-  const goOrders = () => {
+  const goOrders = (tab = 'PENDING') => {
     queryClient.invalidateQueries({ queryKey: ['orders'] })
-    navigate('/orders', { replace: true })
+    const target = `/orders?tab=${tab}`
+    navigate(target, { replace: true })
     window.setTimeout(() => {
-      if (window.location.pathname !== '/orders') {
-        window.location.assign('/orders')
+      if (window.location.pathname !== '/orders' || window.location.search !== `?tab=${tab}`) {
+        window.location.href = target
       }
     }, 100)
   }
+
+  const orderListHref = '/orders?tab=PENDING'
 
   if (isLoading) {
     return (
@@ -154,13 +157,13 @@ export default function Pay() {
       <div className="min-h-[100dvh] flex flex-col items-center justify-center text-[var(--text-muted)] px-4">
         <CreditCard className="w-12 h-12 mb-3 opacity-30" />
         <p className="text-sm">{order ? '该订单已过期或已取消' : '订单不存在'}</p>
-        <button
-          type="button"
-          onClick={goOrders}
+        <a
+          href={orderListHref}
+          onPointerUp={() => goOrders()}
           className="mt-4 px-6 py-2 rounded-xl text-sm font-medium text-white bg-gradient-accent"
         >
           返回订单列表
-        </button>
+        </a>
       </div>
     )
   }
@@ -170,13 +173,13 @@ export default function Pay() {
       <div className="min-h-[100dvh] flex flex-col items-center justify-center text-[var(--text-muted)] px-4">
         <CreditCard className="w-12 h-12 mb-3 opacity-30" />
         <p className="text-sm">该订单已支付</p>
-        <button
-          type="button"
-          onClick={goOrders}
+        <a
+          href={orderListHref}
+          onPointerUp={() => goOrders()}
           className="mt-4 px-6 py-2 rounded-xl text-sm font-medium text-white bg-gradient-accent"
         >
           返回订单列表
-        </button>
+        </a>
       </div>
     )
   }
@@ -365,7 +368,7 @@ export default function Pay() {
                   继续支付
                 </button>
                 <button
-                  onClick={() => navigate('/orders', { replace: true })}
+                  onClick={() => goOrders()}
                   className="flex-1 py-2.5 rounded-xl text-sm font-medium text-[var(--text-secondary)] bg-[var(--bg-secondary)] hover:bg-[var(--border-subtle)] transition-colors"
                 >
                   稍后支付

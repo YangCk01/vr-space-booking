@@ -7,7 +7,7 @@ const router = Router()
 // 通用上传接口
 router.post('/:type', authenticate, (req: Request, res: Response) => {
   const type = req.params.type as string
-  const allowedTypes = ['venues', 'logos', 'avatars', 'games', 'products']
+  const allowedTypes = ['venues', 'logos', 'avatars', 'games', 'products', 'pages']
 
   if (!allowedTypes.includes(type)) {
     return res.status(400).json({ success: false, message: '不支持的上传类型' })
@@ -24,9 +24,7 @@ router.post('/:type', authenticate, (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: '未上传文件' })
     }
 
-    const host = req.get('host') || 'localhost:4000'
-    const protocol = req.protocol || 'http'
-    const fileUrl = `${protocol}://${host}/uploads/${type}/${req.file.filename}`
+    const fileUrl = `/uploads/${type}/${req.file.filename}`
 
     return res.status(200).json({
       success: true,

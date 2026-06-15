@@ -9,6 +9,7 @@ import { getLogs } from '@/api/logs'
 import { globalSearch } from '@/api/search'
 import { getNotifications, getUnreadCount, markAllRead, clearAllNotifications } from '@/api/notifications'
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
+import LanguageSelect from '@/components/LanguageSelect'
 import {
   Dialog,
   DialogContent,
@@ -77,6 +78,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
     userName: n.user?.name || '未知用户',
     userPhone: n.user?.phone || '',
     read: n.read,
+    source: n.source || 'SYSTEM',
   }))
 
   const markAllReadMutation = useMutation({
@@ -322,6 +324,8 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
 
         {/* Right: Actions */}
         <div className="flex items-center gap-3">
+          <LanguageSelect />
+
           <button
             onClick={handleRefresh}
             className="relative p-2 rounded-lg text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
@@ -391,11 +395,14 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                         notifications.map((n: any) => (
                           <div key={n.id} className={`px-4 py-3 border-b border-vrborder-hover last:border-0 hover:bg-vrborder-hover/50 cursor-pointer transition-colors ${n.read ? 'opacity-60' : ''}`}>
                             <div className="flex items-center justify-between">
-                              <p className="text-vr-body-sm text-vrtext-primary font-medium">{n.title}</p>
+                              <p className="text-vr-body-sm text-vrtext-primary font-semibold">用户：{n.userName} {n.userPhone}</p>
                               <span className="text-xs text-vrtext-muted shrink-0 ml-2">{n.time}</span>
                             </div>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              {n.source === 'USER' && (<span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-vraccent-primary/10 text-vraccent-primary shrink-0">用户</span>)}
+                              <p className="text-vr-body-sm text-vrtext-primary font-medium">{n.title}</p>
+                            </div>
                             <p className="text-vr-caption text-vrtext-tertiary mt-0.5">{n.desc}</p>
-                            <p className="text-xs text-vrtext-muted mt-1">{n.userName} {n.userPhone}</p>
                           </div>
                         ))
                       )}

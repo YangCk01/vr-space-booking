@@ -8,7 +8,8 @@ export async function pushNotification(
   userId: string,
   type: string,
   title: string,
-  content: string
+  content: string,
+  source: string = 'SYSTEM'
 ) {
   try {
     // Check if the scene is enabled in settings
@@ -21,7 +22,7 @@ export async function pushNotification(
     }
 
     await prisma.notification.create({
-      data: { userId, type, title, content },
+      data: { userId, type, title, content, source },
     })
   } catch {
     // fail silently so business logic isn't blocked
@@ -52,7 +53,8 @@ function mapTypeToSceneKey(type: string): string | null {
 export async function pushAdminNotification(
   type: string,
   title: string,
-  content: string
+  content: string,
+  source: string = 'SYSTEM'
 ) {
   try {
     const sceneKey = mapTypeToSceneKey(type)
@@ -71,7 +73,7 @@ export async function pushAdminNotification(
     await Promise.all(
       admins.map((admin) =>
         prisma.notification.create({
-          data: { userId: admin.id, type, title, content },
+          data: { userId: admin.id, type, title, content, source },
         })
       )
     )

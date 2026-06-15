@@ -7,6 +7,7 @@ export interface Game {
   description?: string | null
   notice?: string | null
   coverImage?: string | null
+  videoUrl?: string | null
   detailImages: string[]
   price: number
   duration: number
@@ -23,6 +24,7 @@ export interface GameInput {
   description?: string
   notice?: string
   coverImage?: string
+  videoUrl?: string
   detailImages?: string[]
   price?: number
   duration?: number

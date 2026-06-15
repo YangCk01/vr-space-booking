@@ -44,13 +44,13 @@ export default function VenueCard({
       transition={{ delay: index * 0.08, duration: 0.35, ease: [0, 0, 0.2, 1] }}
       onClick={() => navigate(gameId ? `/venue/${id}?gameId=${gameId}` : `/venue/${id}`)}
       className={cn(
-        'relative flex items-center gap-4 p-4 rounded-2xl border transition-all duration-300 cursor-pointer',
-        'bg-[var(--bg-card)] border-[var(--border-subtle)]',
+        'relative flex items-center gap-4 p-3 rounded-2xl border transition-all duration-300 cursor-pointer',
+        'bg-white border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)]',
         'hover:border-[var(--accent-primary)] hover:shadow-glow',
       )}
     >
       {/* Cover */}
-      <div className="w-24 h-20 rounded-xl overflow-hidden shrink-0 bg-[var(--bg-elevated)]">
+      <div className="w-24 h-24 rounded-xl overflow-hidden shrink-0 bg-[var(--bg-elevated)]">
         <img src={getImageUrl(image)} alt={name} className="w-full h-full object-cover" />
       </div>
 
@@ -59,7 +59,10 @@ export default function VenueCard({
         <div className="flex items-center gap-2 mb-1">
           <h3 className="text-base font-semibold text-[var(--text-primary)] truncate">{name}</h3>
         </div>
-        <p className="text-xs text-[var(--text-muted)]">
+        <p className="text-xs text-[var(--text-muted)] mb-1">
+          {theme || '沉浸式 VR 体验空间'}
+        </p>
+        <p className="text-xs text-[var(--text-secondary)]">
           {area ? `${area}㎡` : ''} {area && capacity ? '·' : ''} {capacity ? `容纳${capacity}人` : ''}
         </p>
       </div>

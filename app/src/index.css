@@ -203,4 +203,20 @@
   .gradient-glow {
     background: radial-gradient(circle, rgba(59, 130, 246, 0.15), transparent);
   }
+
+  html {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  html::-webkit-scrollbar {
+    display: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }

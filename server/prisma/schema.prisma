@@ -8,28 +8,30 @@ datasource db {
 }
 
 model User {
-  id                String               @id @default(uuid())
-  phone             String               @unique
+  id                String                 @id @default(uuid())
+  phone             String                 @unique
   password          String
   name              String
   email             String?
   avatar            String?
-  level             UserLevel            @default(NORMAL)
-  totalVisits       Int                  @default(0)
-  totalSpent        Int                  @default(0)
-  status            UserStatus           @default(ACTIVE)
-  registerDate      DateTime             @default(now())
-  birthday          DateTime?            // 用户真实生日
+  level             UserLevel              @default(NORMAL)
+  totalVisits       Int                    @default(0)
+  totalSpent        Int                    @default(0)
+  status            UserStatus             @default(ACTIVE)
+  registerDate      DateTime               @default(now())
+  birthday          DateTime?
   lastLogin         DateTime?
-  role              UserRole             @default(CUSTOMER)
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-  balance           Int                  @default(0)
-  points            Int                  @default(0)
-  bonusBalance      Int                  @default(0)
-  principalBalance  Int                  @default(0)
+  role              UserRole               @default(CUSTOMER)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  balance           Int                    @default(0)
+  points            Int                    @default(0)
+  bonusBalance      Int                    @default(0)
+  principalBalance  Int                    @default(0)
   transactions      BalanceTransaction[]
   bookings          Booking[]
+  executionLogs     CampaignExecutionLog[]
+  campaignTracks    CampaignTrack[]
   notifications     Notification[]
   logs              OperationLog[]
   orders            Order[]
@@ -39,9 +41,7 @@ model User {
   thirdPartyCoupons ThirdPartyCoupon[]
   userCoupons       UserCoupon[]
   managedVenues     VenueManager[]
-  campaignTracks    CampaignTrack[]
-  executionLogs     CampaignExecutionLog[]
-  roles             Role[]
+  roles             Role[]                 @relation("RoleToUser")
 }
 
 model Venue {
@@ -65,6 +65,9 @@ model Venue {
   deviceCount          Int                @default(1)
   closeTime            String?            @default("22:00")
   openTime             String?            @default("09:00")
+  mapLinks             Json?
+  qrCode               String?
+  serviceQr            String?
   bookings             Booking[]
   deviceLogs           DeviceSessionLog[]
   equipment            Equipment[]
@@ -85,76 +88,76 @@ model VenueManager {
 }
 
 model Booking {
-  id          String        @id @default(uuid())
-  venueId     String
-  userId      String?
-  type        BookingType
-  title       String
-  date        DateTime      @db.Date
-  startTime   String
-  endTime     String
-  personName  String
-  personPhone String
-  personCount Int           @default(1)
-  note        String?
-  status      BookingStatus @default(CONFIRMED)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  gameId      String?
-  remindSent  Boolean       @default(false)
-  checkedInAt       DateTime?
-  playingStartedAt  DateTime?
-  playingEndedAt    DateTime?
-  noShowAt          DateTime?
-  bookingMode       BookingMode   @default(SINGLE)
-  game        Game?         @relation(fields: [gameId], references: [id])
-  user        User?         @relation(fields: [userId], references: [id])
-  venue       Venue         @relation(fields: [venueId], references: [id])
-  order       Order?
+  id                 String             @id @default(uuid())
+  venueId            String
+  userId             String?
+  type               BookingType
+  title              String
+  date               DateTime           @db.Date
+  startTime          String
+  endTime            String
+  personName         String
+  personPhone        String
+  personCount        Int                @default(1)
+  note               String?
+  status             BookingStatus      @default(CONFIRMED)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  gameId             String?
+  remindSent         Boolean            @default(false)
+  checkedInAt        DateTime?
+  playingStartedAt   DateTime?
+  playingEndedAt     DateTime?
+  noShowAt           DateTime?
+  bookingMode        BookingMode        @default(SINGLE)
+  game               Game?              @relation(fields: [gameId], references: [id])
+  user               User?              @relation(fields: [userId], references: [id])
+  venue              Venue              @relation(fields: [venueId], references: [id], onDelete: Cascade)
   assignedEquipments BookingEquipment[]
+  order              Order?
 }
 
 model Order {
-  id                 String               @id @default(uuid())
-  orderNo            String               @unique
-  bookingId          String?              @unique
-  userId             String?
-  venueId            String
-  venueName          String
-  amount             Int
-  status             OrderStatus          @default(PENDING)
-  payMethod          PayMethod?
-  paidAt             DateTime?
-  cancelledAt        DateTime?
-  refundAmount       Int?
-  bookingTime        String
-  expireAt           DateTime?
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  source             OrderSource          @default(OFFLINE)
-  bonusDeduction     Int                  @default(0)
-  discountAmount     Int                  @default(0)
-  discountRate       Int                  @default(100)
-  originalAmount     Int                  @default(0)
-  pointsDeduction    Int                  @default(0)
-  pointsUsed         Int                  @default(0)
-  principalDeduction Int                  @default(0)
-  userCouponId       String?
-  couponDiscount     Int                  @default(0)
-  noShowAt          DateTime?
-  noShowReason      String?
-  penaltyAmount     Int?
-  standbyConverted  Boolean              @default(false)
-  verifiedAt        DateTime?
-  playingStartedAt  DateTime?
-  playingEndedAt    DateTime?
-  rescheduleCount   Int                  @default(0)
-  rescheduleFeeAmount Int                @default(0)
-  transactions       BalanceTransaction[]
-  booking            Booking?             @relation(fields: [bookingId], references: [id])
-  user               User?                @relation(fields: [userId], references: [id])
-  userCoupon         UserCoupon?          @relation(fields: [userCouponId], references: [id])
-  payments           Payment[]
+  id                  String               @id @default(uuid())
+  orderNo             String               @unique
+  bookingId           String?              @unique
+  userId              String?
+  venueId             String
+  venueName           String
+  amount              Int
+  status              OrderStatus          @default(PENDING)
+  payMethod           PayMethod?
+  paidAt              DateTime?
+  cancelledAt         DateTime?
+  refundAmount        Int?
+  bookingTime         String
+  expireAt            DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  source              OrderSource          @default(OFFLINE)
+  bonusDeduction      Int                  @default(0)
+  discountAmount      Int                  @default(0)
+  discountRate        Int                  @default(100)
+  originalAmount      Int                  @default(0)
+  pointsDeduction     Int                  @default(0)
+  pointsUsed          Int                  @default(0)
+  principalDeduction  Int                  @default(0)
+  userCouponId        String?
+  couponDiscount      Int                  @default(0)
+  noShowAt            DateTime?
+  noShowReason        String?
+  penaltyAmount       Int?
+  standbyConverted    Boolean              @default(false)
+  verifiedAt          DateTime?
+  playingStartedAt    DateTime?
+  playingEndedAt      DateTime?
+  rescheduleCount     Int                  @default(0)
+  rescheduleFeeAmount Int                  @default(0)
+  transactions        BalanceTransaction[]
+  booking             Booking?             @relation(fields: [bookingId], references: [id])
+  userCoupon          UserCoupon?          @relation(fields: [userCouponId], references: [id])
+  user                User?                @relation(fields: [userId], references: [id])
+  payments            Payment[]
 
   @@index([userId])
   @@index([status])
@@ -209,21 +212,21 @@ model Payment {
 }
 
 model Equipment {
-  id           String              @id @default(uuid())
-  name         String
-  model        String
-  code         String              @unique
-  type         EquipmentType
-  status       EquipmentStatus     @default(NORMAL)
-  venueId      String?
-  buyDate      DateTime?
-  warranty     DateTime?
-  lastMaint    DateTime?
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
-  venue        Venue?              @relation(fields: [venueId], references: [id])
-  maintenances MaintenanceRecord[]
+  id                 String              @id @default(uuid())
+  name               String
+  model              String
+  code               String              @unique
+  type               EquipmentType
+  status             EquipmentStatus     @default(NORMAL)
+  venueId            String?
+  buyDate            DateTime?
+  warranty           DateTime?
+  lastMaint          DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
   bookingAssignments BookingEquipment[]
+  venue              Venue?              @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  maintenances       MaintenanceRecord[]
 }
 
 model BookingEquipment {
@@ -232,9 +235,8 @@ model BookingEquipment {
   equipmentId String
   assignedAt  DateTime  @default(now())
   releasedAt  DateTime?
-
-  booking     Booking     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  equipment   Equipment   @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  booking     Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
 
   @@unique([bookingId, equipmentId])
   @@index([bookingId])
@@ -245,9 +247,9 @@ model BookingEquipment {
 model UserBenefitUsage {
   id          String   @id @default(uuid())
   userId      String
-  benefitType String   // 'FREE_RESCHEDULE'
-  periodStart DateTime @db.Date  // 周期开始日期（每月1号）
-  periodEnd   DateTime @db.Date  // 周期结束日期
+  benefitType String
+  periodStart DateTime @db.Date
+  periodEnd   DateTime @db.Date
   totalQuota  Int      @default(0)
   usedQuota   Int      @default(0)
   createdAt   DateTime @default(now())
@@ -343,6 +345,7 @@ model Game {
   subtitle     String?
   description  String?
   coverImage   String?
+  videoUrl     String?
   price        Int       @default(0)
   duration     Int       @default(30)
   tags         String[]
@@ -356,9 +359,37 @@ model Game {
 }
 
 model DailyFinancialReport {
-  id                      String   @id @default(uuid())
-  date                    String   @unique
-  status                  String   @default("DRAFT")
+  id                      String    @id @default(uuid())
+  date                    String    @unique
+  rechargePrincipalIn     Int       @default(0)
+  directPayIn             Int       @default(0)
+  refundOut               Int       @default(0)
+  netCashFlow             Int       @default(0)
+  directRevenue           Int       @default(0)
+  memberPrincipalRevenue  Int       @default(0)
+  totalRecognizedRevenue  Int       @default(0)
+  pointsDiscountCost      Int       @default(0)
+  pointsExchangeCost      Int       @default(0)
+  pointsGiftCost          Int       @default(0)
+  couponDiscountCost      Int       @default(0)
+  couponGiftCount         Int       @default(0)
+  experienceGiftCount     Int       @default(0)
+  couponCampaignCount     Int       @default(0)
+  experienceCampaignCount Int       @default(0)
+  couponUsedCount         Int       @default(0)
+  experienceUsedCount     Int       @default(0)
+  totalPrincipalLiability Int       @default(0)
+  totalBonusLiability     Int       @default(0)
+  pointsLiability         Int       @default(0)
+  dormantPrincipal        Int       @default(0)
+  prepaidDirectRevenue    Int       @default(0)
+  confirmedDirectRevenue  Int       @default(0)
+  prepaidMemberRevenue    Int       @default(0)
+  confirmedMemberRevenue  Int       @default(0)
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  noShowPenalty           Int       @default(0)
+  status                  String    @default("DRAFT")
   generatedAt             DateTime?
   generatedById           String?
   generatedByName         String?
@@ -370,36 +401,6 @@ model DailyFinancialReport {
   reopenedById            String?
   reopenedByName          String?
   reopenReason            String?
-  rechargePrincipalIn     Int      @default(0)
-  directPayIn             Int      @default(0)
-  refundOut               Int      @default(0)
-  netCashFlow             Int      @default(0)
-  directRevenue           Int      @default(0)
-  memberPrincipalRevenue  Int      @default(0)
-  totalRecognizedRevenue  Int      @default(0)
-  pointsDiscountCost      Int      @default(0)
-  pointsExchangeCost      Int      @default(0)
-  pointsGiftCost          Int      @default(0)
-  couponDiscountCost      Int      @default(0)
-  couponGiftCount         Int      @default(0)
-  experienceGiftCount     Int      @default(0)
-  couponCampaignCount     Int      @default(0)
-  experienceCampaignCount Int      @default(0)
-  couponUsedCount         Int      @default(0)
-  experienceUsedCount     Int      @default(0)
-  totalPrincipalLiability Int      @default(0)
-  totalBonusLiability     Int      @default(0)
-  pointsLiability         Int      @default(0)
-  dormantPrincipal        Int      @default(0)
-  // P0: 收入确认拆分
-  prepaidDirectRevenue    Int      @default(0)
-  confirmedDirectRevenue  Int      @default(0)
-  prepaidMemberRevenue    Int      @default(0)
-  confirmedMemberRevenue  Int      @default(0)
-  // 营业外收入-违约金（No-Show 爽约沉淀 + 取消手续费）
-  noShowPenalty           Int      @default(0)
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
 
   @@index([status])
   @@index([generatedAt])
@@ -407,27 +408,27 @@ model DailyFinancialReport {
 }
 
 model FinanceAdjustment {
-  id              String   @id @default(uuid())
-  adjustmentNo    String   @unique
-  source          String
-  type            String
-  status          String   @default("EXECUTED")
-  targetType      String
-  targetId        String
-  targetDesc      String?
-  amount          Int      @default(0)
-  pointsAmount    Int      @default(0)
-  beforeValue     Json?
-  afterValue      Json?
-  reason          String
-  operatorId      String
-  operatorName    String
-  operatorRole    String
-  auditLogId      String?
-  approvalId      String?
-  executedAt      DateTime @default(now())
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id           String   @id @default(uuid())
+  adjustmentNo String   @unique
+  source       String
+  type         String
+  status       String   @default("EXECUTED")
+  targetType   String
+  targetId     String
+  targetDesc   String?
+  amount       Int      @default(0)
+  pointsAmount Int      @default(0)
+  beforeValue  Json?
+  afterValue   Json?
+  reason       String
+  operatorId   String
+  operatorName String
+  operatorRole String
+  auditLogId   String?
+  approvalId   String?
+  executedAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([source])
   @@index([type])
@@ -444,25 +445,26 @@ model Notification {
   title     String
   content   String
   read      Boolean  @default(false)
+  source    String   @default("SYSTEM")
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id])
 }
 
 model PointsProduct {
-  id          String              @id @default(uuid())
-  name        String
-  description String?
-  image       String?
-  type        PointsProductType
-  pointsCost  Int
-  stock       Int                 @default(-1)
-  status      PointsProductStatus @default(ON_SALE)
+  id           String              @id @default(uuid())
+  name         String
+  description  String?
+  image        String?
+  type         PointsProductType
+  pointsCost   Int
+  stock        Int                 @default(-1)
+  status       PointsProductStatus @default(ON_SALE)
   discountRate Int?
   validityDays Int?
-  sortOrder   Int                 @default(0)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  exchanges   PointsExchange[]
+  sortOrder    Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  exchanges    PointsExchange[]
   pointsOrders PointsOrder[]
 
   @@index([status])
@@ -505,8 +507,8 @@ model UserCoupon {
   giftRemark   String?
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
-  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   orders       Order[]
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([status])
@@ -646,7 +648,7 @@ model DeviceSessionLog {
   playerCount        Int       @default(1)
   rawLog             String?
   createdAt          DateTime  @default(now())
-  venue              Venue     @relation(fields: [venueId], references: [id])
+  venue              Venue     @relation(fields: [venueId], references: [id], onDelete: Cascade)
 
   @@index([venueId])
   @@index([appPackageName])
@@ -668,6 +670,260 @@ model ThirdPartyCoupon {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   user           User?     @relation(fields: [userId], references: [id])
+}
+
+model PointsOrder {
+  id             String            @id @default(uuid())
+  orderNo        String            @unique
+  userId         String
+  productId      String
+  productName    String
+  productType    PointsProductType
+  pointsCost     Int
+  quantity       Int               @default(1)
+  deliveryType   String?
+  recipientName  String?
+  recipientPhone String?
+  address        String?
+  venueId        String?
+  status         PointsOrderStatus @default(PENDING)
+  trackingNumber String?
+  shippedAt      DateTime?
+  returnReason   String?
+  returnedAt     DateTime?
+  adminNote      String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  product        PointsProduct     @relation(fields: [productId], references: [id])
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  operatorId   String
+  operatorName String
+  operatorRole String
+  targetType   String
+  targetId     String
+  targetDesc   String?
+  action       String
+  actionName   String
+  beforeValue  Json?
+  afterValue   Json?
+  diffValue    Json?
+  amount       Int?
+  reason       String
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([operatorId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model DataCheckResult {
+  id           String   @id @default(uuid())
+  checkType    String
+  checkDate    String
+  totalChecked Int
+  errorCount   Int
+  errors       Json?
+  status       String
+  createdAt    DateTime @default(now())
+
+  @@index([checkType, checkDate])
+}
+
+model Campaign {
+  id                         String                 @id @default(uuid())
+  name                       String
+  type                       String                 @default("MANUAL_GIFT")
+  status                     String                 @default("DRAFT")
+  startAt                    DateTime?
+  endAt                      DateTime?
+  budget                     Int?
+  spent                      Int                    @default(0)
+  deleted                    Boolean                @default(false)
+  createdBy                  String
+  autoPauseOnBudgetExhausted Boolean                @default(true)
+  autoEndOnExpire            Boolean                @default(true)
+  targetTags                 String[]               @default([])
+  excludeTags                String[]               @default([])
+  priority                   Int                    @default(0)
+  exclusiveWith              String[]               @default([])
+  maxPerUserTotal            Int?
+  channel                    String?
+  targetType                 String?
+  targetValue                Int?
+  createdAt                  DateTime               @default(now())
+  updatedAt                  DateTime               @updatedAt
+  executionLogs              CampaignExecutionLog[]
+  rewards                    CampaignReward[]
+  tracks                     CampaignTrack[]
+}
+
+model CampaignReward {
+  id                 String   @id @default(uuid())
+  campaignId         String
+  rewardType         String
+  pointsAmount       Int?
+  couponName         String?
+  couponDiscountRate Int?
+  couponValidDays    Int?
+  maxQuantity        Int      @default(0)
+  issuedCount        Int      @default(0)
+  usedCount          Int      @default(0)
+  minOrderAmount     Int?
+  applicableVenues   String[] @default([])
+  applicableGames    String[] @default([])
+  applicableWeekdays Int[]    @default([])
+  campaign           Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+}
+
+model CampaignTrack {
+  id         String   @id @default(uuid())
+  campaignId String
+  userId     String
+  step       String
+  orderId    String?
+  amount     Int?
+  createdAt  DateTime @default(now())
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, userId])
+  @@index([step])
+}
+
+model UserTag {
+  id       String    @id @default(uuid())
+  userId   String
+  tag      String
+  scoredAt DateTime  @default(now())
+  expireAt DateTime?
+
+  @@unique([userId, tag])
+  @@index([userId])
+  @@index([tag])
+}
+
+model CampaignExecutionLog {
+  id               String    @id @default(uuid())
+  campaignId       String
+  userId           String
+  triggerEvent     String
+  triggerSource    String
+  triggerPayload   Json?
+  status           String
+  reason           String?
+  rewardType       String?
+  rewardValue      Int?
+  rewardCouponName String?
+  costPoints       Int?
+  costCoupon       Int?
+  issuedAt         DateTime  @default(now())
+  usedAt           DateTime?
+  usedOrderId      String?
+  usedAmount       Int?
+  gmvGenerated     Int?
+  createdAt        DateTime  @default(now())
+  campaign         Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, userId])
+  @@index([campaignId, status])
+  @@index([userId, createdAt])
+  @@index([triggerEvent, createdAt])
+}
+
+model TriggerRule {
+  id         String   @id @default(uuid())
+  name       String
+  event      String
+  conditions Json?
+  actions    Json
+  enabled    Boolean  @default(true)
+  runOnce    Boolean  @default(true)
+  campaignId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model CouponEffectReport {
+  id                 String   @id @default(uuid())
+  date               String
+  couponType         String
+  source             String
+  giftedCount        Int      @default(0)
+  usedCount          Int      @default(0)
+  expiredCount       Int      @default(0)
+  totalOrderAmount   Int      @default(0)
+  avgOrderAmount     Int      @default(0)
+  couponDiscountCost Int      @default(0)
+  reorderUserCount   Int      @default(0)
+  reorderAmount      Int      @default(0)
+  createdAt          DateTime @default(now())
+
+  @@unique([date, couponType, source])
+  @@index([date])
+}
+
+model Permission {
+  id              String           @id @default(uuid())
+  code            String           @unique
+  name            String
+  module          String
+  rolePermissions RolePermission[]
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  name        String           @unique
+  description String?
+  isSystem    Boolean          @default(false)
+  permissions RolePermission[]
+  users       User[]           @relation("RoleToUser")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model SystemConfig {
+  key         String   @id
+  value       String
+  type        String   @default("STRING")
+  description String?
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+}
+
+model UserStoreBalance {
+  id               String   @id @default(uuid())
+  userId           String
+  venueId          String
+  principalBalance Int      @default(0)
+  bonusBalance     Int      @default(0)
+  totalRecharged   Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([userId, venueId])
+  @@index([userId])
+  @@index([venueId])
 }
 
 enum UserLevel {
@@ -853,42 +1109,6 @@ enum PointsOrderStatus {
   CANCELLED
 }
 
-model PointsOrder {
-  id             String            @id @default(uuid())
-  orderNo        String            @unique
-  userId         String
-  productId      String
-  productName    String
-  productType    PointsProductType
-  pointsCost     Int
-  quantity       Int               @default(1)
-
-  deliveryType   String?           // PICKUP | DELIVERY
-  recipientName  String?
-  recipientPhone String?
-  address        String?
-  venueId        String?
-
-  status         PointsOrderStatus @default(PENDING)
-  trackingNumber String?
-  shippedAt      DateTime?
-
-  returnReason   String?
-  returnedAt     DateTime?
-
-  adminNote      String?
-
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-
-  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product        PointsProduct     @relation(fields: [productId], references: [id])
-
-  @@index([userId])
-  @@index([status])
-  @@index([createdAt])
-}
-
 enum ReconExceptionStatus {
   PENDING
   MANUAL_FIXED
@@ -896,260 +1116,4 @@ enum ReconExceptionStatus {
   FROZEN
   REFUNDED
   IGNORED
-}
-
-// ========== P0: 财务合规 ==========
-
-model AuditLog {
-  id            String   @id @default(uuid())
-  operatorId    String
-  operatorName  String
-  operatorRole  String
-  targetType    String
-  targetId      String
-  targetDesc    String?
-  action        String
-  actionName    String
-  beforeValue   Json?
-  afterValue    Json?
-  diffValue     Json?
-  amount        Int?
-  reason        String
-  ipAddress     String?
-  userAgent     String?
-  createdAt     DateTime @default(now())
-
-  @@index([targetType, targetId])
-  @@index([operatorId])
-  @@index([action])
-  @@index([createdAt])
-}
-
-model DataCheckResult {
-  id           String   @id @default(uuid())
-  checkType    String
-  checkDate    String
-  totalChecked Int
-  errorCount   Int
-  errors       Json?
-  status       String
-  createdAt    DateTime @default(now())
-
-  @@index([checkType, checkDate])
-}
-
-// ========== P1: 运营增长 ==========
-
-model Campaign {
-  id              String   @id @default(uuid())
-  name            String
-  type            String   @default("MANUAL_GIFT") // AUTO_GIFT / MANUAL_GIFT / CONDITIONAL
-  status          String   @default("DRAFT") // DRAFT / RUNNING / PAUSED / ENDED
-  startAt         DateTime?
-  endAt           DateTime?
-  budget          Int?
-  spent           Int      @default(0)
-  deleted         Boolean  @default(false)
-  createdBy       String
-
-  // 新增：预算与上限控制
-  autoPauseOnBudgetExhausted Boolean @default(true)
-  autoEndOnExpire            Boolean @default(true)
-
-  // 新增：人群定向
-  targetTags      String[]  @default([])
-  excludeTags     String[]  @default([])
-
-  // 新增：优先级与冲突
-  priority        Int       @default(0)
-  exclusiveWith   String[]  @default([])
-  maxPerUserTotal Int?
-
-  // 新增：渠道追踪与效果目标
-  channel         String?
-  targetType      String?
-  targetValue     Int?
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  rewards     CampaignReward[]
-  tracks      CampaignTrack[]
-  executionLogs CampaignExecutionLog[]
-}
-
-model CampaignReward {
-  id                 String   @id @default(uuid())
-  campaignId         String
-  rewardType         String   // POINTS / DISCOUNT_COUPON / EXPERIENCE_COUPON
-  pointsAmount       Int?
-  couponName         String?
-  couponDiscountRate Int?
-  couponValidDays    Int?
-  maxQuantity        Int      @default(0)
-  issuedCount        Int      @default(0)
-
-  // 新增：券使用门槛与适用范围
-  usedCount          Int      @default(0)
-  minOrderAmount     Int?
-  applicableVenues   String[] @default([])
-  applicableGames    String[] @default([])
-  applicableWeekdays Int[]    @default([])
-
-  campaign           Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-
-  @@index([campaignId])
-}
-
-model CampaignTrack {
-  id         String   @id @default(uuid())
-  campaignId String
-  userId     String
-  step       String   // ISSUED / USED / ORDER_COMPLETED / REORDERED
-  orderId    String?
-  amount     Int?
-  createdAt  DateTime @default(now())
-  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([campaignId, userId])
-  @@index([step])
-}
-
-model UserTag {
-  id       String   @id @default(uuid())
-  userId   String
-  tag      String
-  scoredAt DateTime @default(now())
-  expireAt DateTime?
-
-  @@unique([userId, tag])
-  @@index([userId])
-  @@index([tag])
-}
-
-model CampaignExecutionLog {
-  id          String   @id @default(uuid())
-  campaignId  String
-  userId      String
-
-  // 触发信息
-  triggerEvent    String
-  triggerSource   String   // REALTIME / CRON / MANUAL
-  triggerPayload  Json?
-
-  // 执行结果
-  status      String   // SUCCESS / SKIPPED / FAILED
-  reason      String?  // BUDGET_EXHAUSTED / MAX_REACHED / TAG_MISMATCH / ALREADY_ISSUED / EXCLUSIVE_BLOCKED / CAMPAIGN_NOT_RUNNING / NOT_STARTED / ALREADY_ENDED / NO_REWARD
-
-  // 发放的奖励详情
-  rewardType       String?
-  rewardValue      Int?
-  rewardCouponName String?
-
-  // 成本核算
-  costPoints   Int?
-  costCoupon   Int?
-
-  // 转化追踪
-  issuedAt     DateTime @default(now())
-  usedAt       DateTime?
-  usedOrderId  String?
-  usedAmount   Int?
-  gmvGenerated Int?
-
-  createdAt    DateTime @default(now())
-
-  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([campaignId, userId])
-  @@index([campaignId, status])
-  @@index([userId, createdAt])
-  @@index([triggerEvent, createdAt])
-}
-
-model TriggerRule {
-  id        String   @id @default(uuid())
-  name      String
-  event     String
-  conditions Json?
-  actions   Json
-  enabled   Boolean  @default(true)
-  runOnce   Boolean  @default(true)
-  campaignId String?  // 关联 Campaign，条件触发时发放活动奖励
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model CouponEffectReport {
-  id                 String @id @default(uuid())
-  date               String
-  couponType         String // DISCOUNT / EXPERIENCE_FREE
-  source             String // MANUAL_GIFT / CAMPAIGN / EXCHANGE / RECHARGE_BONUS
-  giftedCount        Int @default(0)
-  usedCount          Int @default(0)
-  expiredCount       Int @default(0)
-  totalOrderAmount   Int @default(0)
-  avgOrderAmount     Int @default(0)
-  couponDiscountCost Int @default(0)
-  reorderUserCount   Int @default(0)
-  reorderAmount      Int @default(0)
-  createdAt          DateTime @default(now())
-
-  @@unique([date, couponType, source])
-  @@index([date])
-}
-
-// ========== P2: 权限与配置 ==========
-
-model Permission {
-  id            String           @id @default(uuid())
-  code          String           @unique
-  name          String
-  module        String
-  rolePermissions RolePermission[]
-}
-
-model Role {
-  id          String @id @default(uuid())
-  name        String @unique
-  description String?
-  isSystem    Boolean @default(false)
-  permissions RolePermission[]
-  users       User[]
-}
-
-model RolePermission {
-  roleId       String
-  permissionId String
-  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-
-  @@id([roleId, permissionId])
-}
-
-model SystemConfig {
-  key         String @id
-  value       String
-  type        String @default("STRING") // STRING / NUMBER / JSON / BOOLEAN
-  description String?
-  updatedBy   String?
-  updatedAt   DateTime @updatedAt
-}
-
-// ========== P2: 资金池隔离（可选） ==========
-
-model UserStoreBalance {
-  id               String @id @default(uuid())
-  userId           String
-  venueId          String
-  principalBalance Int @default(0)
-  bonusBalance     Int @default(0)
-  totalRecharged   Int @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  @@unique([userId, venueId])
-  @@index([userId])
-  @@index([venueId])
 }

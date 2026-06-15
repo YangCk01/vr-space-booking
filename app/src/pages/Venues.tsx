@@ -97,6 +97,9 @@ const emptyVenue = {
   phone: '',
   openTime: '09:00',
   closeTime: '22:00',
+  qrCode: '',
+  serviceQr: '',
+  mapLinks: [],
   maintenanceStartDate: '',
   maintenanceEndDate: '',
   maintenanceStartTime: '',
@@ -221,6 +224,9 @@ export default function Venues() {
       status: normalizeStatus(venue.status),
       openTime: venue.openTime || '09:00',
       closeTime: venue.closeTime || '22:00',
+      qrCode: venue.qrCode || '',
+      serviceQr: venue.serviceQr || '',
+      mapLinks: Array.isArray(venue.mapLinks) ? venue.mapLinks : [],
       maintenanceStartDate: dateStr(venue.maintenanceStartDate),
       maintenanceEndDate: dateStr(venue.maintenanceEndDate),
       maintenanceStartTime: venue.maintenanceStartTime || '',
@@ -250,6 +256,9 @@ export default function Venues() {
       closeTime: formData.closeTime || '22:00',
       address: formData.address,
       phone: formData.phone,
+      qrCode: formData.qrCode || undefined,
+      serviceQr: formData.serviceQr || undefined,
+      mapLinks: formData.mapLinks || undefined,
     }
 
     if (formData.status === 'maintenance') {
@@ -849,6 +858,140 @@ export default function Venues() {
                     />
                   </div>
                 </motion.div>
+
+                {/* Contact Info */}
+                <div className="mt-2 pt-4 border-t border-vrborder-subtle">
+                  <h4 className="text-vr-body-sm font-medium text-vrtext-primary mb-3">联系门店</h4>
+                  <div className="space-y-4">
+                    {/* QR Code */}
+                    <div>
+                      <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">门店微信二维码</label>
+                      <div className="flex items-center gap-3">
+                        <div className="w-20 h-20 bg-vrbg-surface border border-vrborder-subtle rounded-lg flex items-center justify-center overflow-hidden">
+                          {formData.qrCode ? (
+                            <img src={getImageUrl(formData.qrCode)} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <Upload className="w-4 h-4 text-vrtext-muted" />
+                          )}
+                        </div>
+                        <label className="inline-flex items-center gap-2 px-3 py-2 border border-vrborder-hover rounded-lg text-vr-caption text-vrtext-secondary hover:bg-vrbg-hover transition-colors cursor-pointer relative">
+                          <Upload className="w-3.5 h-3.5" />
+                          {uploadingImage ? "上传中..." : "上传"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            disabled={uploadingImage}
+                            className="absolute inset-0 opacity-0 cursor-pointer"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0]
+                              if (!file) return
+                              setUploadingImage(true)
+                              try {
+                                const result = await uploadFile('venues', file)
+                                setFormData((p: any) => ({ ...p, qrCode: result.url }))
+                              } catch (err) {
+                                alert('上传失败: ' + (err as Error).message)
+                              } finally {
+                                setUploadingImage(false)
+                              }
+                            }}
+                          />
+                        </label>
+                        {formData.qrCode && (
+                          <button onClick={() => setFormData((p: any) => ({ ...p, qrCode: '' }))} className="text-vr-caption text-vrerror hover:underline">移除</button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Service QR */}
+                    <div>
+                      <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">客服微信二维码</label>
+                      <div className="flex items-center gap-3">
+                        <div className="w-20 h-20 bg-vrbg-surface border border-vrborder-subtle rounded-lg flex items-center justify-center overflow-hidden">
+                          {formData.serviceQr ? (
+                            <img src={getImageUrl(formData.serviceQr)} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <Upload className="w-4 h-4 text-vrtext-muted" />
+                          )}
+                        </div>
+                        <label className="inline-flex items-center gap-2 px-3 py-2 border border-vrborder-hover rounded-lg text-vr-caption text-vrtext-secondary hover:bg-vrbg-hover transition-colors cursor-pointer relative">
+                          <Upload className="w-3.5 h-3.5" />
+                          {uploadingImage ? "上传中..." : "上传"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            disabled={uploadingImage}
+                            className="absolute inset-0 opacity-0 cursor-pointer"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0]
+                              if (!file) return
+                              setUploadingImage(true)
+                              try {
+                                const result = await uploadFile('venues', file)
+                                setFormData((p: any) => ({ ...p, serviceQr: result.url }))
+                              } catch (err) {
+                                alert('上传失败: ' + (err as Error).message)
+                              } finally {
+                                setUploadingImage(false)
+                              }
+                            }}
+                          />
+                        </label>
+                        {formData.serviceQr && (
+                          <button onClick={() => setFormData((p: any) => ({ ...p, serviceQr: '' }))} className="text-vr-caption text-vrerror hover:underline">移除</button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Map Links */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-vr-body-sm text-vrtext-secondary">地图导航链接</label>
+                        <button
+                          onClick={() => setFormData((p: any) => ({ ...p, mapLinks: [...(p.mapLinks || []), { label: '', url: '' }] }))}
+                          className="text-vr-caption text-vraccent-primary hover:underline"
+                        >+ 添加导航</button>
+                      </div>
+                      <div className="space-y-2">
+                        {(formData.mapLinks || []).length === 0 && (
+                          <p className="text-vr-caption text-vrtext-tertiary">暂无导航链接</p>
+                        )}
+                        {(formData.mapLinks || []).map((link: any, i: number) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={link.label || ''}
+                              onChange={(e) => {
+                                const arr = [...(formData.mapLinks || [])]
+                                arr[i] = { ...arr[i], label: e.target.value }
+                                setFormData((p: any) => ({ ...p, mapLinks: arr }))
+                              }}
+                              placeholder="高德地图"
+                              className="w-28 h-9 px-2 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue shrink-0"
+                            />
+                            <input
+                              type="text"
+                              value={link.url || ''}
+                              onChange={(e) => {
+                                const arr = [...(formData.mapLinks || [])]
+                                arr[i] = { ...arr[i], url: e.target.value }
+                                setFormData((p: any) => ({ ...p, mapLinks: arr }))
+                              }}
+                              placeholder="https://..."
+                              className="flex-1 h-9 px-2 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue"
+                            />
+                            <button onClick={() => {
+                              const arr = (formData.mapLinks || []).filter((_: any, idx: number) => idx !== i)
+                              setFormData((p: any) => ({ ...p, mapLinks: arr }))
+                            }} className="p-1.5 rounded text-vrerror hover:bg-vrerror/10 shrink-0">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Footer */}

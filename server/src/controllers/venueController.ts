@@ -116,6 +116,9 @@ export async function create(req: Request, res: Response) {
         phone: req.body.phone || null,
         openTime: req.body.openTime || '09:00',
         closeTime: req.body.closeTime || '22:00',
+        qrCode: req.body.qrCode || null,
+        serviceQr: req.body.serviceQr || null,
+        mapLinks: req.body.mapLinks || null,
         maintenanceStartDate: req.body.maintenanceStartDate ? new Date(req.body.maintenanceStartDate) : null,
         maintenanceEndDate: req.body.maintenanceEndDate ? new Date(req.body.maintenanceEndDate) : null,
         maintenanceStartTime: req.body.maintenanceStartTime || null,
@@ -154,6 +157,9 @@ export async function update(req: Request, res: Response) {
     if (req.body.phone !== undefined) data.phone = req.body.phone
     if (req.body.openTime !== undefined) data.openTime = req.body.openTime || '09:00'
     if (req.body.closeTime !== undefined) data.closeTime = req.body.closeTime || '22:00'
+    if (req.body.qrCode !== undefined) data.qrCode = req.body.qrCode || null
+    if (req.body.serviceQr !== undefined) data.serviceQr = req.body.serviceQr || null
+    if (req.body.mapLinks !== undefined) data.mapLinks = req.body.mapLinks || null
     if (req.body.maintenanceStartDate !== undefined) data.maintenanceStartDate = req.body.maintenanceStartDate ? new Date(req.body.maintenanceStartDate) : null
     if (req.body.maintenanceEndDate !== undefined) data.maintenanceEndDate = req.body.maintenanceEndDate ? new Date(req.body.maintenanceEndDate) : null
     if (req.body.maintenanceStartTime !== undefined) data.maintenanceStartTime = req.body.maintenanceStartTime || null

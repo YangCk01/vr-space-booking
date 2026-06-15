@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { useQuery } from '@tanstack/react-query'
 import {
   LayoutDashboard,
   Building2,
@@ -22,6 +23,8 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
+import { getSettings } from '@/api/settings'
+import { getImageUrl } from '@/lib/imageUrl'
 
 interface MenuItem {
   key: string
@@ -32,42 +35,83 @@ interface MenuItem {
   roles?: string[]
 }
 
-const menuItems: MenuItem[] = [
-  { key: 'home', label: '首页概览', icon: 'LayoutDashboard', path: '/' },
-  { key: 'venues', label: '场地管理', icon: 'Building2', path: '/venues' },
-  { key: 'games', label: '内容管理', icon: 'Gamepad2', path: '/games' },
-  { key: 'booking', label: '预约排场', icon: 'CalendarDays', path: '/booking' },
-  { key: 'orders', label: '订单管理', icon: 'ClipboardList', path: '/orders' },
-  { key: 'approvals', label: '审批中心', icon: 'ShieldCheck', path: '/approvals' },
+interface MenuGroup {
+  key: string
+  label: string
+  items: MenuItem[]
+  defaultOpen?: boolean
+}
+
+const menuGroups: MenuGroup[] = [
   {
-    key: 'users',
-    label: '会员管理',
-    icon: 'Users',
-    path: '/users',
-    children: [
-      { key: 'campaigns', label: '营销活动', path: '/campaigns' },
-      { key: 'member-marketing', label: '会员营销', path: '/member-marketing' },
-    ],
-  },
-  { key: 'analytics', label: '数据统计', icon: 'BarChart3', path: '/analytics' },
-  { key: 'finance', label: '财务管理', icon: 'Wallet', path: '/finance' },
-  { key: 'accounts', label: '账号管理', icon: 'Shield', path: '/accounts' },
-  { key: 'audit-logs', label: '审计日志', icon: 'FileSearch', path: '/audit-logs', roles: ['SUPER_ADMIN', 'FINANCE'] },
-  {
-    key: 'reports',
-    label: '数据报表',
-    icon: 'Table2',
-    path: '/coupon-effects',
-    children: [
-      { key: 'coupon-effects', label: '营销效果', path: '/coupon-effects' },
-      { key: 'venue-analytics', label: '场地运营', path: '/venue-analytics' },
+    key: 'workspace',
+    label: '工作台',
+    defaultOpen: true,
+    items: [
+      { key: 'home', label: '首页概览', icon: 'LayoutDashboard', path: '/' },
     ],
   },
   {
-    key: 'settings',
-    label: '系统设置',
-    icon: 'Settings',
-    path: '/settings',
+    key: 'operation',
+    label: '预约与订单',
+    defaultOpen: true,
+    items: [
+      { key: 'booking', label: '预约排场', icon: 'CalendarDays', path: '/booking' },
+      { key: 'orders', label: '订单管理', icon: 'ClipboardList', path: '/orders' },
+      { key: 'approvals', label: '审批中心', icon: 'ShieldCheck', path: '/approvals' },
+    ],
+  },
+  {
+    key: 'content',
+    label: '门店与内容',
+    defaultOpen: true,
+    items: [
+      { key: 'venues', label: '场地管理', icon: 'Building2', path: '/venues' },
+      { key: 'games', label: '内容管理', icon: 'Gamepad2', path: '/games' },
+    ],
+  },
+  {
+    key: 'member',
+    label: '会员与营销',
+    items: [
+      {
+        key: 'users',
+        label: '会员管理',
+        icon: 'Users',
+        path: '/users',
+        children: [
+          { key: 'campaigns', label: '营销活动', path: '/campaigns' },
+          { key: 'member-marketing', label: '会员营销', path: '/member-marketing' },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'finance-data',
+    label: '财务与数据',
+    items: [
+      { key: 'finance', label: '财务管理', icon: 'Wallet', path: '/finance' },
+      { key: 'analytics', label: '数据统计', icon: 'BarChart3', path: '/analytics' },
+      {
+        key: 'reports',
+        label: '数据报表',
+        icon: 'Table2',
+        path: '/coupon-effects',
+        children: [
+          { key: 'coupon-effects', label: '营销效果', path: '/coupon-effects' },
+          { key: 'venue-analytics', label: '场地运营', path: '/venue-analytics' },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'system',
+    label: '系统治理',
+    items: [
+      { key: 'accounts', label: '账号管理', icon: 'Shield', path: '/accounts' },
+      { key: 'audit-logs', label: '审计日志', icon: 'FileSearch', path: '/audit-logs', roles: ['SUPER_ADMIN', 'FINANCE'] },
+      { key: 'settings', label: '系统设置', icon: 'Settings', path: '/settings' },
+    ],
   },
 ]
 
@@ -129,6 +173,16 @@ function isItemVisible(item: MenuItem, user: { role: string; permissions?: strin
   }
   // Fallback: show if user has any permissions
   return (user.permissions?.length ?? 0) > 0
+}
+
+function normalizeVisibleItem(item: MenuItem, user: { role: string; permissions?: string[] } | null): MenuItem | null {
+  const children = item.children?.map((child) => normalizeVisibleItem(child, user)).filter(Boolean) as MenuItem[] | undefined
+  if (!isItemVisible(item, user) && (!children || children.length === 0)) return null
+  return children ? { ...item, children } : item
+}
+
+function isPathInItem(item: MenuItem, pathname: string): boolean {
+  return pathname === item.path || !!item.children?.some((child) => isPathInItem(child, pathname))
 }
 
 function SubMenu({
@@ -236,63 +290,67 @@ function SubMenu({
   )
 }
 
-export default function Sidebar() {
+function MenuSection({ group }: { group: MenuGroup }) {
   const location = useLocation()
-  const { user } = useAuthStore()
+  const hasActive = group.items.some((item) => isPathInItem(item, location.pathname))
+  const [expanded, setExpanded] = useState(() => group.defaultOpen || hasActive)
+  const isOpen = expanded || hasActive
 
-  const visibleItems = menuItems.filter((item) => isItemVisible(item, user))
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex h-8 w-full items-center justify-between rounded-lg px-2 text-vr-caption font-semibold text-vrtext-muted transition-colors hover:bg-vrbg-elevated hover:text-vrtext-secondary"
+      >
+        <span>{group.label}</span>
+        <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", isOpen && "rotate-180")} />
+      </button>
+      {isOpen && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          className="space-y-0.5"
+        >
+          {group.items.map((item) => <SubMenu key={item.key} item={item} />)}
+        </motion.div>
+      )}
+    </div>
+  )
+}
+
+export default function Sidebar() {
+  const { user } = useAuthStore()
+  const { data: settings } = useQuery({
+    queryKey: ['settings', 'sidebar-brand'],
+    queryFn: () => getSettings('page'),
+    enabled: !!user,
+    staleTime: 60000,
+  })
+
+  const visibleGroups = menuGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.map((item) => normalizeVisibleItem(item, user)).filter(Boolean) as MenuItem[],
+    }))
+    .filter((group) => group.items.length > 0)
+  const brandName = settings?.venue_name?.value || 'VR大空间'
+  const logo = settings?.logo?.value || ''
 
   return (
     <div className="h-full flex flex-col">
       {/* Logo */}
       <div className="h-16 flex items-center gap-3 px-4 border-b border-vrborder-subtle shrink-0">
-        <img src="/logo.svg" alt="VR Logo" className="w-8 h-8" />
-        <div>
-          <h1 className="text-vr-h4 text-vrtext-primary font-semibold leading-tight">VR大空间</h1>
+        <img src={logo ? getImageUrl(logo) : '/logo.svg'} alt="VR Logo" className="w-8 h-8 object-contain" />
+        <div className="min-w-0">
+          <h1 className="text-vr-h4 text-vrtext-primary font-semibold leading-tight truncate max-w-[130px]">{brandName}</h1>
+          <p className="text-vr-caption text-vrtext-muted mt-0.5 truncate">预约排场系统</p>
         </div>
       </div>
 
-      {/* Tagline */}
-      <div className="px-4 py-3 border-b border-vrborder-subtle shrink-0">
-        <p className="text-vr-caption text-vrtext-tertiary">预约排场系统</p>
-        <p className="text-vr-caption text-vrtext-muted mt-0.5">高效管理·便捷预约·沉浸体验</p>
-      </div>
-
       {/* Menu Items */}
-      <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
-        {visibleItems.map((item) => {
-          if (item.children) {
-            return <SubMenu key={item.key} item={item} />
-          }
-
-          const Icon = item.icon ? iconMap[item.icon] : null
-          const isActive = location.pathname === item.path
-
-          return (
-            <Link
-              key={item.key}
-              to={item.path || '#'}
-              className={cn(
-                'relative flex items-center gap-3 h-11 px-3 rounded-lg transition-all duration-150 group',
-                isActive
-                  ? 'bg-vrbg-active text-vraccent-primary'
-                  : 'text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary'
-              )}
-            >
-              {/* Active indicator */}
-              {isActive && (
-                <motion.div
-                  layoutId="sidebar-active"
-                  className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-vraccent-primary rounded-r-full"
-                  transition={{ type: 'spring', stiffness: 350, damping: 30 }}
-                />
-              )}
-
-              {Icon && <Icon className="w-5 h-5 shrink-0" />}
-              <span className="text-vr-body-sm font-medium">{item.label}</span>
-            </Link>
-          )
-        })}
+      <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-2">
+        {visibleGroups.map((group) => <MenuSection key={group.key} group={group} />)}
       </nav>
 
       {/* Bottom version */}

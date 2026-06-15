@@ -13,6 +13,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { getGame } from '@/api/games'
 import { getImageUrl } from '@/lib/imageUrl'
+import { getBookingTargetPath } from '@/lib/selectedVenue'
 import { useScrollContainer } from '@/hooks/useScrollContainer'
 
 type TabKey = 'desc' | 'notice'
@@ -56,6 +57,8 @@ export default function GameDetail() {
 
   const headerBg = scrollY > 200 ? 'bg-[var(--bg-primary)]/95 backdrop-blur-md shadow-lg' : 'bg-transparent'
   const showHeaderTitle = scrollY > 200
+  const detailImages = game.detailImages || []
+  const hasIntroMedia = Boolean(game.videoUrl) || detailImages.length > 0
 
   return (
     <motion.div
@@ -152,7 +155,7 @@ export default function GameDetail() {
         {/* Action Row */}
         <div className="flex items-center justify-between mt-4 px-5">
           <button
-            onClick={() => navigate(`/venues?gameId=${game.id}`)}
+            onClick={() => navigate(getBookingTargetPath(game.id))}
             className="flex items-center gap-1 text-xs text-[var(--accent-primary)]"
           >
             <span className="text-[var(--text-secondary)]">可拼场</span>
@@ -160,7 +163,7 @@ export default function GameDetail() {
             <ChevronRight className="w-3 h-3" />
           </button>
           <button
-            onClick={() => navigate(`/venues?gameId=${game.id}`)}
+            onClick={() => navigate(getBookingTargetPath(game.id))}
             className="px-4 py-1.5 rounded-lg bg-[var(--error)] text-white text-xs font-medium active:scale-95 transition-transform"
           >
             发起拼场
@@ -216,23 +219,42 @@ export default function GameDetail() {
                   </div>
                 )}
 
-                {/* Detail Images - full width, proportional, scroll if too long */}
-                {game.detailImages && game.detailImages.length > 0 && (
+                {/* Detail media - video first, images as supplement/fallback */}
+                {hasIntroMedia && (
                   <div className="mb-5">
                     <h4 className="text-sm font-semibold text-[var(--text-primary)] mb-3">游戏画面</h4>
-                    <div className="space-y-3 max-h-[55vh] overflow-y-auto rounded-xl">
-                      {game.detailImages.map((url, idx) => (
-                        <div
-                          key={idx}
-                          className="w-full rounded-xl overflow-hidden border border-[var(--border-subtle)]"
-                        >
-                          <img
-                            src={getImageUrl(url)}
-                            alt={`画面 ${idx + 1}`}
-                            className="w-full h-auto object-contain"
+                    <div className="space-y-3">
+                      {game.videoUrl && (
+                        <div className="w-full rounded-xl overflow-hidden border border-[var(--border-subtle)] bg-black">
+                          <video
+                            src={getImageUrl(game.videoUrl, '')}
+                            poster={game.coverImage ? getImageUrl(game.coverImage) : undefined}
+                            className="w-full aspect-video object-contain"
+                            controls
+                            autoPlay
+                            muted
+                            loop
+                            playsInline
+                            preload="metadata"
                           />
                         </div>
-                      ))}
+                      )}
+                      {detailImages.length > 0 && (
+                        <div className="space-y-3 max-h-[55vh] overflow-y-auto rounded-xl">
+                          {detailImages.map((url, idx) => (
+                            <div
+                              key={idx}
+                              className="w-full rounded-xl overflow-hidden border border-[var(--border-subtle)]"
+                            >
+                              <img
+                                src={getImageUrl(url)}
+                                alt={`画面 ${idx + 1}`}
+                                className="w-full h-auto object-contain"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -269,7 +291,7 @@ export default function GameDetail() {
       <div className="fixed bottom-0 left-0 right-0 z-50 bg-[var(--bg-primary)]/95 backdrop-blur-md border-t border-[var(--border-subtle)] px-5 py-3 safe-bottom">
         <div className="max-w-lg mx-auto">
           <button
-            onClick={() => navigate(`/venues?gameId=${game.id}`)}
+            onClick={() => navigate(getBookingTargetPath(game.id))}
             className="w-full h-12 rounded-xl bg-gradient-accent text-white text-base font-semibold shadow-glow active:scale-[0.98] transition-all flex items-center justify-center gap-2"
           >
             <ChevronRight className="w-4 h-4" />

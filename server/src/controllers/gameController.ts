@@ -48,7 +48,7 @@ export async function create(req: Request, res: Response) {
   }
 
   try {
-    const { title, subtitle, description, notice, coverImage, price, duration, tags, detailImages, status, sortOrder } = req.body
+    const { title, subtitle, description, notice, coverImage, videoUrl, price, duration, tags, detailImages, status, sortOrder } = req.body
     const game = await prisma.game.create({
       data: {
         title,
@@ -56,6 +56,7 @@ export async function create(req: Request, res: Response) {
         description: description || null,
         notice: notice || null,
         coverImage: coverImage || null,
+        videoUrl: videoUrl || null,
         price: price !== undefined ? parseInt(price) : 0,
         duration: duration !== undefined ? parseInt(duration) : 30,
         tags: tags || [],
@@ -78,7 +79,7 @@ export async function update(req: Request, res: Response) {
 
   try {
     const id = req.params.id as string
-    const { title, subtitle, description, notice, coverImage, price, duration, tags, detailImages, status, sortOrder } = req.body
+    const { title, subtitle, description, notice, coverImage, videoUrl, price, duration, tags, detailImages, status, sortOrder } = req.body
 
     const existing = await prisma.game.findUnique({ where: { id } })
     if (!existing) {
@@ -93,6 +94,7 @@ export async function update(req: Request, res: Response) {
         description: description !== undefined ? description : existing.description,
         notice: notice !== undefined ? notice : existing.notice,
         coverImage: coverImage !== undefined ? coverImage : existing.coverImage,
+        videoUrl: videoUrl !== undefined ? videoUrl : existing.videoUrl,
         price: price !== undefined ? parseInt(price) : existing.price,
         duration: duration !== undefined ? parseInt(duration) : existing.duration,
         tags: tags !== undefined ? tags : existing.tags,

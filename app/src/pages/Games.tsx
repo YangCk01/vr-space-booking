@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   Upload,
   Gamepad2,
+  Film,
   Eye,
   EyeOff,
 } from 'lucide-react'
@@ -21,6 +22,9 @@ import { getImageUrl } from '@/lib/imageUrl'
 import { cn } from '@/lib/utils'
 
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number]
+const MAX_GAME_VIDEO_SIZE = 300 * 1024 * 1024
+const GAME_VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v)$/i
+const GAME_VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v'])
 
 const emptyGame: Partial<Game> = {
   title: '',
@@ -28,6 +32,7 @@ const emptyGame: Partial<Game> = {
   description: '',
   notice: '',
   coverImage: '',
+  videoUrl: '',
   detailImages: [],
   price: 0,
   duration: 30,
@@ -54,6 +59,7 @@ export default function Games() {
   const [showDelete, setShowDelete] = useState<Game | null>(null)
   const [uploadingImage, setUploadingImage] = useState(false)
   const [uploadingDetailImage, setUploadingDetailImage] = useState(false)
+  const [uploadingVideo, setUploadingVideo] = useState(false)
   const [formData, setFormData] = useState<Partial<Game>>({ ...emptyGame })
   const [tagInput, setTagInput] = useState('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -186,6 +192,32 @@ export default function Games() {
     }
   }
 
+  const handleGameVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!GAME_VIDEO_MIME_TYPES.has(file.type) && !GAME_VIDEO_EXT_RE.test(file.name)) {
+      alert('只支持上传 MP4、WebM、MOV、M4V 视频文件')
+      e.target.value = ''
+      return
+    }
+    if (file.size > MAX_GAME_VIDEO_SIZE) {
+      alert('视频大小不能超过 300MB')
+      e.target.value = ''
+      return
+    }
+
+    setUploadingVideo(true)
+    try {
+      const result = await uploadFile('games', file)
+      updateField('videoUrl', result.url)
+    } catch (err: any) {
+      alert('上传失败: ' + (err?.response?.data?.message || err.message))
+    } finally {
+      setUploadingVideo(false)
+      e.target.value = ''
+    }
+  }
+
   const removeDetailImage = (idx: number) => {
     const current = formData.detailImages || []
     updateField('detailImages', current.filter((_, i) => i !== idx))
@@ -202,6 +234,7 @@ export default function Games() {
       description: formData.description || undefined,
       notice: formData.notice || undefined,
       coverImage: formData.coverImage || undefined,
+      videoUrl: formData.videoUrl || undefined,
       detailImages: formData.detailImages || [],
       price: toFen(Number(formData.price) || 0),
       duration: Number(formData.duration) || 30,
@@ -216,7 +249,7 @@ export default function Games() {
     }
   }
 
-  const isPending = createMutation.isPending || updateMutation.isPending
+  const isPending = createMutation.isPending || updateMutation.isPending || uploadingImage || uploadingDetailImage || uploadingVideo
 
   const allVisibleSelected = filteredGames && filteredGames.length > 0 && filteredGames.every(g => selectedIds.includes(g.id))
 
@@ -601,6 +634,71 @@ export default function Games() {
                     </label>
                   </div>
                   <p className="text-vr-caption text-vrtext-muted">支持多选上传，图片将展示在C端游戏介绍页面</p>
+                </div>
+
+                {/* Intro Video */}
+                <div>
+                  <label className="text-vr-caption text-vrtext-secondary font-medium block mb-1.5">介绍视频</label>
+                  <div className="rounded-xl border border-vrborder-subtle bg-vrbg-surface p-3">
+                    {formData.videoUrl ? (
+                      <div className="space-y-3">
+                        <video
+                          src={getImageUrl(formData.videoUrl, '')}
+                          className="w-full aspect-video rounded-lg bg-black object-contain"
+                          controls
+                          muted
+                          loop
+                          playsInline
+                          preload="metadata"
+                        />
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="min-w-0 truncate text-vr-caption text-vrtext-muted">
+                            当前视频：{formData.videoUrl}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => updateField('videoUrl', '')}
+                            className="shrink-0 text-vr-caption text-vrerror hover:text-vrerror/80"
+                          >
+                            移除
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <div className="w-24 h-16 rounded-lg bg-vrbg-elevated border border-dashed border-vrborder-subtle flex items-center justify-center">
+                          <Film className="w-6 h-6 text-vrtext-muted" />
+                        </div>
+                        <label className="relative h-9 px-4 border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated transition-colors flex items-center gap-2 cursor-pointer">
+                          <Upload className="w-4 h-4" />
+                          {uploadingVideo ? '上传中...' : '上传视频'}
+                          <input
+                            type="file"
+                            accept="video/mp4,video/webm,video/quicktime,video/x-m4v,.mp4,.webm,.mov,.m4v"
+                            className="absolute inset-0 opacity-0 cursor-pointer"
+                            onChange={handleGameVideoUpload}
+                            disabled={uploadingVideo}
+                          />
+                        </label>
+                      </div>
+                    )}
+                    {formData.videoUrl && (
+                      <label className="relative mt-3 inline-flex h-9 px-4 border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated transition-colors items-center gap-2 cursor-pointer">
+                        <Upload className="w-4 h-4" />
+                        {uploadingVideo ? '上传中...' : '替换视频'}
+                        <input
+                          type="file"
+                          accept="video/mp4,video/webm,video/quicktime,video/x-m4v,.mp4,.webm,.mov,.m4v"
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                          onChange={handleGameVideoUpload}
+                          disabled={uploadingVideo}
+                        />
+                      </label>
+                    )}
+                    <p className="mt-2 text-vr-caption text-vrtext-muted">
+                      支持 MP4、WebM、MOV、M4V，最大 300MB；C端详情页会优先展示视频，图片作为补充内容。
+                    </p>
+                  </div>
                 </div>
 
                 {/* Price & Duration */}

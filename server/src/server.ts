@@ -24,17 +24,7 @@ const socketOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
   : process.env.NODE_ENV === 'production'
     ? ['https://yourdomain.com']
-    : [
-        'http://localhost:3000',
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://localhost:5175',
-        'http://localhost:5176',
-        'http://127.0.0.1:5173',
-        'http://127.0.0.1:5174',
-        'http://127.0.0.1:5175',
-        'http://127.0.0.1:5176',
-      ]
+    : true
 
 /* ─── Global error handling ─── */
 process.on('uncaughtException', (err) => {

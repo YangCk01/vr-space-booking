@@ -2,6 +2,8 @@ import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
+  Smartphone,
+  MonitorCog,
   Settings as SettingsIcon,
   Calendar,
   CreditCard,
@@ -36,6 +38,8 @@ import { getLogs, getLogTypes } from '@/api/logs'
 import type { OperationLog } from '@/api/logs'
 import { getImageUrl } from '@/lib/imageUrl'
 import { RolePermissionPanel } from '@/components/RolePermissionPanel'
+import { CustomerPageSettings } from '@/components/settings/CustomerPageSettings'
+import { AdminPageSettings } from '@/components/settings/AdminPageSettings'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -51,7 +55,8 @@ interface SettingCategory {
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 const categories: SettingCategory[] = [
-  { key: 'basic', icon: SettingsIcon, title: '基本设置', desc: '系统基本信息设置' },
+  { key: 'cpage', icon: Smartphone, title: 'C端页面', desc: 'C端首页与帮助页面配置' },
+  { key: 'bpage', icon: MonitorCog, title: 'B端页面', desc: '品牌基础与运营公告配置' },
   { key: 'booking', icon: Calendar, title: '预约设置', desc: '预约规则与时段设置' },
   { key: 'payment', icon: CreditCard, title: '支付与接口', desc: '支付方式与第三方接口配置' },
   { key: 'notification', icon: Bell, title: '通知设置', desc: '短信/微信通知设置' },
@@ -75,198 +80,12 @@ const staggerContainer = {
 /*  Sub-components                                                     */
 /* ------------------------------------------------------------------ */
 
-/* ---- Basic Settings ---- */
-function BasicSettings({ settings }: { settings?: Record<string, any> }) {
-  const s = settings || {}
-  const queryClient = useQueryClient()
-  const [form, setForm] = useState({
-    venueName: s.venue_name?.value ?? 'VR大空间体验馆',
-    address: s.venue_address?.value ?? '北京市朝阳区xxx',
-    phone: s.venue_phone?.value ?? '400-888-0000',
-    hours: s.venue_hours?.value ?? '09:00-22:00',
-    description: s.venue_description?.value ?? 'VR大空间体验馆提供沉浸式虚拟现实体验，支持多人联机互动。',
-    logo: s.logo?.value ?? '',
-    serviceQr: s.service_qr?.value ?? '',
-    announcement: s.announcement?.value ?? '',
-    maxVenues: String(s.max_venues?.value ?? 10),
-  })
-  const [uploadingLogo, setUploadingLogo] = useState(false)
-  const [uploadingQr, setUploadingQr] = useState(false)
-  const [saved, setSaved] = useState(false)
-
-  useEffect(() => {
-    if (!settings) return
-    const s = settings
-    setForm({
-      venueName: s.venue_name?.value ?? 'VR大空间体验馆',
-      address: s.venue_address?.value ?? '北京市朝阳区xxx',
-      phone: s.venue_phone?.value ?? '400-888-0000',
-      hours: s.venue_hours?.value ?? '09:00-22:00',
-      description: s.venue_description?.value ?? 'VR大空间体验馆提供沉浸式虚拟现实体验，支持多人联机互动。',
-      logo: s.logo?.value ?? '',
-      serviceQr: s.service_qr?.value ?? '',
-      announcement: s.announcement?.value ?? '',
-      maxVenues: String(s.max_venues?.value ?? 10),
-    })
-  }, [settings])
-
-  const mutation = useMutation({
-    mutationFn: bulkSaveSettings,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    },
-  })
-
-  const handleSave = () => {
-    mutation.mutate([
-      { key: 'venue_name', value: form.venueName, category: 'basic' },
-      { key: 'venue_address', value: form.address, category: 'basic' },
-      { key: 'venue_phone', value: form.phone, category: 'basic' },
-      { key: 'venue_hours', value: form.hours, category: 'basic' },
-      { key: 'venue_description', value: form.description, category: 'basic' },
-      { key: 'logo', value: form.logo, category: 'basic' },
-      { key: 'service_qr', value: form.serviceQr, category: 'basic' },
-      { key: 'announcement', value: form.announcement, category: 'basic' },
-      { key: 'max_venues', value: Number(form.maxVenues), category: 'basic' },
-    ])
-  }
-
-  const update = (k: string, v: string) => setForm((p) => ({ ...p, [k]: v }))
-
-  const uploadImage = async (file: File, type: 'logo' | 'serviceQr') => {
-    const setLoading = type === 'logo' ? setUploadingLogo : setUploadingQr
-    setLoading(true)
-    try {
-      const result = await uploadFile('logos', file)
-      update(type, result.url)
-    } catch (err) {
-      alert('上传失败: ' + (err as Error).message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div>
-      <h2 className="text-vr-h2 text-vrtext-primary mb-6">基本设置</h2>
-      <motion.div className="space-y-5 max-w-xl" variants={staggerContainer} initial="initial" animate="animate">
-        {[
-          { label: '场馆名称', key: 'venueName', type: 'text' },
-          { label: '场馆地址', key: 'address', type: 'text' },
-          { label: '联系电话', key: 'phone', type: 'text' },
-          { label: '营业时间', key: 'hours', type: 'text' },
-          { label: '门店数量上限', key: 'maxVenues', type: 'number' },
-        ].map((f) => (
-          <motion.div key={f.key} {...fadeInUp}>
-            <label className="block text-vr-caption text-vrtext-secondary mb-1">{f.label}</label>
-            <input
-              type={f.type}
-              value={form[f.key as keyof typeof form]}
-              onChange={(e) => update(f.key, e.target.value)}
-              className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
-            />
-          </motion.div>
-        ))}
-        <motion.div {...fadeInUp}>
-          <label className="block text-vr-caption text-vrtext-secondary mb-1">场馆简介</label>
-          <textarea
-            rows={4}
-            value={form.description}
-            onChange={(e) => update('description', e.target.value)}
-            className="w-full px-3 py-2 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all resize-none"
-          />
-        </motion.div>
-        <motion.div {...fadeInUp}>
-          <label className="block text-vr-caption text-vrtext-secondary mb-1">首页公告</label>
-          <textarea
-            rows={2}
-            value={form.announcement}
-            onChange={(e) => update('announcement', e.target.value)}
-            placeholder="显示在管理后台首页顶部的滚动公告..."
-            className="w-full px-3 py-2 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all resize-none"
-          />
-        </motion.div>
-        <motion.div {...fadeInUp}>
-          <label className="block text-vr-caption text-vrtext-secondary mb-1">系统 Logo</label>
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 bg-vrbg-surface border border-vrborder-subtle rounded-lg flex items-center justify-center overflow-hidden">
-              <img src={form.logo ? getImageUrl(form.logo) : '/logo.svg'} alt="Logo" className="w-10 h-10 object-contain" />
-            </div>
-            <label className="px-4 py-2 border border-vrborder-hover rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated transition-colors cursor-pointer relative">
-              {uploadingLogo ? '上传中...' : '上传新Logo'}
-              <input
-                type="file"
-                accept="image/*"
-                disabled={uploadingLogo}
-                className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
-                onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) uploadImage(file, 'logo')
-                }}
-              />
-            </label>
-          </div>
-        </motion.div>
-        <motion.div {...fadeInUp}>
-          <label className="block text-vr-caption text-vrtext-secondary mb-1">客服微信二维码</label>
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 bg-vrbg-surface border border-vrborder-subtle rounded-lg flex items-center justify-center overflow-hidden">
-              {form.serviceQr ? (
-                <img src={getImageUrl(form.serviceQr)} alt="QR" className="w-14 h-14 object-contain" />
-              ) : (
-                <span className="text-vr-caption text-vrtext-muted">无</span>
-              )}
-            </div>
-            <label className="px-4 py-2 border border-vrborder-hover rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated transition-colors cursor-pointer relative">
-              {uploadingQr ? '上传中...' : '上传二维码'}
-              <input
-                type="file"
-                accept="image/*"
-                disabled={uploadingQr}
-                className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
-                onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) uploadImage(file, 'serviceQr')
-                }}
-              />
-            </label>
-          </div>
-        </motion.div>
-        <motion.div {...fadeInUp} className="pt-4">
-          <button
-            onClick={handleSave}
-            disabled={mutation.isPending}
-            className={cn(
-              'inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-vr-body-sm font-medium transition-all duration-200',
-              saved
-                ? 'bg-vrsuccess/20 text-vrsuccess'
-                : mutation.isPending
-                  ? 'bg-vraccent-primary/50 text-white cursor-not-allowed'
-                  : 'bg-vraccent-primary text-white hover:bg-vraccent-primary-hover'
-            )}
-          >
-            {mutation.isPending ? (
-              <><RotateCcw className="w-4 h-4 animate-spin" />保存中...</>
-            ) : saved ? (
-              <><Check className="w-4 h-4" />已保存</>
-            ) : (
-              <><Save className="w-4 h-4" />保存设置</>
-            )}
-          </button>
-        </motion.div>
-      </motion.div>
-    </div>
-  )
-}
 
 interface RefundTier {
   hours: number
   rate: number
   label: string
 }
-
 /* ---- Booking Settings ---- */
 function BookingSettings({ settings }: { settings?: Record<string, any> }) {
   const s = settings || {}
@@ -1286,13 +1105,14 @@ function LogSettings() {
 /* ------------------------------------------------------------------ */
 function SettingsPanel({ activeKey, settings }: { activeKey: string; settings?: Record<string, any> }) {
   switch (activeKey) {
-    case 'basic': return <BasicSettings settings={settings} />
+    case 'cpage': return <CustomerPageSettings settings={settings} />
+    case 'bpage': return <AdminPageSettings settings={settings} />
     case 'booking': return <BookingSettings settings={settings} />
     case 'payment': return <PaymentApiSettings settings={settings} />
     case 'notification': return <NotificationSettings settings={settings} />
     case 'permission': return <RolePermissionPanel />
     case 'log': return <LogSettings />
-    default: return <BasicSettings settings={settings} />
+    default: return <CustomerPageSettings settings={settings} />
   }
 }
 
@@ -1300,7 +1120,7 @@ function SettingsPanel({ activeKey, settings }: { activeKey: string; settings?: 
 /*  Main Settings Page                                                 */
 /* ------------------------------------------------------------------ */
 export default function Settings() {
-  const [active, setActive] = useState('basic')
+  const [active, setActive] = useState('cpage')
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
 
   const { data: settings } = useQuery({
@@ -1323,9 +1143,9 @@ export default function Settings() {
 
       {/* Desktop: side menu + panel / Mobile: grid cards */}
       <div className="hidden md:block">
-        <div className="flex bg-vrbg-card rounded-xl border border-vrborder-subtle overflow-hidden min-h-[600px]">
+        <div className="flex bg-vrbg-card rounded-xl border border-vrborder-subtle overflow-hidden min-h-[calc(100dvh-120px)]">
           {/* Left menu */}
-          <nav className="w-[200px] shrink-0 border-r border-vrborder-subtle py-2">
+          <nav className="w-[180px] shrink-0 border-r border-vrborder-subtle py-2">
             {categories.map((cat, i) => {
               const Icon = cat.icon
               const isActive = active === cat.key
@@ -1359,7 +1179,7 @@ export default function Settings() {
           </nav>
 
           {/* Right panel */}
-          <div className="flex-1 p-6 overflow-y-auto">
+          <div className="flex-1 p-4 xl:p-5 overflow-y-auto scrollbar-hide">
             <AnimatePresence mode="wait">
               <motion.div
                 key={active}

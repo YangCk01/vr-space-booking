@@ -62,17 +62,17 @@ function useDynamicLevelTabs(levels: Array<{ key: string; name: string }>) {
 }
 
 const fallbackLevelMap: Record<string, string> = {
-  NORMAL: '普通用户',
-  MEMBER: '会员用户',
-  VIP: 'VIP用户',
-  VIP_PLUS: 'VIP+',
+  NORMAL: '普通会员',
+  MEMBER: '银卡会员',
+  VIP: '金卡会员',
+  VIP_PLUS: '钻石会员',
 }
 
 const fallbackReverseMap: Record<string, string> = {
-  '普通用户': 'NORMAL',
-  '会员用户': 'MEMBER',
-  'VIP用户': 'VIP',
-  'VIP+': 'VIP_PLUS',
+  '普通会员': 'NORMAL',
+  '银卡会员': 'MEMBER',
+  '金卡会员': 'VIP',
+  '钻石会员': 'VIP_PLUS',
 }
 
 // 配置 key 与 Prisma enum 值的映射（用于兼容）
@@ -89,7 +89,7 @@ function useMemberLevels() {
     queryFn: () => getSystemConfigs(),
     staleTime: 60000,
   })
-  const levels = buildMemberLevelsFromConfig(systemConfigs, ['普通用户', '会员用户', 'VIP用户', 'VIP+'])
+  const levels = buildMemberLevelsFromConfig(systemConfigs, ['普通会员', '银卡会员', '金卡会员', '钻石会员'])
 
   const levelMap: Record<string, string> = {}
   const reverseMap: Record<string, string> = {}

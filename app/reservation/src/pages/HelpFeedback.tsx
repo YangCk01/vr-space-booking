@@ -1,34 +1,24 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ChevronLeft, HelpCircle, MessageCircle, FileText, CreditCard, Coins, Phone } from 'lucide-react'
-
-const faqs = [
-  {
-    icon: CreditCard,
-    question: '如何充值会员？',
-    answer: '进入「我的」→「会员储值」，选择充值档位，支持微信支付和支付宝。充值后本金和赠送金额即时到账。',
-  },
-  {
-    icon: Coins,
-    question: '积分如何获取和使用？',
-    answer: '消费时按本金消耗金额返还积分（1元返1积分）。积分可在下单时抵扣，100积分抵1元，最高可抵扣订单金额的30%。',
-  },
-  {
-    icon: FileText,
-    question: '如何退款？',
-    answer: '未核销的订单可在「我的订单」中申请退款。已核销订单不支持退款。退款金额按消费时的本金/赠送比例原路退回。',
-  },
-  {
-    icon: CreditCard,
-    question: '余额的有效期是多久？',
-    answer: '充值本金无有效期限制。赠送金额无有效期限制，但退款时赠送部分不予退还。',
-  },
-]
+import { ChevronLeft, HelpCircle, MessageCircle, Phone, MessageSquare } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { getPagePublicSettings } from '@/api/settings'
 
 export default function HelpFeedback() {
   const navigate = useNavigate()
   const [openIndex, setOpenIndex] = useState<number | null>(null)
+
+  const { data: pageSettings } = useQuery({
+    queryKey: ['page-public-settings'],
+    queryFn: getPagePublicSettings,
+    staleTime: 60000,
+  })
+
+  const faqs = pageSettings?.cProfileHelpFaqs || []
+  const contactPhone = pageSettings?.cProfileHelpContactPhone || '400-XXX-XXXX'
+  const contactWechat = pageSettings?.cProfileHelpContactWechat || ''
+  const contactHours = pageSettings?.cProfileHelpContactHours || ''
 
   return (
     <motion.div
@@ -49,46 +39,63 @@ export default function HelpFeedback() {
 
       <div className="max-w-lg mx-auto px-4 pt-4 space-y-4">
         {/* FAQ */}
-        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4">
-          <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3 flex items-center gap-2">
-            <HelpCircle className="w-4 h-4 text-[var(--accent-primary)]" />
-            常见问题
-          </h3>
-          <div className="space-y-2">
-            {faqs.map((faq, idx) => (
-              <div key={idx} className="border border-[var(--border-subtle)] rounded-lg overflow-hidden">
-                <button
-                  onClick={() => setOpenIndex(openIndex === idx ? null : idx)}
-                  className="w-full flex items-center gap-3 p-3 text-left hover:bg-[var(--bg-surface)] transition-colors"
-                >
-                  <faq.icon className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-                  <span className="text-sm text-[var(--text-primary)] flex-1">{faq.question}</span>
-                  <ChevronLeft className={`w-4 h-4 text-[var(--text-muted)] transition-transform ${openIndex === idx ? '-rotate-90' : '-rotate-180'}`} />
-                </button>
-                {openIndex === idx && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    className="px-3 pb-3"
+        {faqs.length > 0 && (
+          <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4">
+            <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3 flex items-center gap-2">
+              <HelpCircle className="w-4 h-4 text-[var(--accent-primary)]" />
+              常见问题
+            </h3>
+            <div className="space-y-2">
+              {faqs.map((faq, idx) => (
+                <div key={idx} className="border border-[var(--border-subtle)] rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setOpenIndex(openIndex === idx ? null : idx)}
+                    className="w-full flex items-center gap-3 p-3 text-left hover:bg-[var(--bg-surface)] transition-colors"
                   >
-                    <p className="text-xs text-[var(--text-secondary)] leading-relaxed pl-7">{faq.answer}</p>
-                  </motion.div>
-                )}
-              </div>
-            ))}
+                    <HelpCircle className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                    <span className="text-sm text-[var(--text-primary)] flex-1">{faq.question}</span>
+                    <ChevronLeft className={`w-4 h-4 text-[var(--text-muted)] transition-transform ${openIndex === idx ? '-rotate-90' : '-rotate-180'}`} />
+                  </button>
+                  {openIndex === idx && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      className="px-3 pb-3"
+                    >
+                      <p className="text-xs text-[var(--text-secondary)] leading-relaxed pl-7">{faq.answer}</p>
+                    </motion.div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Contact */}
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4">
           <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3 flex items-center gap-2">
             <MessageCircle className="w-4 h-4 text-[var(--accent-primary)]" />
-            意见反馈
+            联系我们
           </h3>
-          <p className="text-xs text-[var(--text-secondary)] mb-3">遇到问题或有建议？请联系我们</p>
-          <div className="flex items-center gap-3 p-3 bg-[var(--bg-surface)] rounded-lg">
-            <Phone className="w-4 h-4 text-[var(--accent-primary)]" />
-            <span className="text-sm text-[var(--text-primary)]">客服电话：400-XXX-XXXX</span>
+          <p className="text-xs text-[var(--text-secondary)] mb-3">遇到问题或有建议？请通过以下方式联系我们</p>
+          <div className="space-y-2">
+            {contactPhone && (
+              <div className="flex items-center gap-3 p-3 bg-[var(--bg-surface)] rounded-lg">
+                <Phone className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                <span className="text-sm text-[var(--text-primary)]">客服电话：{contactPhone}</span>
+              </div>
+            )}
+            {contactWechat && (
+              <div className="flex items-center gap-3 p-3 bg-[var(--bg-surface)] rounded-lg">
+                <MessageSquare className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                <span className="text-sm text-[var(--text-primary)]">客服微信：{contactWechat}</span>
+              </div>
+            )}
+            {contactHours && (
+              <div className="flex items-center gap-3 p-3 bg-[var(--bg-surface)] rounded-lg">
+                <span className="text-xs text-[var(--text-muted)]">工作时间：{contactHours}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>

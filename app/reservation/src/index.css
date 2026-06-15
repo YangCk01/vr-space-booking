@@ -4,30 +4,31 @@
 
 @layer base {
   :root {
-    --bg-primary: #0a0e27;
-    --bg-card: rgba(20, 26, 60, 0.85);
-    --bg-elevated: rgba(30, 38, 80, 0.7);
-    --bg-hover: rgba(40, 48, 100, 0.5);
-    --bg-active: rgba(99, 102, 241, 0.15);
+    --bg-primary: #eef3f8;
+    --bg-secondary: #f8fafc;
+    --bg-card: #ffffff;
+    --bg-elevated: #f3f6fb;
+    --bg-hover: #edf3ff;
+    --bg-active: rgba(79, 70, 229, 0.1);
 
-    --accent-primary: #6366f1;
-    --accent-secondary: #8b5cf6;
-    --accent-hover: #818cf8;
+    --accent-primary: #4f46ff;
+    --accent-secondary: #7c2dff;
+    --accent-hover: #6d5cff;
 
-    --text-primary: #ffffff;
-    --text-secondary: rgba(255, 255, 255, 0.7);
-    --text-muted: rgba(255, 255, 255, 0.4);
-    --text-disabled: rgba(255, 255, 255, 0.25);
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+    --text-muted: #94a3b8;
+    --text-disabled: #cbd5e1;
 
-    --border-subtle: rgba(255, 255, 255, 0.08);
-    --border-hover: rgba(255, 255, 255, 0.15);
+    --border-subtle: rgba(148, 163, 184, 0.22);
+    --border-hover: rgba(79, 70, 255, 0.28);
 
     --success: #10b981;
     --warning: #f59e0b;
     --error: #ef4444;
 
-    --gradient-accent: linear-gradient(135deg, #6366f1, #8b5cf6);
-    --gradient-card: linear-gradient(180deg, rgba(30, 38, 80, 0.6), rgba(15, 20, 50, 0.9));
+    --gradient-accent: linear-gradient(135deg, #4f46ff 0%, #7c2dff 100%);
+    --gradient-card: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
 
     --radius: 0.75rem;
 
@@ -72,7 +73,7 @@
     user-select: none;
   }
 
-  /* Scrollbar — Dark */
+  /* Scrollbar */
   ::-webkit-scrollbar {
     width: 3px;
     height: 3px;
@@ -81,12 +82,12 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(99, 102, 241, 0.25);
+    background: rgba(79, 70, 255, 0.22);
     border-radius: 9999px;
   }
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(99, 102, 241, 0.25) transparent;
+    scrollbar-color: rgba(79, 70, 255, 0.22) transparent;
   }
 }
 
@@ -104,13 +105,13 @@
     background-clip: text;
   }
   .shadow-glow {
-    box-shadow: 0 0 16px rgba(99, 102, 241, 0.3);
+    box-shadow: 0 12px 28px rgba(79, 70, 255, 0.18);
   }
   .shadow-glow-sm {
-    box-shadow: 0 0 8px rgba(99, 102, 241, 0.2);
+    box-shadow: 0 8px 16px rgba(79, 70, 255, 0.14);
   }
   .border-glow {
-    border-color: rgba(99, 102, 241, 0.4);
+    border-color: rgba(79, 70, 255, 0.34);
   }
 
   /* 安全区域工具类 */

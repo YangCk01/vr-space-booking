@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronLeft, ClipboardList, LogIn, XCircle, MapPin, Clock, Calendar, Users, Ticket, QrCode, Timer } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { ChevronLeft, ClipboardList, LogIn, XCircle, MapPin, Clock, Calendar, Users, Ticket, QrCode, Timer, Star } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getOrders, cancelOrder } from '@/api/orders'
 import { apiClient } from '@/api/client'
 import { getRefundRules, getBookingLifecycle } from '@/api/settings'
@@ -11,6 +11,8 @@ import { cn } from '@/lib/utils'
 import { SimpleQRCode } from '@/components/SimpleQRCode'
 import { useToast } from '@/hooks/useToast'
 import type { RefundTier, RefundRules } from '@/api/settings'
+import { getImageUrl } from '@/lib/imageUrl'
+import { getBookingTargetPath } from '@/lib/selectedVenue'
 
 const tabs = [
   { key: 'all', label: '全部' },
@@ -102,10 +104,12 @@ function getRefundInfo(order: any, tiers: RefundTier[], cancelHours: number) {
 
 export default function Orders() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { isLoggedIn, refreshUser, user } = useAuth()
   const queryClient = useQueryClient()
   const { toast, success: toastSuccess, error: toastError } = useToast()
-  const [activeTab, setActiveTab] = useState('all')
+  const initialTab = searchParams.get('tab') || 'all'
+  const [activeTab, setActiveTab] = useState(tabs.some((t) => t.key === initialTab) ? initialTab : 'all')
   const [cancelId, setCancelId] = useState<string | null>(null)
   const [ticketOpen, setTicketOpen] = useState(false)
   const [ticketOrder, setTicketOrder] = useState<any>(null)
@@ -308,6 +312,13 @@ export default function Orders() {
     queryClient.invalidateQueries({ queryKey: ['orders'] })
   }, [expiredPendingKey, queryClient])
 
+  useEffect(() => {
+    const nextTab = searchParams.get('tab') || 'all'
+    if (tabs.some((t) => t.key === nextTab) && nextTab !== activeTab) {
+      setActiveTab(nextTab)
+    }
+  }, [searchParams, activeTab])
+
   return (
     <motion.div
       initial={{ opacity: 0, x: 30 }}
@@ -317,7 +328,7 @@ export default function Orders() {
       className="min-h-[100dvh] pb-nav"
     >
       {/* Header */}
-      <div className="sticky top-0 z-40 bg-[var(--bg-primary)]/90 backdrop-blur-md border-b border-[var(--border-subtle)]">
+      <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-[var(--border-subtle)]">
         <div className="max-w-lg mx-auto px-4 h-12 flex items-center">
           <button onClick={() => navigate(-1)} className="mr-3 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
             <ChevronLeft className="w-5 h-5" />
@@ -330,7 +341,10 @@ export default function Orders() {
           {tabs.map((t) => (
             <button
               key={t.key}
-              onClick={() => setActiveTab(t.key)}
+              onClick={() => {
+                setActiveTab(t.key)
+                setSearchParams(t.key === 'all' ? {} : { tab: t.key })
+              }}
               className={cn(
                 'text-sm font-medium whitespace-nowrap pb-1 transition-colors relative',
                 activeTab === t.key ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]',
@@ -396,17 +410,18 @@ export default function Orders() {
                 countdownText = '场次已开始'
               }
             }
+            const orderGameId = o.booking?.game?.id || o.booking?.gameId || o.booking?.game?.gameId
             return (
               <motion.div
                 key={o.id}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
-                className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4 cursor-pointer hover:border-[var(--accent-primary)]/40 transition-colors"
+                className="bg-white rounded-2xl border border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)] overflow-hidden cursor-pointer hover:border-[var(--accent-primary)]/40 transition-colors"
                 onClick={() => { setTicketOrder(o); setTicketOpen(true) }}
               >
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-[var(--text-primary)]">{o.venueName}</h3>
+                <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)]">
+                  <p className="text-xs font-medium text-[var(--text-secondary)]">{o.orderNo}</p>
                   <div className="flex items-center gap-2">
                     {countdownText && (
                       <span className={cn('text-[10px] font-medium flex items-center gap-0.5', isExpired ? 'text-[var(--error)]' : 'text-[var(--warning)]')}>
@@ -414,25 +429,42 @@ export default function Orders() {
                         {countdownText}
                       </span>
                     )}
-                    <span className={cn('text-xs font-medium', s.color)}>{s.label}</span>
+                    <span className={cn('px-2.5 py-1 rounded-full text-[10px] font-bold bg-[var(--bg-active)] inline-flex items-center gap-1', s.color)}>
+                      <Clock className="w-3 h-3" />
+                      {s.label}
+                    </span>
                   </div>
                 </div>
-                <p className="text-xs text-[var(--text-muted)] mb-1">{o.bookingTime}</p>
-                <p className="text-xs text-[var(--text-muted)] mb-2">
-                  {o.booking?.game?.title || 'VR体验'} · {o.booking?.personCount || 1}人
-                </p>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm font-bold text-[var(--error)]">¥{((o.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                    {o.couponDiscount > 0 && (
-                      <span className="text-xs text-[var(--success)]">-¥{(o.couponDiscount / 100).toFixed(2)}</span>
-                    )}
+                <div className="p-4">
+                  <div className="flex gap-3">
+                    <div className="w-20 h-20 rounded-xl bg-[var(--bg-elevated)] overflow-hidden shrink-0">
+                      <img
+                        src={getImageUrl(o.booking?.game?.coverImage || o.booking?.venue?.image || null)}
+                        alt={o.booking?.game?.title || 'VR体验'}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-base font-black text-[var(--text-primary)] truncate">{o.booking?.game?.title || 'VR体验'}</h3>
+                      <p className="text-xs text-[var(--text-secondary)] mt-1">{o.venueName}</p>
+                      <p className="text-xs text-[var(--text-secondary)] mt-1 flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />{o.bookingTime}
+                        <span className="mx-1">·</span>{o.booking?.personCount || 1}人
+                      </p>
+                      <div className="flex items-baseline gap-1.5 mt-2">
+                        <span className="text-sm text-[var(--text-secondary)]">共</span>
+                        <span className="text-base font-black text-[var(--accent-primary)]">¥{((o.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        {o.couponDiscount > 0 && (
+                          <span className="text-xs text-[var(--success)]">优惠 ¥{(o.couponDiscount / 100).toFixed(2)}</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-end gap-2 mt-4" onClick={(e) => e.stopPropagation()}>
                     {o.status === 'PENDING' && !isExpired && (
                       <button
                         onClick={() => navigate('/pay/' + o.id)}
-                        className="px-3 py-1 rounded-lg text-xs font-medium text-white bg-gradient-accent"
+                        className="px-4 py-2 rounded-full text-xs font-bold text-white bg-gradient-accent shadow-glow-sm"
                       >
                         去支付
                       </button>
@@ -441,15 +473,44 @@ export default function Orders() {
                       <button
                         onClick={() => setCancelId(o.id)}
                         disabled={cancelMutation.isPending}
-                        className="px-3 py-1 rounded-lg text-xs font-medium text-[var(--error)] border border-[var(--error)]/30 hover:bg-[var(--error)]/10 transition-colors disabled:opacity-50 flex items-center gap-1"
+                        className="px-4 py-2 rounded-full text-xs font-bold text-[var(--error)] border border-[var(--error)]/25 hover:bg-[var(--error)]/10 transition-colors disabled:opacity-50 flex items-center gap-1"
                       >
                         {cancelMutation.isPending && cancelId === o.id ? (
                           <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
                         ) : (
                           <XCircle className="w-3 h-3" />
                         )}
-                        取消订单
+                        {o.status === 'PENDING' ? '取消订单' : '取消预约'}
                       </button>
+                    )}
+                    {['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(o.status) && (
+                      <button
+                        onClick={() => { setTicketOrder(o); setTicketOpen(true) }}
+                        className="px-4 py-2 rounded-full text-xs font-bold text-[var(--accent-primary)] border border-[var(--accent-primary)]/25 hover:bg-[var(--accent-primary)]/10 transition-colors inline-flex items-center gap-1"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                        查看凭证
+                      </button>
+                    )}
+                    {o.status === 'COMPLETED' && (
+                      <>
+                        <button
+                          onClick={() => {
+                            if (orderGameId) navigate(getBookingTargetPath(orderGameId))
+                            else navigate('/venues')
+                          }}
+                          className="px-4 py-2 rounded-full text-xs font-bold text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-elevated)] transition-colors"
+                        >
+                          再次预约
+                        </button>
+                        <button
+                          onClick={() => toastSuccess('评价功能即将开放')}
+                          className="px-4 py-2 rounded-full text-xs font-bold text-amber-600 border border-amber-300 bg-amber-50 hover:bg-amber-100 transition-colors inline-flex items-center gap-1"
+                        >
+                          <Star className="w-3.5 h-3.5 fill-current" />
+                          评价
+                        </button>
+                      </>
                     )}
                     {canReschedule(o, lifecycleData) && (
                       <button
@@ -460,7 +521,7 @@ export default function Orders() {
                           setReschedulePayMethod('BALANCE')
                           setRescheduleOpen(true)
                         }}
-                        className="px-3 py-1 rounded-lg text-xs font-medium text-[var(--accent-primary)] border border-[var(--accent-primary)]/30 hover:bg-[var(--accent-primary)]/10 transition-colors"
+                        className="px-4 py-2 rounded-full text-xs font-bold text-[var(--accent-primary)] border border-[var(--accent-primary)]/25 hover:bg-[var(--accent-primary)]/10 transition-colors"
                       >
                         改签
                       </button>

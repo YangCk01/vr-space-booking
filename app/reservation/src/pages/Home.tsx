@@ -1,22 +1,56 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { Search, Gamepad2, Clock, Tag, MapPin, Bell, Images } from 'lucide-react'
+import { Search, Gamepad2, Clock, MapPin, Bell, Zap, Rocket, Ghost, Users, ChevronRight, LocateFixed, XCircle } from 'lucide-react'
 import { getGames } from '@/api/games'
+import { getVenues, type Venue } from '@/api/venues'
+import { getPagePublicSettings } from '@/api/settings'
 import { getImageUrl } from '@/lib/imageUrl'
+import { getBookingTargetPath, readSelectedVenue, saveSelectedVenue, type SelectedVenue } from '@/lib/selectedVenue'
 import { cn } from '@/lib/utils'
 import { getNotifications, getUnreadCount, markAllRead, clearAllNotifications } from '@/api/notifications'
+import LanguageSelect from '@/components/LanguageSelect'
+
+function getDistanceKm(
+  from: { latitude: number; longitude: number } | null,
+  venue: Venue
+) {
+  const latitude = Number((venue as any).latitude ?? (venue as any).lat)
+  const longitude = Number((venue as any).longitude ?? (venue as any).lng)
+  if (!from || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
+  const toRad = (value: number) => value * Math.PI / 180
+  const earthRadius = 6371
+  const dLat = toRad(latitude - from.latitude)
+  const dLng = toRad(longitude - from.longitude)
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(from.latitude)) * Math.cos(toRad(latitude)) * Math.sin(dLng / 2) ** 2
+  return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
 
 export default function Home() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [showNotify, setShowNotify] = useState(false)
+  const [venuePickerOpen, setVenuePickerOpen] = useState(false)
+  const [venueSearch, setVenueSearch] = useState('')
+  const [selectedVenue, setSelectedVenue] = useState<SelectedVenue | null>(() => readSelectedVenue())
+  const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null)
+  const [locationStatus, setLocationStatus] = useState('授权定位后，将优先推荐距离最近的门店。')
+  const bannerRef = useRef<HTMLDivElement>(null)
+  const notifyWrapRef = useRef<HTMLDivElement>(null)
+  const [activeBanner, setActiveBanner] = useState(0)
 
   const { data: games, isLoading } = useQuery({
     queryKey: ['games'],
     queryFn: () => getGames(),
+  })
+
+  const { data: pageSettings } = useQuery({
+    queryKey: ['page-public-settings'],
+    queryFn: getPagePublicSettings,
+    staleTime: 60000,
   })
 
   const { data: unreadCount = 0 } = useQuery({
@@ -56,6 +90,124 @@ export default function Home() {
     )
   })
 
+  const { data: venueData, isLoading: venueLoading } = useQuery({
+    queryKey: ['venues', 'picker'],
+    queryFn: () => getVenues({ status: 'FREE' }),
+    enabled: venuePickerOpen,
+  })
+
+  const gameBannerItems = (games || []).slice(0, 5)
+  const configuredBanners = (pageSettings?.cHomeBannerImages || []).map((b) => ({
+    id: b.id,
+    title: b.title || 'VR体验',
+    subtitle: b.subtitle,
+    coverImage: b.imageUrl,
+    linkUrl: b.linkUrl,
+    badge: b.badge,
+  }))
+  const bannerItems = configuredBanners.length > 0 ? configuredBanners : gameBannerItems
+  const featuredGame = filteredGames?.[0] || games?.[0]
+  const getBannerTitle = (game: { title?: string }) => {
+    return game.title || 'VR体验'
+  }
+  const customModules = (pageSettings?.cHomeCustomModules || []).filter((module) => module.enabled !== false)
+  const tagStylePool = [
+    { icon: Gamepad2, color: 'text-blue-500', bg: 'bg-blue-50' },
+    { icon: Rocket, color: 'text-violet-500', bg: 'bg-violet-50' },
+    { icon: Ghost, color: 'text-rose-500', bg: 'bg-rose-50' },
+    { icon: Users, color: 'text-emerald-500', bg: 'bg-emerald-50' },
+  ]
+  const categories = Array.from(
+    new Set((games || []).flatMap((game) => game.tags || []).filter(Boolean))
+  ).slice(0, 4).map((tag, index) => ({
+    label: tag,
+    keyword: tag,
+    ...tagStylePool[index % tagStylePool.length],
+  }))
+
+  const pickerVenues = useMemo(() => {
+    const keyword = venueSearch.trim().toLowerCase()
+    return ((venueData?.data || []) as Venue[])
+      .filter((venue) => {
+        if (!keyword) return true
+        return venue.name?.toLowerCase().includes(keyword)
+          || venue.theme?.toLowerCase().includes(keyword)
+          || venue.address?.toLowerCase().includes(keyword)
+      })
+      .map((venue) => ({ venue, distance: getDistanceKm(location, venue) }))
+      .sort((a, b) => {
+        if (a.distance == null && b.distance == null) return 0
+        if (a.distance == null) return 1
+        if (b.distance == null) return -1
+        return a.distance - b.distance
+      })
+  }, [venueData, venueSearch, location])
+
+  const handleLocate = () => {
+    if (!navigator.geolocation) {
+      setLocationStatus('当前环境暂不支持定位，后续小程序会接入手机定位接口。')
+      return
+    }
+    setLocationStatus('正在请求定位授权...')
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        })
+        setLocationStatus('已获取定位，门店列表已按距离优先排序。')
+      },
+      () => {
+        setLocationStatus('定位授权未开启，可手动选择门店；之后也可以重新授权。')
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+    )
+  }
+
+  const saveVenue = (venue: Venue) => {
+    setSelectedVenue(saveSelectedVenue(venue))
+    setVenuePickerOpen(false)
+  }
+
+  useEffect(() => {
+    if (!showNotify) return
+    const handler = (e: MouseEvent) => {
+      if (notifyWrapRef.current && !notifyWrapRef.current.contains(e.target as Node)) {
+        setShowNotify(false)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [showNotify])
+
+  useEffect(() => {
+    if (bannerItems.length <= 1) return
+    const id = window.setInterval(() => {
+      setActiveBanner((current) => {
+        const next = (current + 1) % bannerItems.length
+        const el = bannerRef.current
+        if (el) el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
+        return next
+      })
+    }, 3500)
+    return () => window.clearInterval(id)
+  }, [bannerItems.length])
+
+  const handleBannerScroll = () => {
+    const el = bannerRef.current
+    if (!el || el.clientWidth === 0) return
+    setActiveBanner(Math.round(el.scrollLeft / el.clientWidth))
+  }
+
+  const openConfiguredLink = (url?: string) => {
+    if (!url) return
+    if (url.startsWith('http') || url.startsWith('tel:')) {
+      window.location.href = url
+      return
+    }
+    navigate(url)
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -63,39 +215,45 @@ export default function Home() {
       exit={{ opacity: 0 }}
       className="pb-nav"
     >
-      {/* Header */}
-      <div className="sticky top-0 z-40 bg-[var(--bg-primary)]/90 backdrop-blur-md border-b border-[var(--border-subtle)]">
-        <div className="max-w-lg mx-auto px-4 pt-3 pb-3">
+      <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-[var(--border-subtle)]">
+        <div className="max-w-lg mx-auto px-4 pt-4 pb-3">
           <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-1 text-[var(--text-secondary)]">
-              <Gamepad2 className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span className="text-sm font-medium">游戏介绍</span>
-            </div>
+            <button
+              onClick={() => setVenuePickerOpen(true)}
+              className="flex items-center gap-1.5 text-[var(--text-primary)]"
+            >
+              <MapPin className="w-4 h-4 text-[var(--accent-primary)]" />
+              <span className="text-sm font-semibold">{selectedVenue?.name || '未定位'}</span>
+              <ChevronRight className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+            </button>
 
-            {/* Notification bell */}
-            <div className="relative">
-              <button
-                onClick={() => setShowNotify((v) => !v)}
-                className="relative p-1.5 text-[var(--text-secondary)] active:text-[var(--accent-primary)] transition-colors"
-              >
-                <Bell className="w-5 h-5" />
-                {unreadCount > 0 && (
-                  <span className="absolute top-0 right-0 min-w-[14px] h-[14px] px-0.5 bg-[#EF4444] text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                    {unreadCount > 99 ? '99+' : unreadCount}
-                  </span>
-                )}
-              </button>
+            <div className="flex items-center gap-2">
+              <LanguageSelect />
 
-              <AnimatePresence>
-                {showNotify && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -8, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -8, scale: 0.95 }}
-                    transition={{ duration: 0.15 }}
-                    className="absolute right-0 top-full mt-2 w-80 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl shadow-xl z-50 overflow-hidden"
-                    style={{ maxHeight: '70vh' }}
-                  >
+              {/* Notification bell */}
+              <div className="relative" ref={notifyWrapRef}>
+                <button
+                  onClick={() => setShowNotify((v) => !v)}
+                  className="relative w-9 h-9 rounded-full bg-[var(--bg-elevated)] text-[var(--accent-primary)] flex items-center justify-center active:scale-95 transition-all"
+                >
+                  <Bell className="w-4 h-4" />
+                  {unreadCount > 0 && (
+                    <span className="absolute top-0 right-0 min-w-[14px] h-[14px] px-0.5 bg-[#EF4444] text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                </button>
+
+                <AnimatePresence>
+                  {showNotify && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -8, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -8, scale: 0.95 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute right-0 top-full mt-2 w-80 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl shadow-xl z-50 overflow-hidden"
+                      style={{ maxHeight: '70vh' }}
+                    >
                     <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between">
                       <p className="text-sm text-[var(--text-primary)] font-semibold">消息通知</p>
                       <div className="flex items-center gap-3">
@@ -143,9 +301,10 @@ export default function Home() {
                         ))
                       )}
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
           </div>
 
@@ -155,15 +314,14 @@ export default function Home() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索游戏名称或标签"
-              className="w-full h-10 pl-9 pr-4 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors"
+              placeholder={pageSettings?.cHomeSearchPlaceholder || '搜索 VR 体验项目...'}
+              className="w-full h-10 pl-9 pr-4 rounded-full bg-[var(--bg-elevated)] border border-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)] focus:bg-white transition-colors"
             />
           </div>
         </div>
       </div>
 
-      {/* Game list */}
-      <div className="max-w-lg mx-auto px-4 pt-4 space-y-4">
+      <div className="max-w-lg mx-auto px-4 pt-4 space-y-5">
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <div className="w-6 h-6 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
@@ -174,91 +332,321 @@ export default function Home() {
             <p className="text-sm">暂无游戏内容</p>
           </div>
         ) : (
-          filteredGames?.map((game, i) => (
+          <>
+            {search.trim() === '' && pageSettings?.cHomeBannerEnabled !== false && (
+            <div className="relative">
+              <div
+                ref={bannerRef}
+                onScroll={handleBannerScroll}
+                className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide rounded-2xl shadow-[0_12px_28px_rgba(15,23,42,0.16)]"
+              >
+                {(bannerItems.length > 0 ? bannerItems : [featuredGame]).filter(Boolean).map((game: any) => (
+                  <div
+                    key={game!.id}
+                    onClick={() => { if (game.linkUrl) openConfiguredLink(game.linkUrl) }}
+                    className={cn("relative w-full h-[170px] shrink-0 snap-start overflow-hidden text-left", game.linkUrl && "cursor-pointer")}
+                  >
+                    <img
+                      src={game!.coverImage ? getImageUrl(game!.coverImage) : '/venue-cyber.jpg'}
+                      alt={game!.title || 'VR体验'}
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/35 to-transparent" />
+                    <div className="absolute left-5 top-8 right-5">
+                      <p className="text-xs font-semibold text-cyan-300 mb-2 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-300" />
+                        {game!.badge || pageSettings?.cHomeBannerBadge || '限时特惠'}
+                      </p>
+                      <h2 className="text-2xl font-black text-white leading-tight whitespace-pre-line">
+                        {getBannerTitle(game!)}
+                      </h2>
+                      <p className="text-xs text-white/85 mt-2">{game!.subtitle || pageSettings?.cHomeBannerSubtitle || '全场体验项目最高 30% OFF'}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {bannerItems.length > 1 && (
+                <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-1.5">
+                  {bannerItems.map((item, index) => (
+                    <span
+                      key={item.id}
+                      className={cn(
+                        'h-1.5 rounded-full transition-all',
+                        activeBanner === index ? 'w-5 bg-white' : 'w-1.5 bg-white/50'
+                      )}
+                    />
+                  ))}
+                </div>
+              )}
+              </div>
+              )}
+
+            {search.trim() === '' && pageSettings?.cHomeCategoryEnabled !== false && categories.length > 0 && (
+            <div className="bg-white rounded-2xl border border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)] p-4 grid grid-cols-4 gap-3">
+              {categories.map((item) => {
+                const Icon = item.icon
+                return (
+                  <button
+                    key={item.label}
+                    onClick={() => setSearch((current) => current === item.keyword ? '' : item.keyword)}
+                    className="flex flex-col items-center gap-2"
+                  >
+                    <span className={cn('w-12 h-12 rounded-2xl flex items-center justify-center', item.bg)}>
+                      <Icon className={cn('w-5 h-5', item.color)} />
+                    </span>
+                    <span className="text-xs font-medium text-[var(--text-primary)]">{item.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+            )}
+
+            {search.trim() === '' && pageSettings?.cHomeVipEnabled !== false && (
+              <button
+                onClick={() => navigate('/recharge')}
+                className="w-full rounded-2xl bg-gradient-accent px-4 py-4 text-left text-white shadow-glow flex items-center justify-between"
+              >
+                <div className="flex items-start gap-2">
+                  <Zap className="w-4 h-4 text-yellow-300 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-bold">{pageSettings?.cHomeVipTitle || 'VIP 专属权益'}</p>
+                    <p className="text-xs text-white/85 mt-0.5">{pageSettings?.cHomeVipDesc || '开通会员，享受每月免费体验名额'}</p>
+                  </div>
+                </div>
+                <span className="px-4 py-2 rounded-full bg-white text-[var(--accent-primary)] text-xs font-bold">
+                  {pageSettings?.cHomeVipButton || '立即开通'}
+                </span>
+              </button>
+            )}
+
+            {search.trim() === '' && customModules.length > 0 && (
+              <div className="space-y-3">
+                {customModules.map((module) => (
+                  <div
+                    key={module.id}
+                    className="bg-white rounded-2xl border border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)] overflow-hidden"
+                  >
+                    {module.videoUrl ? (
+                      <div className="w-full aspect-video bg-black">
+                        <video
+                          src={getImageUrl(module.videoUrl)}
+                          controls
+                          autoPlay
+                          muted
+                          loop
+                          playsInline
+                          preload="metadata"
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+                    ) : module.imageUrl ? (
+                      <img src={getImageUrl(module.imageUrl)} alt={module.title || '活动图片'} className="w-full h-36 object-cover" />
+                    ) : null}
+                    <div className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          {module.title?.trim() && (
+                            <h3 className="text-sm font-black text-[var(--text-primary)]">{module.title}</h3>
+                          )}
+                          {module.content?.trim() && (
+                            <p className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed line-clamp-3">{module.content}</p>
+                          )}
+                        </div>
+                      </div>
+                      {module.linkUrl && (
+                        <button
+                          onClick={() => {
+                            if (module.linkUrl.startsWith('http')) window.open(module.linkUrl, '_blank')
+                            else navigate(module.linkUrl)
+                          }}
+                          className="mt-3 px-3 py-1.5 rounded-full bg-[var(--bg-active)] text-[var(--accent-primary)] text-xs font-bold"
+                        >
+                          {module.buttonText || '查看详情'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {search.trim() === '' && (
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-black text-[var(--text-primary)] border-l-4 border-[var(--accent-primary)] pl-2">
+                {pageSettings?.cHomeHotTitle || '热门体验'}
+              </h2>
+              <button onClick={() => navigate('/venues')} className="text-xs text-[var(--text-muted)] flex items-center">
+                {pageSettings?.cHomeHotLinkText || '查看全部'} <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            )}
+
+            {search.trim() !== '' && (
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-black text-[var(--text-primary)] border-l-4 border-[var(--accent-primary)] pl-2">
+                搜索结果
+              </h2>
+              <span className="text-xs text-[var(--text-muted)]">
+                共 {filteredGames?.length || 0} 个
+              </span>
+            </div>
+            )}
+
+            <div className="space-y-3">
+              {filteredGames?.map((game, i) => (
             <motion.div
               key={game.id}
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.08, duration: 0.4 }}
-              className="bg-[var(--bg-card)] rounded-2xl border border-[var(--border-subtle)] overflow-hidden"
+              transition={{ delay: i * 0.06, duration: 0.35 }}
+              onClick={() => navigate(`/game/${game.id}`)}
+              className="bg-white rounded-2xl border border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)] p-3 flex gap-3 cursor-pointer active:scale-[0.99] transition-transform"
             >
-              {/* Cover Image - 4:3 landscape */}
-              <div className="relative w-full aspect-[4/3]">
+              <div className="relative w-[92px] h-[92px] rounded-xl overflow-hidden shrink-0 bg-[var(--bg-elevated)]">
                 <img
                   src={game.coverImage ? getImageUrl(game.coverImage) : '/venue-cyber.jpg'}
                   alt={game.title}
                   className="w-full h-full object-cover"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-[var(--bg-card)] via-transparent to-transparent" />
-                {/* Price badge */}
-                <div className="absolute top-3 right-3 px-3 py-1 rounded-full bg-black/40 backdrop-blur-sm text-white text-xs font-semibold">
-                  ¥{(game.price / 100).toFixed(0)}/人
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="text-base font-black text-[var(--text-primary)] truncate">{game.title}</h3>
+                  <span className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--bg-elevated)] text-[10px] text-[var(--text-secondary)]">
+                    <Clock className="w-3 h-3" />{game.duration}分钟
+                  </span>
+                </div>
+                <p className="text-xs text-[var(--text-secondary)] mt-1 line-clamp-2 leading-relaxed">
+                  {game.subtitle || game.description || '沉浸式 VR 大空间体验'}
+                </p>
+                <div className="flex items-end justify-between mt-3">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-lg font-black text-[var(--accent-primary)]">¥{(game.price / 100).toFixed(0)}</span>
+                    <span className="text-xs text-[var(--text-disabled)] line-through">¥{Math.round((game.price / 100) * 1.35)}</span>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      navigate(getBookingTargetPath(game.id))
+                    }}
+                    className="px-3 py-1.5 rounded-full bg-[var(--bg-active)] text-[var(--accent-primary)] text-xs font-bold"
+                  >
+                    预约
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {venuePickerOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center"
+            onClick={() => setVenuePickerOpen(false)}
+          >
+            <motion.div
+              initial={{ y: 80, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 80, opacity: 0 }}
+              transition={{ type: 'spring', damping: 24, stiffness: 260 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-lg bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-[var(--border-subtle)] overflow-hidden"
+            >
+              <div className="px-5 pt-5 pb-4 border-b border-[var(--border-subtle)]">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-black text-[var(--text-primary)]">选择门店</h3>
+                    <p className="text-xs text-[var(--text-secondary)] mt-1">选择后会自动保存，下次打开直接使用。</p>
+                  </div>
+                  <button
+                    onClick={() => setVenuePickerOpen(false)}
+                    className="w-8 h-8 rounded-full bg-[var(--bg-elevated)] text-[var(--text-muted)] flex items-center justify-center"
+                  >
+                    <XCircle className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="mt-4 rounded-2xl bg-[var(--bg-elevated)] p-3">
+                  <div className="flex items-start gap-2">
+                    <LocateFixed className="w-4 h-4 text-[var(--accent-primary)] mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">获取当前位置</p>
+                      <p className="text-xs text-[var(--text-secondary)] mt-1">{locationStatus}</p>
+                    </div>
+                    <button
+                      onClick={handleLocate}
+                      className="shrink-0 px-3 py-1.5 rounded-full bg-gradient-accent text-white text-xs font-bold"
+                    >
+                      授权定位
+                    </button>
+                  </div>
+                </div>
+
+                <div className="relative mt-4">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
+                  <input
+                    value={venueSearch}
+                    onChange={(e) => setVenueSearch(e.target.value)}
+                    placeholder="搜索门店名称或地址"
+                    className="w-full h-10 pl-9 pr-4 rounded-full bg-[var(--bg-elevated)] border border-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)] focus:bg-white"
+                  />
                 </div>
               </div>
 
-              {/* Content */}
-              <div className="px-4 pb-4 -mt-6 relative z-10">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-lg font-bold text-[var(--text-primary)]">{game.title}</h3>
-                    {game.subtitle && (
-                      <p className="text-sm text-[var(--text-secondary)] mt-0.5">{game.subtitle}</p>
-                    )}
+              <div className="max-h-[48vh] overflow-y-auto p-4 space-y-3">
+                {venueLoading ? (
+                  <div className="flex justify-center py-10">
+                    <div className="w-6 h-6 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => navigate(`/game/${game.id}`)}
-                      className="shrink-0 h-9 px-3 rounded-xl border border-[var(--accent-primary)]/30 text-[var(--accent-primary)] text-sm font-medium hover:bg-[var(--accent-primary)]/10 active:scale-[0.97] transition-all flex items-center gap-1"
-                    >
-                      <Images className="w-3.5 h-3.5" />
-                      介绍
-                    </button>
-                    <button
-                      onClick={() => navigate(`/venues?gameId=${game.id}`)}
-                      className="shrink-0 h-9 px-4 rounded-xl bg-gradient-accent text-white text-sm font-semibold shadow-glow hover:shadow-glow-sm active:scale-[0.97] transition-all"
-                    >
-                      预约
-                    </button>
-                  </div>
-                </div>
-
-                {/* Meta */}
-                <div className="flex items-center gap-4 mt-2 text-xs text-[var(--text-muted)]">
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5" />
-                    {game.duration}分钟
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5" />
-                    VR大空间体验
-                  </span>
-                </div>
-
-                {/* Description */}
-                {game.description && (
-                  <p className="text-sm text-[var(--text-secondary)] mt-2 line-clamp-2 leading-relaxed">
-                    {game.description}
-                  </p>
-                )}
-
-                {/* Tags */}
-                {game.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-3">
-                    {game.tags.map((tag, idx) => (
-                      <span
-                        key={idx}
-                        className="px-2.5 py-1 rounded-lg bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] text-xs font-medium"
+                ) : pickerVenues.length === 0 ? (
+                  <div className="py-10 text-center text-sm text-[var(--text-muted)]">暂无可选门店</div>
+                ) : (
+                  pickerVenues.map(({ venue, distance }) => {
+                    const active = selectedVenue?.id === venue.id
+                    return (
+                      <button
+                        key={venue.id}
+                        onClick={() => saveVenue(venue)}
+                        className={cn(
+                          'w-full p-4 rounded-2xl border text-left transition-colors',
+                          active
+                            ? 'bg-[var(--bg-active)] border-[var(--accent-primary)]/40'
+                            : 'bg-white border-[var(--border-subtle)] hover:border-[var(--accent-primary)]/30'
+                        )}
                       >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-black text-[var(--text-primary)]">{venue.name}</p>
+                            <p className="text-xs text-[var(--text-secondary)] mt-1 line-clamp-1">
+                              {venue.address || venue.theme || '暂无门店地址'}
+                            </p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            {distance != null ? (
+                              <p className="text-xs font-bold text-[var(--accent-primary)]">{distance.toFixed(1)}km</p>
+                            ) : (
+                              <p className="text-xs font-bold text-[var(--success)]">{active ? '当前' : '可选'}</p>
+                            )}
+                            {distance != null && active && <p className="text-[10px] text-[var(--success)] mt-1">当前门店</p>}
+                          </div>
+                        </div>
+                      </button>
+                    )
+                  })
                 )}
               </div>
             </motion.div>
-          ))
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
 
 
     </motion.div>

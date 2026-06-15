@@ -25,6 +25,7 @@ import { getVenues } from '@/api/venues'
 import type { Venue } from '@/api/venues'
 import { getBookings } from '@/api/bookings'
 import type { Booking } from '@/api/bookings'
+import { getSettings } from '@/api/settings'
 import { cn } from '@/lib/utils'
 import { getImageUrl } from '@/lib/imageUrl'
 
@@ -43,6 +44,12 @@ const itemVariants = {
     opacity: 1, y: 0,
     transition: { duration: 0.4, ease: [0, 0, 0.2, 1] as [number, number, number, number] },
   },
+}
+
+function readSetting<T>(settings: Record<string, any> | undefined, key: string, fallback: T): T {
+  const raw = settings?.[key]
+  const value = raw && typeof raw === 'object' && 'value' in raw ? raw.value : raw
+  return (value ?? fallback) as T
 }
 
 /* ─── Status badge component ─── */
@@ -149,10 +156,8 @@ function VerticalStatusTag({ status }: { status: string }) {
   }
   const c = config[status] || config.open
   return (
-    <div className={cn('flex flex-col items-center justify-center rounded-full px-1.5 py-2 gap-0.5', c.bg)}>
-      {c.label.split('').map((char, i) => (
-        <span key={i} className={cn('text-xs font-medium leading-tight', c.text)}>{char}</span>
-      ))}
+    <div className={cn('flex items-center justify-center rounded-full px-2 py-1.5', c.bg)}>
+      <span className={cn('text-xs font-medium leading-tight', c.text)}>{c.label}</span>
     </div>
   )
 }
@@ -218,7 +223,7 @@ function VenueCard({ venue, index }: { venue: any; index: number }) {
 }
 
 /* ─── Schedule Timeline ─── */
-function ScheduleTimeline({ venues, bookings }: { venues: Venue[]; bookings: Booking[] }) {
+function ScheduleTimeline({ venues, bookings, title = '今日排场' }: { venues: Venue[]; bookings: Booking[]; title?: string }) {
   const slotHeight = 72
   const { startHour, endHour, totalHours, timeSlots } = useMemo(() => {
     const allOpen = venues.map((v) => v.openTime ? parseInt(v.openTime.split(':')[0]) : 9)
@@ -301,7 +306,7 @@ function ScheduleTimeline({ venues, bookings }: { venues: Venue[]; bookings: Boo
       variants={itemVariants}
       className="bg-vrbg-card rounded-xl border border-vrborder-subtle p-5"
     >
-      <h3 className="text-vr-h3 text-vrtext-primary mb-4">今日排场</h3>
+      <h3 className="text-vr-h3 text-vrtext-primary mb-4">{title}</h3>
 
       {bookings.length === 0 ? (
         <div className="text-center py-16 text-vr-caption text-vrtext-muted">
@@ -500,7 +505,7 @@ function OrderChart({ chartData, period, onPeriodChange }: { chartData: any[]; p
 }
 
 /* ─── Latest Orders ─── */
-function LatestOrders({ orders }: { orders: any[] }) {
+function LatestOrders({ orders, title = '最新订单' }: { orders: any[]; title?: string }) {
   const displayOrders = orders
   const navigate = useNavigate()
 
@@ -539,7 +544,7 @@ function LatestOrders({ orders }: { orders: any[] }) {
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-vr-h3 text-vrtext-primary">最新订单</h3>
+        <h3 className="text-vr-h3 text-vrtext-primary">{title}</h3>
         <Link
           to="/orders"
           className="flex items-center gap-1 text-vr-body-sm text-vraccent-primary hover:underline transition-colors"
@@ -649,6 +654,12 @@ export default function Home() {
     queryFn: () => getDashboard(dashRange),
   })
 
+  const { data: pageSettings } = useQuery({
+    queryKey: ['settings', 'home-page'],
+    queryFn: () => getSettings('page'),
+    staleTime: 60000,
+  })
+
   const [revenuePeriod, setRevenuePeriod] = useState<'7d' | '30d'>('7d')
   const { data: revenueData } = useQuery({
     queryKey: ['revenue', revenuePeriod],
@@ -662,6 +673,19 @@ export default function Home() {
 
   const stats = dashboardData?.stats
   const latestOrders = dashboardData?.latestOrders || []
+  const bHomeNoticeEnabled = readSetting(pageSettings, 'b_home_notice_enabled', true)
+  const bHomeNoticeTitle = readSetting(pageSettings, 'b_home_notice_title', '今日运营提醒')
+  const bHomeNoticeContent = readSetting(pageSettings, 'b_home_notice_content', '重点关注待核销订单、设备状态与退款审批，异常请及时处理。')
+  const bHomeNoticeLevel = readSetting<'info' | 'success' | 'warning'>(pageSettings, 'b_home_notice_level', 'info')
+  const bHomeStatsTitle = readSetting(pageSettings, 'b_home_stats_title', '核心指标')
+  const bHomeMetricNote = readSetting(pageSettings, 'b_home_metric_note', '营业额按付款时间统计 · 预约/核销按到场日期统计')
+  const bHomeScheduleTitle = readSetting(pageSettings, 'b_home_schedule_title', '今日排场')
+  const bHomeOrdersTitle = readSetting(pageSettings, 'b_home_orders_title', '最新订单')
+  const noticeClass = {
+    info: 'border-vraccent-primary/30 bg-vraccent-primary/10 text-vraccent-primary',
+    success: 'border-vrsuccess/30 bg-vrsuccess/10 text-vrsuccess',
+    warning: 'border-vrwarning/40 bg-vrwarning/10 text-vrwarning',
+  }[bHomeNoticeLevel]
 
   // 今日日期
   const today = new Date().toISOString().split('T')[0]
@@ -730,9 +754,16 @@ export default function Home() {
         animate="visible"
         className="space-y-6"
       >
+        {bHomeNoticeEnabled && (
+          <motion.div variants={itemVariants} className={cn('rounded-xl border p-4', noticeClass)}>
+            <p className="text-vr-body-sm font-semibold">{bHomeNoticeTitle}</p>
+            <p className="text-vr-body-sm text-vrtext-secondary mt-1">{bHomeNoticeContent}</p>
+          </motion.div>
+        )}
+
         {/* Section 2: Stats cards */}
         <div className="flex items-center justify-between">
-          <p className="text-vr-body-sm text-vrtext-secondary font-medium">核心指标</p>
+          <p className="text-vr-body-sm text-vrtext-secondary font-medium">{bHomeStatsTitle}</p>
           <div className="flex items-center gap-1 bg-vrbg-card border border-vrborder-subtle rounded-lg p-0.5">
             {([
               { key: 'today', label: '今日' },
@@ -760,7 +791,7 @@ export default function Home() {
           ))}
         </div>
         <p className="text-vr-caption text-vrtext-muted text-center">
-          营业额按付款时间统计 · 预约/核销按到场日期统计
+          {bHomeMetricNote}
         </p>
 
         {/* Section 3: Venue cards + Order chart */}
@@ -774,10 +805,10 @@ export default function Home() {
         </div>
 
         {/* Section 4: Schedule timeline */}
-        <ScheduleTimeline venues={venues} bookings={todayBookings} />
+        <ScheduleTimeline venues={venues} bookings={todayBookings} title={bHomeScheduleTitle} />
 
         {/* Section 4: Latest orders */}
-        <LatestOrders orders={latestOrders} />
+        <LatestOrders orders={latestOrders} title={bHomeOrdersTitle} />
       </motion.div>
     </Layout>
   )

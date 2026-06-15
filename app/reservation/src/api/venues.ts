@@ -14,6 +14,9 @@ export interface Venue {
   phone: string | null
   openTime: string | null
   closeTime: string | null
+  qrCode: string | null
+  serviceQr: string | null
+  mapLinks: any | null
   maintenanceStartDate: string | null
   maintenanceEndDate: string | null
   maintenanceStartTime: string | null

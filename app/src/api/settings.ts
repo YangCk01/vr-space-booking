@@ -10,6 +10,11 @@ export async function getSetting(key: string) {
   return res.data.data
 }
 
+export async function getPagePublicSettings() {
+  const res = await apiClient.get('/settings/page-public')
+  return res.data.data
+}
+
 export async function saveSetting(key: string, value: any, category?: string) {
   const res = await apiClient.post('/settings', { key, value, category })
   return res.data.data

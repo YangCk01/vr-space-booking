@@ -138,7 +138,21 @@ export async function list(req: AuthenticatedRequest, res: Response) {
         orderBy: { createdAt: 'desc' },
         include: {
           user: { select: { id: true, name: true, phone: true } },
-          booking: { include: { game: { select: { id: true, title: true } } } },
+          booking: {
+            include: {
+              venue: { select: { image: true } },
+              game: {
+                select: {
+                  id: true,
+                  title: true,
+                  subtitle: true,
+                  coverImage: true,
+                  price: true,
+                  duration: true,
+                },
+              },
+            },
+          },
           userCoupon: { select: { name: true, type: true, discountRate: true, source: true, giftReason: true, giftRemark: true } },
         },
       }),
@@ -423,7 +437,8 @@ export async function create(req: AuthenticatedRequest, res: Response) {
       await pushAdminNotification(
         'ADMIN_NEW_ORDER',
         '新订单已支付',
-        `${result.user?.name || '用户'} 在 ${finalVenueName} 消费 ¥${(result.amount / 100).toFixed(2)}，订单号 ${result.orderNo}`
+        `${result.user?.name || '用户'} 在 ${finalVenueName} 消费 ¥${(result.amount / 100).toFixed(2)}，订单号 ${result.orderNo}`,
+        'USER'
       )
 
       return success(res, result, '支付成功', 201)
@@ -1026,7 +1041,8 @@ export async function executeOrderRefund(input: {
   await pushAdminNotification(
     'ADMIN_REFUND_REQUEST',
     '订单已退款',
-    `订单 ${order.orderNo} 已退款 ¥${(actualRefund / 100).toFixed(2)}，场地：${order.venueName}`
+    `订单 ${order.orderNo} 已退款 ¥${(actualRefund / 100).toFixed(2)}，场地：${order.venueName}`,
+        'USER'
   )
 
   const beforeValue = { status: order.status, amount: order.amount, refundAmount: order.refundAmount }
