@@ -8,13 +8,13 @@ import {
   ChevronUp,
   Trash2,
   Save,
-  Check,
   RotateCcw,
-  X,
   Lock,
   Pencil,
+  AlertTriangle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/authStore'
 import {
   Dialog,
   DialogContent,
@@ -35,15 +35,41 @@ import {
 import { getRoles, getPermissions, createRole, updateRole, updateRolePermissions, deleteRole } from '@/api/role'
 import type { Role, Permission } from '@/api/role'
 
+const roleLabels: Record<string, string> = {
+  SUPER_ADMIN: '超级管理员',
+  ADMIN: '管理员',
+  MANAGER: '店长',
+  OPERATOR: '运营',
+  FINANCE: '财务',
+}
+
+const moduleLabels: Record<string, string> = {
+  approval: '审批',
+  audit: '审计',
+  finance: '财务',
+  marketing: '营销',
+  order: '订单',
+  setting: '系统设置',
+  user: '会员与用户',
+  venue: '场地与内容',
+}
+
+const highRiskPermissionCodes = new Set([
+  'setting:write',
+  'finance:adjust',
+  'approval:approve',
+  'audit:read',
+  'user:edit',
+  'user:gift',
+])
+
 function PermissionMatrix({
-  role,
   allPermissions,
   selectedIds,
   onToggle,
   onToggleAll,
   readOnly,
 }: {
-  role: Role
   allPermissions: Permission[]
   selectedIds: string[]
   onToggle: (id: string) => void
@@ -68,10 +94,16 @@ function PermissionMatrix({
           <div key={module} className="border border-vrborder-subtle rounded-lg overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2.5 bg-vrbg-elevated/50 border-b border-vrborder-subtle">
               <div className="flex items-center gap-2">
-                <span className="text-vr-body-sm text-vrtext-primary font-medium">{module}</span>
+                <span className="text-vr-body-sm text-vrtext-primary font-medium">{moduleLabels[module] || module}</span>
                 <span className="text-vr-caption text-vrtext-tertiary">({perms.length} 项权限)</span>
+                <span className="text-[11px] text-vrtext-muted">{module}</span>
               </div>
-              {!readOnly && (
+              {readOnly ? (
+                <span className="inline-flex items-center gap-1 text-vr-caption text-vrtext-tertiary">
+                  <Lock className="w-3 h-3" />
+                  只读
+                </span>
+              ) : (
                 <label className="flex items-center gap-1.5 text-vr-caption text-vrtext-secondary cursor-pointer hover:text-vrtext-primary transition-colors">
                   <input
                     type="checkbox"
@@ -85,31 +117,40 @@ function PermissionMatrix({
               )}
             </div>
             <div className="p-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-              {perms.map((p) => (
-                <label
-                  key={p.id}
-                  className={cn(
-                    'flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors cursor-pointer',
-                    selectedIds.includes(p.id)
-                      ? 'bg-vraccent-primary/10 border-vraccent-primary/30'
-                      : 'bg-vrbg-surface border-vrborder-subtle hover:border-vrborder-hover'
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.includes(p.id)}
-                    onChange={() => onToggle(p.id)}
-                    disabled={readOnly}
-                    className="w-4 h-4 rounded border-vrborder-subtle text-vraccent-primary focus:ring-vraccent-primary focus:ring-offset-0 bg-vrbg-elevated cursor-pointer disabled:cursor-not-allowed"
-                  />
-                  <span className={cn(
-                    'text-vr-body-sm',
-                    selectedIds.includes(p.id) ? 'text-vrtext-primary' : 'text-vrtext-secondary'
-                  )}>
-                    {p.name}
-                  </span>
-                </label>
-              ))}
+              {perms.map((p) => {
+                const selected = selectedIds.includes(p.id)
+                const highRisk = highRiskPermissionCodes.has(p.code)
+                return (
+                  <label
+                    key={p.id}
+                    className={cn(
+                      'flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors',
+                      readOnly ? 'cursor-not-allowed opacity-75' : 'cursor-pointer',
+                      selected
+                        ? 'bg-vraccent-primary/10 border-vraccent-primary/30'
+                        : cn('bg-vrbg-surface border-vrborder-subtle', !readOnly && 'hover:border-vrborder-hover')
+                    )}
+                    title={readOnly ? '当前角色不可编辑' : p.code}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => !readOnly && onToggle(p.id)}
+                      disabled={readOnly}
+                      className="w-4 h-4 rounded border-vrborder-subtle text-vraccent-primary focus:ring-vraccent-primary focus:ring-offset-0 bg-vrbg-elevated cursor-pointer disabled:cursor-not-allowed"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className={cn('block text-vr-body-sm', selected ? 'text-vrtext-primary' : 'text-vrtext-secondary')}>
+                        {p.name}
+                      </span>
+                      <span className="block text-[11px] text-vrtext-muted truncate">{p.code}</span>
+                    </span>
+                    {highRisk && !readOnly && (
+                      <span className="shrink-0 rounded bg-vrwarning/15 px-1.5 py-0.5 text-[11px] text-vrwarning">高风险</span>
+                    )}
+                  </label>
+                )
+              })}
             </div>
           </div>
         )
@@ -120,6 +161,7 @@ function PermissionMatrix({
 
 export function RolePermissionPanel() {
   const queryClient = useQueryClient()
+  const currentUser = useAuthStore((s) => s.user)
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [deleteRoleId, setDeleteRoleId] = useState<string | null>(null)
@@ -128,16 +170,28 @@ export function RolePermissionPanel() {
   const [editPerms, setEditPerms] = useState<Record<string, string[]>>({})
   const [editRoleOpen, setEditRoleOpen] = useState(false)
   const [editRoleForm, setEditRoleForm] = useState<{ id: string; name: string; description: string } | null>(null)
+  const canViewRoles = Boolean(currentUser && ['SUPER_ADMIN', 'ADMIN'].includes(currentUser.role))
+  const canManageRoles = Boolean(
+    currentUser?.role === 'SUPER_ADMIN' ||
+    (currentUser?.role === 'ADMIN' && currentUser.permissions?.includes('setting:write'))
+  )
 
   const { data: roles, isLoading } = useQuery({
     queryKey: ['roles'],
     queryFn: () => getRoles(),
+    enabled: canViewRoles,
   })
 
   const { data: allPermissions } = useQuery({
     queryKey: ['permissions'],
     queryFn: () => getPermissions(),
+    enabled: canViewRoles,
   })
+
+  const selectedCreateHighRisk = useMemo(() => {
+    if (!allPermissions) return []
+    return allPermissions.filter((p) => createPerms.includes(p.id) && highRiskPermissionCodes.has(p.code))
+  }, [allPermissions, createPerms])
 
   const createMutation = useMutation({
     mutationFn: (data: { name: string; description: string; permissionIds?: string[] }) => createRole(data),
@@ -187,6 +241,7 @@ export function RolePermissionPanel() {
   })
 
   const handleTogglePerm = (roleId: string, permId: string) => {
+    if (!canManageRoles) return
     setEditPerms((prev) => {
       const current = prev[roleId] || []
       const next = current.includes(permId)
@@ -197,6 +252,7 @@ export function RolePermissionPanel() {
   }
 
   const handleToggleAll = (roleId: string, module: string, perms: Permission[]) => {
+    if (!canManageRoles) return
     setEditPerms((prev) => {
       const current = prev[roleId] || []
       const moduleIds = perms.map((p) => p.id)
@@ -221,6 +277,10 @@ export function RolePermissionPanel() {
   }
 
   const handleSavePerms = (roleId: string) => {
+    if (!canManageRoles) {
+      alert('当前账号没有权限修改角色权限')
+      return
+    }
     const permissionIds = editPerms[roleId] || []
     updatePermsMutation.mutate({ roleId, permissionIds })
   }
@@ -242,16 +302,37 @@ export function RolePermissionPanel() {
             <p className="text-vr-body-sm text-vrtext-tertiary mt-1">配置系统角色及其功能权限</p>
           </div>
           <button
-            onClick={() => setCreateOpen(true)}
-            className="inline-flex items-center gap-2 h-10 px-5 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary-hover transition-colors"
+            onClick={() => canManageRoles && setCreateOpen(true)}
+            disabled={!canManageRoles}
+            title={canManageRoles ? '新增自定义角色' : '当前账号没有角色管理权限'}
+            className={cn(
+              'inline-flex items-center gap-2 h-10 px-5 rounded-lg text-vr-body-sm font-medium transition-colors',
+              canManageRoles
+                ? 'bg-vraccent-primary text-white hover:bg-vraccent-primary-hover'
+                : 'bg-vrbg-elevated text-vrtext-muted cursor-not-allowed'
+            )}
           >
             <Plus className="w-4 h-4" />
             新增角色
           </button>
         </div>
 
+        {!canViewRoles && (
+          <div className="rounded-lg border border-vrwarning/30 bg-vrwarning/10 px-4 py-3 text-vr-body-sm text-vrtext-secondary">
+            当前账号无权查看角色权限配置。如需查看或调整角色，请使用管理员账号登录。
+          </div>
+        )}
+
+        <div className="rounded-lg border border-vrborder-subtle bg-vrbg-card px-4 py-3 text-vr-body-sm text-vrtext-secondary">
+          {!canViewRoles
+            ? '角色权限配置仅对管理员开放。'
+            : canManageRoles
+            ? '系统内置角色由系统维护，不能直接修改；如需差异化授权，请新增自定义角色。包含系统设置、财务调整、审批处理等权限时会标记为高风险。'
+            : '当前账号仅可查看角色权限配置，不能新增、编辑、删除角色或调整权限。'}
+        </div>
+
         {/* Role Cards */}
-        {isLoading ? (
+        {!canViewRoles ? null : isLoading ? (
           <div className="flex items-center justify-center py-20">
             <RotateCcw className="w-5 h-5 animate-spin text-vrtext-muted" />
             <span className="text-vr-body text-vrtext-muted ml-2">加载中...</span>
@@ -284,7 +365,12 @@ export function RolePermissionPanel() {
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <h3 className="text-vr-body text-vrtext-primary font-semibold">{role.name}</h3>
+                          <h3 className="text-vr-body text-vrtext-primary font-semibold">
+                            {roleLabels[role.name] || role.name}
+                          </h3>
+                          {roleLabels[role.name] && (
+                            <span className="text-[11px] text-vrtext-muted">{role.name}</span>
+                          )}
                           {role.isSystem && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-vrwarning/15 text-vrwarning">
                               <Lock className="w-3 h-3 mr-1" />
@@ -298,7 +384,7 @@ export function RolePermissionPanel() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      {!role.isSystem && (
+                      {canManageRoles && !role.isSystem && (
                         <>
                           <button
                             onClick={(e) => {
@@ -342,7 +428,6 @@ export function RolePermissionPanel() {
                       >
                         <div className="p-5 space-y-4">
                           <PermissionMatrix
-                            role={role}
                             allPermissions={allPermissions}
                             selectedIds={editPerms[role.id] || role.permissions.map((p) => p.id)}
                             onToggle={(permId) => handleTogglePerm(role.id, permId)}
@@ -350,9 +435,9 @@ export function RolePermissionPanel() {
                               const perms = allPermissions.filter((p) => p.module === module)
                               handleToggleAll(role.id, module, perms)
                             }}
-                            readOnly={role.isSystem}
+                            readOnly={role.isSystem || !canManageRoles}
                           />
-                          {hasChanges && !role.isSystem && (
+                          {hasChanges && canManageRoles && !role.isSystem && (
                             <div className="flex justify-end gap-3 pt-2">
                               <button
                                 onClick={() =>
@@ -428,7 +513,6 @@ export function RolePermissionPanel() {
               <div>
                 <label className="block text-vr-caption text-vrtext-secondary mb-2">权限配置</label>
                 <PermissionMatrix
-                  role={{ id: 'new', name: newRoleForm.name || '新角色', description: '', isSystem: false, permissions: [], createdAt: '' }}
                   allPermissions={allPermissions}
                   selectedIds={createPerms}
                   onToggle={(id) => {
@@ -444,6 +528,17 @@ export function RolePermissionPanel() {
                     )
                   }}
                 />
+                {selectedCreateHighRisk.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-vrwarning/30 bg-vrwarning/10 px-3 py-2 text-vr-caption text-vrwarning">
+                    <div className="flex items-center gap-2 font-medium">
+                      <AlertTriangle className="w-4 h-4" />
+                      已选择 {selectedCreateHighRisk.length} 项高风险权限
+                    </div>
+                    <p className="mt-1 text-vrtext-secondary">
+                      建议仅授予可信角色，并保留审批、财务、系统设置类权限的最小范围。
+                    </p>
+                  </div>
+                )}
               </div>
             )}
             <div className="flex justify-end gap-3 pt-2">
@@ -455,6 +550,10 @@ export function RolePermissionPanel() {
               </button>
               <button
                 onClick={() => {
+                  if (!canManageRoles) {
+                    alert('当前账号没有权限新增角色')
+                    return
+                  }
                   if (!newRoleForm.name.trim()) {
                     alert('请输入角色名称')
                     return
@@ -523,6 +622,10 @@ export function RolePermissionPanel() {
               </button>
               <button
                 onClick={() => {
+                  if (!canManageRoles) {
+                    alert('当前账号没有权限编辑角色')
+                    return
+                  }
                   if (!editRoleForm?.name.trim()) {
                     alert('请输入角色名称')
                     return
@@ -568,7 +671,13 @@ export function RolePermissionPanel() {
               取消
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => deleteRoleId && deleteMutation.mutate(deleteRoleId)}
+              onClick={() => {
+                if (!canManageRoles) {
+                  alert('当前账号没有权限删除角色')
+                  return
+                }
+                deleteRoleId && deleteMutation.mutate(deleteRoleId)
+              }}
               disabled={deleteMutation.isPending}
               className="h-9 px-5 rounded-lg bg-vrerror text-white text-vr-body-sm font-medium hover:bg-vrerror/90 transition-colors"
             >

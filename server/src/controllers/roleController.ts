@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../types'
 import { body, validationResult } from 'express-validator'
 import { prisma } from '../utils/prisma'
 import { success, error } from '../utils/response'
+import { logAudit } from '../middleware/auditLog'
 
 export const createRoleValidators = [
   body('name').notEmpty().withMessage('角色名称不能为空'),
@@ -14,9 +15,28 @@ export const updateRoleValidators = [
   body('permissionIds').optional().isArray().withMessage('权限ID必须为数组'),
 ]
 
+export const updateRolePermissionsValidators = [
+  body('permissionIds').isArray().withMessage('权限ID必须为数组'),
+]
+
 export const assignRoleValidators = [
   body('roleIds').isArray({ min: 1 }).withMessage('角色ID不能为空数组'),
 ]
+
+async function validatePermissionIds(permissionIds: string[]) {
+  const uniqueIds = Array.from(new Set(permissionIds))
+  if (uniqueIds.length === 0) return uniqueIds
+
+  const count = await prisma.permission.count({
+    where: { id: { in: uniqueIds } },
+  })
+
+  if (count !== uniqueIds.length) {
+    throw new Error('部分权限不存在')
+  }
+
+  return uniqueIds
+}
 
 export async function createRole(req: AuthenticatedRequest, res: Response) {
   const errors = validationResult(req)
@@ -26,7 +46,7 @@ export async function createRole(req: AuthenticatedRequest, res: Response) {
 
   try {
     const { name, description, permissionIds = [] } = req.body
-    const pids: string[] = permissionIds
+    const pids = await validatePermissionIds(permissionIds)
 
     const existing = await prisma.role.findUnique({ where: { name } })
     if (existing) {
@@ -50,9 +70,24 @@ export async function createRole(req: AuthenticatedRequest, res: Response) {
       },
     })
 
+    await logAudit(req, {
+      targetType: 'ROLE',
+      targetId: role.id,
+      targetDesc: `角色 ${role.name}`,
+      action: 'POST',
+      actionName: '创建角色',
+      afterValue: {
+        name: role.name,
+        description: role.description,
+        permissionIds: pids,
+      },
+      reason: '角色权限管理',
+    })
+
     return success(res, role, '角色创建成功', 201)
   } catch (err) {
-    return error(res, (err as Error).message, 500)
+    const message = (err as Error).message
+    return error(res, message, message.includes('权限不存在') ? 400 : 500)
   }
 }
 
@@ -96,7 +131,14 @@ export async function updateRole(req: AuthenticatedRequest, res: Response) {
     const { name, description, permissionIds } = req.body
     const pids: string[] | undefined = permissionIds
 
-    const existing = await prisma.role.findUnique({ where: { id } })
+    const existing = await prisma.role.findUnique({
+      where: { id },
+      include: {
+        permissions: {
+          include: { permission: true },
+        },
+      },
+    })
     if (!existing) {
       return error(res, '角色不存在', 404)
     }
@@ -118,7 +160,9 @@ export async function updateRole(req: AuthenticatedRequest, res: Response) {
     if (name !== undefined) data.name = name
     if (description !== undefined) data.description = description
 
-    const role = await prisma.$transaction(async (tx) => {
+    const normalizedPermissionIds = Array.isArray(pids) ? await validatePermissionIds(pids) : undefined
+
+    await prisma.$transaction(async (tx) => {
       // Update role basic info
       const updated = await tx.role.update({
         where: { id },
@@ -131,11 +175,11 @@ export async function updateRole(req: AuthenticatedRequest, res: Response) {
       })
 
       // Update permissions if provided
-      if (Array.isArray(pids)) {
+      if (Array.isArray(normalizedPermissionIds)) {
         await tx.rolePermission.deleteMany({ where: { roleId: id } })
-        if (pids.length > 0) {
+        if (normalizedPermissionIds.length > 0) {
           await tx.rolePermission.createMany({
-            data: pids.map((pid: string) => ({
+            data: normalizedPermissionIds.map((pid: string) => ({
               roleId: id,
               permissionId: pid,
             })),
@@ -157,9 +201,29 @@ export async function updateRole(req: AuthenticatedRequest, res: Response) {
       },
     })
 
+    await logAudit(req, {
+      targetType: 'ROLE',
+      targetId: id,
+      targetDesc: `角色 ${refreshed?.name || existing.name}`,
+      action: 'PUT',
+      actionName: Array.isArray(normalizedPermissionIds) && name === undefined && description === undefined ? '更新角色权限' : '编辑角色',
+      beforeValue: {
+        name: existing.name,
+        description: existing.description,
+        permissionIds: existing.permissions.map((p) => p.permissionId),
+      },
+      afterValue: {
+        name: refreshed?.name,
+        description: refreshed?.description,
+        permissionIds: refreshed?.permissions.map((p) => p.permissionId),
+      },
+      reason: '角色权限管理',
+    })
+
     return success(res, refreshed, '角色更新成功')
   } catch (err) {
-    return error(res, (err as Error).message, 500)
+    const message = (err as Error).message
+    return error(res, message, message.includes('权限不存在') ? 400 : 500)
   }
 }
 
@@ -184,6 +248,21 @@ export async function deleteRole(req: AuthenticatedRequest, res: Response) {
     }
 
     await prisma.role.delete({ where: { id } })
+
+    await logAudit(req, {
+      targetType: 'ROLE',
+      targetId: id,
+      targetDesc: `角色 ${existing.name}`,
+      action: 'DELETE',
+      actionName: '删除角色',
+      beforeValue: {
+        name: existing.name,
+        description: existing.description,
+        userCount: existing._count.users,
+      },
+      reason: '角色权限管理',
+    })
+
     return success(res, null, '角色删除成功')
   } catch (err) {
     return error(res, (err as Error).message, 500)
