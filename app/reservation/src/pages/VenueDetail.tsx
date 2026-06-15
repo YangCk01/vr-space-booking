@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useDeferredValue, useCallback, useRef } from 'react'
+import type { PointerEvent } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
@@ -36,6 +37,7 @@ export default function VenueDetail() {
   const [selectedGameId, setSelectedGameId] = useState<string | null>(initialGameId)
   const [selectedDay, setSelectedDay] = useState(0)
   const [copied, setCopied] = useState(false)
+  const gameTouchRef = useRef<{ id: string; x: number; y: number } | null>(null)
 
   const { data: venue, isLoading } = useQuery({
     queryKey: ['venue', id],
@@ -52,8 +54,15 @@ export default function VenueDetail() {
     return (games || []).filter((g) => g.status === 'ACTIVE')
   }, [games])
 
-  const selectedGame = activeGames.find((g) => g.id === selectedGameId)
+  const selectedGame = useMemo(() => {
+    return activeGames.find((g) => g.id === selectedGameId)
+  }, [activeGames, selectedGameId])
+  const deferredSelectedGameId = useDeferredValue(selectedGameId)
+  const deferredSelectedGame = useMemo(() => {
+    return activeGames.find((g) => g.id === deferredSelectedGameId)
+  }, [activeGames, deferredSelectedGameId])
   const gamePrice = selectedGame ? selectedGame.price / 100 : 0
+  const deferredGamePrice = deferredSelectedGame ? deferredSelectedGame.price / 100 : 0
 
   // Fetch booking config
   const { data: bookingConfig } = useQuery({
@@ -109,7 +118,7 @@ export default function VenueDetail() {
     const deviceCount = venue?.deviceCount || 1
 
     const slots: SlotInfo[] = []
-    const slotDuration = selectedGame?.duration || 30
+    const slotDuration = deferredSelectedGame?.duration || 30
 
     const openMinutes = venue?.openTime ? timeToMinutes(venue.openTime) : 9 * 60
     const closeMinutes = venue?.closeTime ? timeToMinutes(venue.closeTime) : 21 * 60
@@ -139,7 +148,7 @@ export default function VenueDetail() {
       })
 
       // 未选游戏时保持原有二元冲突判断
-      if (!selectedGameId) {
+      if (!deferredSelectedGameId) {
         if (overlapping.length > 0) {
           slots.push({ time: t, end: e, status: 'full', currentCount: 0, remainingCount: 0, maxCount: deviceCount })
         } else {
@@ -149,14 +158,14 @@ export default function VenueDetail() {
       }
 
       // 检查是否有其他游戏的预约
-      const otherGame = overlapping.some((b) => b.gameId && b.gameId !== selectedGameId)
+      const otherGame = overlapping.some((b) => b.gameId && b.gameId !== deferredSelectedGameId)
       if (otherGame) {
         slots.push({ time: t, end: e, status: 'occupied_by_other_game', currentCount: 0, remainingCount: 0, maxCount: deviceCount })
         continue
       }
 
       // 统计同一游戏已预约人数
-      const sameGame = overlapping.filter((b) => b.gameId === selectedGameId)
+      const sameGame = overlapping.filter((b) => b.gameId === deferredSelectedGameId)
       const currentCount = sameGame.reduce((sum, b) => sum + (b.personCount || 1), 0)
 
       if (currentCount === 0) {
@@ -169,7 +178,7 @@ export default function VenueDetail() {
     }
 
     return slots
-  }, [bookingsData, dateStr, venue, selectedGameId])
+  }, [bookingsData, dateStr, venue, deferredSelectedGameId, deferredSelectedGame?.duration])
 
   const displaySlots = slotInfo.filter((s) => s.status !== 'past' && s.status !== 'occupied_by_other_game')
 
@@ -186,6 +195,30 @@ export default function VenueDetail() {
       setTimeout(() => setCopied(false), 1500)
     }
   }
+
+  const handleSelectGame = useCallback((gameId: string) => {
+    setSelectedGameId((current) => (current === gameId ? current : gameId))
+  }, [])
+
+  const handleGamePointerDown = useCallback((gameId: string, event: PointerEvent<HTMLButtonElement>) => {
+    gameTouchRef.current = { id: gameId, x: event.clientX, y: event.clientY }
+    handleSelectGame(gameId)
+  }, [handleSelectGame])
+
+  const handleGamePointerUp = useCallback((gameId: string, event: PointerEvent<HTMLButtonElement>) => {
+    const start = gameTouchRef.current
+    gameTouchRef.current = null
+
+    if (!start || start.id !== gameId) {
+      handleSelectGame(gameId)
+      return
+    }
+
+    const moved = Math.abs(event.clientX - start.x) + Math.abs(event.clientY - start.y)
+    if (moved < 10) {
+      handleSelectGame(gameId)
+    }
+  }, [handleSelectGame])
 
   const handleBook = (slot: SlotInfo) => {
     if (!isLoggedIn) {
@@ -314,15 +347,22 @@ export default function VenueDetail() {
             <div className="absolute left-0 top-0 bottom-2 w-5 bg-gradient-to-r from-[var(--bg-primary)] to-transparent z-10 pointer-events-none" />
             {/* 右渐变提示 */}
             <div className="absolute right-0 top-0 bottom-2 w-5 bg-gradient-to-l from-[var(--bg-primary)] to-transparent z-10 pointer-events-none" />
-            <div className="flex gap-3 overflow-x-auto px-4 sm:px-0 pb-2 scrollbar-hide snap-x snap-mandatory touch-pan-x scroll-smooth">
+            <div className="flex gap-3 overflow-x-auto overscroll-x-contain px-4 sm:px-0 pb-2 scrollbar-hide snap-x snap-mandatory touch-pan-x [scrollbar-width:none] [-webkit-overflow-scrolling:touch]">
               {activeGames.map((game) => {
                 const isSelected = selectedGameId === game.id
                 return (
                   <button
                     key={game.id}
-                    onClick={() => setSelectedGameId(isSelected ? null : game.id)}
+                    type="button"
+                    aria-pressed={isSelected}
+                    onPointerDown={(event) => handleGamePointerDown(game.id, event)}
+                    onPointerUp={(event) => handleGamePointerUp(game.id, event)}
+                    onPointerCancel={() => {
+                      gameTouchRef.current = null
+                    }}
+                    onClick={() => handleSelectGame(game.id)}
                     className={cn(
-                      'shrink-0 w-24 rounded-xl overflow-hidden border transition-all snap-start',
+                      'shrink-0 w-24 rounded-xl overflow-hidden border snap-start transform-gpu will-change-transform transition-[transform,border-color,opacity] duration-150 active:scale-[0.97]',
                       isSelected
                         ? 'border-[var(--accent-primary)] shadow-glow-sm'
                         : 'border-[var(--border-subtle)] opacity-80'
@@ -332,7 +372,10 @@ export default function VenueDetail() {
                       <img
                         src={game.coverImage ? getImageUrl(game.coverImage) : '/venue-cyber.jpg'}
                         alt={game.title}
-                        className="w-full h-full object-cover"
+                        loading="eager"
+                        decoding="async"
+                        draggable={false}
+                        className="w-full h-full object-cover select-none"
                       />
                     </div>
                   </button>
@@ -470,7 +513,7 @@ export default function VenueDetail() {
                           : isOtherGame
                           ? '占用'
                           : selectedGame
-                          ? `¥${gamePrice}/人`
+                          ? `¥${deferredGamePrice}/人`
                           : '请先选择游戏'
                         }
                       </p>
