@@ -1,11 +1,13 @@
 import { Request, Response } from 'express'
 import { body, param, validationResult } from 'express-validator'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../utils/prisma'
 import { success, error, paginated } from '../utils/response'
 import { pushNotification } from '../controllers/notificationController'
 import { startOfDay, endOfDay, parseISO } from 'date-fns'
 import { assignEquipment, releaseEquipment } from '../services/equipmentService'
 import { consumeBenefit } from '../services/userBenefitService'
+import { generateOrderNo } from '../utils/orderNo'
 import { deductProportional } from '../utils/wallet'
 
 export const createValidators = [
@@ -232,6 +234,16 @@ function addMinutesToTime(t: string, minutes: number): string {
   const h = Math.floor(total / 60)
   const m = total % 60
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+async function getVerifyAdvanceMinutes(client: Prisma.TransactionClient | typeof prisma) {
+  const setting = await client.systemSetting.findUnique({ where: { key: 'verify_advance_minutes' } })
+  const raw = setting?.value as any
+  return Number(raw?.value ?? raw ?? 15)
+}
+
+function getLocalBookingStartTime(date: string, startTime: string) {
+  return new Date(`${date}T${startTime}:00+08:00`)
 }
 
 export async function create(req: Request, res: Response) {
@@ -494,6 +506,207 @@ export async function status(req: Request, res: Response) {
   }
 }
 
+/* ─── 改签执行（事务内）─── */
+export interface RescheduleExecuteParams {
+  newVenueId: string
+  newDate: string
+  newStartTime: string
+  newEndTime: string
+  newGameId: string
+  newPersonCount: number
+  newOriginalAmount: number
+  deltaAmount: number
+  feeAmount: number
+  feeRate: number
+  method: string
+  isGroupBuy: boolean
+  freeRescheduleUsed: boolean
+  clearDisruption?: boolean
+}
+
+export async function executeRescheduleInTx(
+  tx: Prisma.TransactionClient,
+  booking: any,
+  order: any,
+  params: RescheduleExecuteParams
+) {
+  const {
+    newVenueId,
+    newDate,
+    newStartTime,
+    newEndTime,
+    newGameId,
+    newPersonCount,
+    newOriginalAmount,
+    deltaAmount,
+    feeAmount,
+    feeRate,
+    method,
+    isGroupBuy,
+    freeRescheduleUsed,
+    clearDisruption,
+  } = params
+
+  const queryDate = new Date(`${newDate}T00:00:00.000Z`)
+  const verifyAdvanceMinutes = await getVerifyAdvanceMinutes(tx)
+  const newStartAt = getLocalBookingStartTime(newDate, newStartTime)
+  const minutesUntilStart = (newStartAt.getTime() - Date.now()) / (1000 * 60)
+  const shouldBeReady = minutesUntilStart > 0 && minutesUntilStart <= verifyAdvanceMinutes
+  const nextBookingStatus = shouldBeReady ? 'READY' : 'CONFIRMED'
+  const nextOrderStatus = shouldBeReady ? 'READY_TO_VERIFY' : 'PAID'
+
+  // 记录改签前原时间，用于 C 端展示
+  const originalBookingDate = booking.date
+    ? (booking.date instanceof Date ? booking.date.toISOString().slice(0, 10) : String(booking.date).slice(0, 10))
+    : (order.bookingTime ? order.bookingTime.split(' ')[0] : null)
+  const originalMetadata = (order.metadata as Record<string, any>) || {}
+
+  // 1. 更新 Booking
+  await tx.booking.update({
+    where: { id: booking.id },
+    data: {
+      venueId: newVenueId,
+      date: queryDate,
+      startTime: newStartTime,
+      endTime: newEndTime,
+      gameId: newGameId,
+      personCount: newPersonCount,
+      status: nextBookingStatus,
+    },
+  })
+
+  // 2. 更新原消费订单（保持原订单会员折扣/优惠券优惠，避免改签后价格变回原价）
+  const newVenue = await tx.venue.findUnique({ where: { id: newVenueId }, select: { name: true } })
+
+  let orderUpdateData: any = {
+    venueId: newVenueId,
+    venueName: newVenue?.name || order.venueName,
+    bookingTime: `${newDate} ${newStartTime}-${newEndTime}`,
+    status: nextOrderStatus,
+    rescheduleCount: clearDisruption ? (order.rescheduleCount || 0) : { increment: 1 },
+    rescheduleFeeAmount: { increment: feeAmount },
+    metadata: {
+      ...originalMetadata,
+      originalBookingDate,
+      originalStartTime: booking.startTime || null,
+      originalEndTime: booking.endTime || null,
+      originalBookingTime: order.bookingTime || null,
+      ...(clearDisruption ? { maintenanceDisruptionResolvedAt: new Date().toISOString() } : {}),
+    },
+  }
+
+  if (clearDisruption) {
+    orderUpdateData = {
+      ...orderUpdateData,
+      disruptionStatus: 'NONE',
+      disruptionReason: null,
+      disruptionSource: null,
+      disruptionAt: null,
+    }
+  }
+
+  if (!isGroupBuy) {
+    const discountRate = order.discountRate || 100
+    const couponDiscount = order.couponDiscount || 0
+    const discountBase = Math.max(0, newOriginalAmount - couponDiscount)
+    const newDiscountAmount = discountBase - Math.round(discountBase * discountRate / 100)
+    const newFinalAmount = Math.max(0, newOriginalAmount - couponDiscount - newDiscountAmount)
+
+    orderUpdateData = {
+      ...orderUpdateData,
+      originalAmount: newOriginalAmount,
+      discountAmount: newDiscountAmount,
+      amount: newFinalAmount,
+    }
+  }
+
+  await tx.order.update({
+    where: { id: order.id },
+    data: orderUpdateData,
+  })
+
+  // 3. 处理场次差价
+  if (deltaAmount > 0) {
+    if (method !== 'BALANCE') {
+      throw new Error('在线支付改签时暂不支持补差价，请使用余额支付')
+    }
+    if (!order.userId) {
+      throw new Error('订单未关联用户，无法扣除差价')
+    }
+    const user = await tx.user.findUnique({ where: { id: order.userId } })
+    const wallet = { principal: user?.principalBalance || 0, bonus: user?.bonusBalance || 0 }
+    const totalBalance = wallet.principal + wallet.bonus
+    if (totalBalance < deltaAmount) {
+      throw new Error('余额不足，无法支付改签差价')
+    }
+    const { principalDeduction, bonusDeduction } = deductProportional(wallet, deltaAmount)
+    await tx.user.update({
+      where: { id: order.userId },
+      data: {
+        principalBalance: { decrement: principalDeduction },
+        bonusBalance: { decrement: bonusDeduction },
+        balance: { decrement: deltaAmount },
+      },
+    })
+    await tx.balanceTransaction.create({
+      data: {
+        userId: order.userId,
+        orderId: order.id,
+        type: 'RESCHEDULE_SURCHARGE',
+        amount: deltaAmount,
+        principalAmount: -principalDeduction,
+        bonusAmount: -bonusDeduction,
+        totalAmount: -deltaAmount,
+        remark: `改签补差价：${booking.startTime} → ${newStartTime}`,
+      },
+    })
+  } else if (deltaAmount < 0) {
+    const refundAmount = Math.abs(deltaAmount)
+    const ratio = order.principalDeduction + order.bonusDeduction > 0
+      ? order.principalDeduction / (order.principalDeduction + order.bonusDeduction)
+      : 1
+    const refundPrincipal = Math.floor(refundAmount * ratio)
+    const refundBonus = refundAmount - refundPrincipal
+    if (order.userId) {
+      await tx.user.update({
+        where: { id: order.userId },
+        data: {
+          principalBalance: { increment: refundPrincipal },
+          bonusBalance: { increment: refundBonus },
+          balance: { increment: refundAmount },
+        },
+      })
+      await tx.balanceTransaction.create({
+        data: {
+          userId: order.userId,
+          orderId: order.id,
+          type: 'RESCHEDULE_REFUND',
+          amount: refundAmount,
+          principalAmount: refundPrincipal,
+          bonusAmount: refundBonus,
+          totalAmount: refundAmount,
+          remark: `改签退差价：${booking.startTime} → ${newStartTime}`,
+        },
+      })
+    }
+  }
+
+  // 4. 改签手续费流水
+  if (order.userId && feeAmount > 0) {
+    await tx.balanceTransaction.create({
+      data: {
+        userId: order.userId,
+        orderId: order.id,
+        type: 'RESCHEDULE_FEE',
+        amount: feeAmount,
+        remark: freeRescheduleUsed
+          ? '免费改签（会员权益）'
+          : `改签手续费（比例 ${feeRate}%）`,
+      },
+    })
+  }
+}
+
 /* ─── 预约改签 ─── */
 export async function reschedule(req: Request, res: Response) {
   try {
@@ -509,6 +722,7 @@ export async function reschedule(req: Request, res: Response) {
     if (!booking.order) return error(res, '预约未关联订单', 400)
 
     const order = booking.order
+    const isMaintenanceAffected = order.disruptionStatus === 'VENUE_MAINTENANCE'
 
     // 1. 验证改签条件
     if (!['PAID', 'READY_TO_VERIFY'].includes(order.status)) {
@@ -530,21 +744,23 @@ export async function reschedule(req: Request, res: Response) {
     const allowAfterStart = cfgMap.reschedule_allow_after_start ?? true
     const afterStartMinutes = cfgMap.reschedule_after_start_minutes ?? 15
 
-    // 检查改签次数
-    if (order.rescheduleCount >= maxCount) {
+    // 检查改签次数（maxCount <= 0 表示不限制）
+    if (!isMaintenanceAffected && maxCount > 0 && order.rescheduleCount >= maxCount) {
       return error(res, `该订单已达到最大改签次数（${maxCount}次）`, 400)
     }
 
     // 检查是否超过开场后可改签时间
-    const bookingDateStr = booking.date.toISOString().slice(0, 10)
-    const bookingStart = new Date(`${bookingDateStr}T${booking.startTime}:00+08:00`)
-    const now = new Date()
-    const minutesSinceStart = (now.getTime() - bookingStart.getTime()) / (1000 * 60)
-    if (minutesSinceStart > afterStartMinutes) {
-      return error(res, '该场次已过期，无法改签', 400)
-    }
-    if (minutesSinceStart > 0 && !allowAfterStart) {
-      return error(res, '该场次已开始，不允许改签', 400)
+    if (!isMaintenanceAffected) {
+      const bookingDateStr = booking.date.toISOString().slice(0, 10)
+      const bookingStart = new Date(`${bookingDateStr}T${booking.startTime}:00+08:00`)
+      const now = new Date()
+      const minutesSinceStart = (now.getTime() - bookingStart.getTime()) / (1000 * 60)
+      if (minutesSinceStart > afterStartMinutes) {
+        return error(res, '该场次已过期，无法改签', 400)
+      }
+      if (minutesSinceStart > 0 && !allowAfterStart) {
+        return error(res, '该场次已开始，不允许改签', 400)
+      }
     }
 
     // 2. 确定新参数（未传则保持原值）
@@ -561,7 +777,8 @@ export async function reschedule(req: Request, res: Response) {
       return error(res, '所选游戏不存在', 400)
     }
     const duration = newGame?.duration || booking.game?.duration || 30
-    const newEndTime = addMinutesToTime(startTime || booking.startTime, duration)
+    const newStartTime = startTime || booking.startTime
+    const newEndTime = addMinutesToTime(newStartTime, duration)
 
     // 3. 冲突检测（排除自身）
     const queryDate = new Date(`${newDate}T00:00:00.000Z`)
@@ -571,7 +788,7 @@ export async function reschedule(req: Request, res: Response) {
         date: queryDate,
         status: { not: 'CANCELLED' },
         id: { not: id },
-        OR: [{ startTime: { lte: newEndTime }, endTime: { gt: startTime || booking.startTime } }],
+        OR: [{ startTime: { lte: newEndTime }, endTime: { gt: newStartTime } }],
       },
     })
 
@@ -579,23 +796,32 @@ export async function reschedule(req: Request, res: Response) {
     const deviceCount = venue?.deviceCount || 1
     const pc = parseInt(newPersonCount as any) || 1
 
-    const s1 = timeToMinutes(startTime || booking.startTime)
+    const s1 = timeToMinutes(newStartTime)
     const e1 = timeToMinutes(newEndTime)
 
-    // 精确时间重叠过滤
+    if (venue?.status === 'MAINTENANCE' && venue.maintenanceStartDate && venue.maintenanceEndDate && venue.maintenanceStartTime && venue.maintenanceEndTime) {
+      const maintStartStr = venue.maintenanceStartDate.toISOString().slice(0, 10)
+      const maintEndStr = venue.maintenanceEndDate.toISOString().slice(0, 10)
+      if (newDate >= maintStartStr && newDate <= maintEndStr) {
+        const ms1 = timeToMinutes(venue.maintenanceStartTime)
+        const me1 = timeToMinutes(venue.maintenanceEndTime)
+        if (s1 < me1 && e1 > ms1) {
+          return error(res, '该时段场地正在维护中，无法改签', 409)
+        }
+      }
+    }
+
     const conflicts = overlapping.filter((b) => {
       const s2 = timeToMinutes(b.startTime)
       const e2 = timeToMinutes(b.endTime)
       return s1 < e2 && e1 > s2
     })
 
-    // 检查是否有其他游戏的预约
     const otherGameBooking = conflicts.some((b) => b.gameId && b.gameId !== newGameId)
     if (otherGameBooking) {
       return error(res, '该时段已有其他游戏预约', 400)
     }
 
-    // 统计同一游戏已预约人数
     const sameGameBookings = conflicts.filter((b) => b.gameId === newGameId)
     const currentCount = sameGameBookings.reduce((sum, b) => sum + (b.personCount || 1), 0)
 
@@ -603,153 +829,135 @@ export async function reschedule(req: Request, res: Response) {
       return error(res, '该时段该游戏已约满', 400)
     }
 
-    // 4. 计算价格差异
-    const newOriginalAmount = (newGame?.price || booking.game?.price || 0) * newPersonCount
-    const baseFeeAmount = Math.floor((order.originalAmount || order.amount) * feeRate / 100)
+    // 4. 计算价格差异与改签费
+    const isGroupBuy = !!order.groupBuyPackageId
+    const newOriginalAmount = isGroupBuy
+      ? (order.originalAmount || order.amount)
+      : (newGame?.price || booking.game?.price || 0) * newPersonCount
 
-    // 5. 执行改签（更新 Booking 和 Order）
+    // 保持原订单折扣率/优惠券，计算改签后实际应付金额
+    const discountRate = order.discountRate || 100
+    const couponDiscount = order.couponDiscount || 0
+    const discountBase = Math.max(0, newOriginalAmount - couponDiscount)
+    const newDiscountAmount = discountBase - Math.round(discountBase * discountRate / 100)
+    const newFinalAmount = isGroupBuy ? order.amount : Math.max(0, newOriginalAmount - couponDiscount - newDiscountAmount)
+
+    const baseFeeAmount = (isGroupBuy || isMaintenanceAffected) ? 0 : Math.floor((order.originalAmount || order.amount) * feeRate / 100)
+    const deltaAmount = newFinalAmount - order.amount
+
+    // 5. 检查会员免费改签权益
+    // 非维护原因改签时，先尝试用会员免费改签额度抵扣手续费；
+    // 若抵扣成功，本次改签标记为已使用权益，且无论原手续费是否大于 0 都会计入免费次数。
     let feeAmount = baseFeeAmount
     let freeRescheduleUsed = false
-    let deltaAmount = newOriginalAmount - (order.originalAmount || order.amount) + baseFeeAmount
-    await prisma.$transaction(async (tx) => {
-      // 5.1 检查会员免费改签权益（在事务内执行，确保一致性）
-      if (order.userId && baseFeeAmount > 0) {
-        const benefitResult = await consumeBenefit(order.userId, 'FREE_RESCHEDULE', tx)
-        if (benefitResult.success) {
-          feeAmount = 0
-          freeRescheduleUsed = true
-        }
+    if (!isMaintenanceAffected && order.userId) {
+      const benefitResult = await consumeBenefit(order.userId, 'FREE_RESCHEDULE')
+      if (benefitResult.success) {
+        feeAmount = 0
+        freeRescheduleUsed = true
       }
+    }
 
-      deltaAmount = newOriginalAmount - (order.originalAmount || order.amount) + feeAmount
-      // 更新 Booking
-      await tx.booking.update({
-        where: { id: booking.id },
-        data: {
-          venueId: newVenueId,
-          date: queryDate,
-          startTime: startTime || booking.startTime,
-          endTime: newEndTime,
-          gameId: newGameId || booking.gameId,
-          personCount: newPersonCount,
-        },
-      })
-
-      // 更新 Order
-      const newVenue = await tx.venue.findUnique({ where: { id: newVenueId }, select: { name: true } })
-      await tx.order.update({
-        where: { id: order.id },
-        data: {
-          venueId: newVenueId,
-          venueName: newVenue?.name || order.venueName,
-          bookingTime: `${newDate} ${startTime || booking.startTime}-${newEndTime}`,
-          originalAmount: newOriginalAmount,
-          amount: newOriginalAmount, // 简化处理：改签后重新计算金额，不保留原折扣
-          rescheduleCount: { increment: 1 },
-          rescheduleFeeAmount: { increment: feeAmount },
-        },
-      })
-
-      // 6. 处理补差价/退差价
-      if (deltaAmount > 0) {
-        if (method === 'BALANCE') {
-          // 余额支付：从用户余额扣除
-          if (order.userId) {
-            const user = await tx.user.findUnique({ where: { id: order.userId } })
-            const totalBalance = (user?.principalBalance || 0) + (user?.bonusBalance || 0)
-            if (totalBalance >= deltaAmount) {
-              const { principalDeduction, bonusDeduction } = deductProportional(
-                { principal: user?.principalBalance || 0, bonus: user?.bonusBalance || 0 },
-                deltaAmount
-              )
-              await tx.user.update({
-                where: { id: order.userId },
-                data: {
-                  principalBalance: { decrement: principalDeduction },
-                  bonusBalance: { decrement: bonusDeduction },
-                  balance: { decrement: deltaAmount },
-                },
-              })
-              await tx.balanceTransaction.create({
-                data: {
-                  userId: order.userId,
-                  orderId: order.id,
-                  type: 'RESCHEDULE_SURCHARGE',
-                  amount: deltaAmount,
-                  principalAmount: -principalDeduction,
-                  bonusAmount: -bonusDeduction,
-                  totalAmount: -deltaAmount,
-                  remark: `改签补差价：${booking.startTime} → ${startTime || booking.startTime}`,
-                },
-              })
-            } else {
-              throw new Error('余额不足，无法支付改签差价')
-            }
-          }
-        } else {
-          // 微信/支付宝支付：不扣余额，记录支付流水（前端需先完成支付）
-          await tx.payment.create({
-            data: {
-              orderId: order.id,
-              amount: deltaAmount,
-              method: method as any,
-              status: 'SUCCESS',
-            },
-          })
-        }
-      } else if (deltaAmount < 0) {
-        // 退差价：退到用户余额
-        const refundAmount = Math.abs(deltaAmount)
-        const ratio = order.principalDeduction + order.bonusDeduction > 0
-          ? order.principalDeduction / (order.principalDeduction + order.bonusDeduction)
-          : 1
-        const refundPrincipal = Math.floor(refundAmount * ratio)
-        const refundBonus = refundAmount - refundPrincipal
-
-        if (order.userId) {
-          await tx.user.update({
-            where: { id: order.userId },
-            data: {
-              principalBalance: { increment: refundPrincipal },
-              bonusBalance: { increment: refundBonus },
-              balance: { increment: refundAmount },
-            },
-          })
-          await tx.balanceTransaction.create({
-            data: {
-              userId: order.userId,
-              orderId: order.id,
-              type: 'RESCHEDULE_REFUND',
-              amount: refundAmount,
-              principalAmount: refundPrincipal,
-              bonusAmount: refundBonus,
-              totalAmount: refundAmount,
-              remark: `改签退差价：${booking.startTime} → ${startTime || booking.startTime}`,
-            },
-          })
-        }
-      }
-
-      // 改签手续费流水（无论是否有差价都记录）
-      if (order.userId && feeAmount > 0) {
-        await tx.balanceTransaction.create({
-          data: {
-            userId: order.userId,
-            orderId: order.id,
-            type: 'RESCHEDULE_FEE',
-            amount: feeAmount,
-            remark: `改签手续费（比例 ${feeRate}%）`,
-          },
+    // 6. 免费改签：直接执行
+    if (feeAmount === 0) {
+      await prisma.$transaction(async (tx) => {
+        await executeRescheduleInTx(tx, booking, order, {
+          newVenueId,
+          newDate,
+          newStartTime,
+          newEndTime,
+          newGameId,
+          newPersonCount,
+          newOriginalAmount,
+          deltaAmount,
+          feeAmount,
+          feeRate,
+          method,
+          isGroupBuy,
+          freeRescheduleUsed,
+          clearDisruption: isMaintenanceAffected,
         })
+      })
+
+      return success(res, {
+        newAmount: newFinalAmount,
+        feeAmount,
+        deltaAmount,
+        freeRescheduleUsed,
+      }, '改签成功')
+    }
+
+    // 7. 收费改签：生成独立的改签费订单，不自动扣款，等待顾客选择支付方式
+    if (!['BALANCE', 'WECHAT', 'ALIPAY'].includes(method)) {
+      return error(res, '不支持的支付方式', 400)
+    }
+
+    // 在线支付暂不支持补差价（避免一笔订单包含非改签费金额）
+    if (method !== 'BALANCE' && deltaAmount > 0) {
+      return error(res, '当前改签需要补差价，请选择余额支付或联系管理员处理', 400)
+    }
+
+    const feeOrder = await prisma.$transaction(async (tx) => {
+      // 幂等：同一原订单仅允许存在一个待支付的改签费订单
+      const existingPending = await tx.order.findFirst({
+        where: {
+          parentOrderId: order.id,
+          orderKind: 'FEE',
+          feeType: 'RESCHEDULE_FEE',
+          status: 'PENDING',
+        },
+      })
+      if (existingPending) {
+        await tx.order.delete({ where: { id: existingPending.id } })
       }
+
+      return tx.order.create({
+        data: {
+          orderNo: await generateOrderNo('reschedule', tx),
+          userId: order.userId,
+          venueId: order.venueId,
+          venueName: order.venueName,
+          amount: feeAmount,
+          originalAmount: feeAmount,
+          discountAmount: 0,
+          discountRate: 100,
+          status: 'PENDING',
+          expireAt: new Date(Date.now() + 30 * 60 * 1000),
+          payMethod: method as any,
+          orderKind: 'FEE',
+          feeType: 'RESCHEDULE_FEE',
+          parentOrderId: order.id,
+          feeReason: '改签手续费',
+          bookingTime: `${newDate} ${newStartTime}-${newEndTime}`,
+          metadata: {
+            rescheduleBookingId: booking.id,
+            newVenueId,
+            newDate,
+            newStartTime,
+            newEndTime,
+            newGameId,
+            newPersonCount,
+            newOriginalAmount,
+            deltaAmount,
+            feeAmount,
+            feeRate,
+            isGroupBuy,
+          } as any,
+        },
+      })
     })
 
     return success(res, {
-      newAmount: newOriginalAmount,
-      feeAmount,
+      feeOrder: {
+        id: feeOrder.id,
+        orderNo: feeOrder.orderNo,
+        amount: feeOrder.amount,
+        status: feeOrder.status,
+        payMethod: feeOrder.payMethod,
+      },
       deltaAmount,
-      freeRescheduleUsed,
-    }, '改签成功')
+      requirePayment: true,
+    }, '已生成改签费订单，请支付后完成改签')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -778,7 +986,7 @@ export async function checkIn(req: Request, res: Response) {
       if (booking.order) {
         await tx.order.update({
           where: { id: booking.order.id },
-          data: { verifiedAt: new Date() },
+          data: { status: 'COMPLETED', verifiedAt: new Date() },
         })
       }
     })

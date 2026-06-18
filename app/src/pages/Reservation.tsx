@@ -948,7 +948,7 @@ function StepSuccess({
         transition={{ delay: 0.85, duration: 0.3 }}
       >
         <AlertCircle className="w-4 h-4 text-vrwarning" />
-        <span className="text-vr-body-sm text-vrtext-secondary">请提前15分钟到场签到</span>
+        <span className="text-vr-body-sm text-vrtext-secondary">请按预约时间提前到场签到</span>
       </motion.div>
 
       {/* Buttons */}

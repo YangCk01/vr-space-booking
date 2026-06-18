@@ -72,6 +72,7 @@ model Venue {
   deviceLogs           DeviceSessionLog[]
   equipment            Equipment[]
   managers             VenueManager[]
+  groupBuyPackages     GroupBuyPackage[] @relation("GroupBuyPackageToVenue")
 }
 
 model VenueManager {
@@ -122,15 +123,15 @@ model Order {
   orderNo             String               @unique
   bookingId           String?              @unique
   userId              String?
-  venueId             String
-  venueName           String
+  venueId             String?
+  venueName           String?
   amount              Int
   status              OrderStatus          @default(PENDING)
   payMethod           PayMethod?
   paidAt              DateTime?
   cancelledAt         DateTime?
   refundAmount        Int?
-  bookingTime         String
+  bookingTime         String?
   expireAt            DateTime?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -153,15 +154,34 @@ model Order {
   playingEndedAt      DateTime?
   rescheduleCount     Int                  @default(0)
   rescheduleFeeAmount Int                  @default(0)
+  quantity            Int                  @default(1)
+  verifyCode          String?              @unique
+  groupBuyPackageId   String?
+  orderKind           String               @default("NORMAL")
+  feeType             String?
+  parentOrderId       String?
+  feeReason           String?
+  disruptionStatus    String               @default("NONE")
+  disruptionReason    String?
+  disruptionSource    String?
+  disruptionAt        DateTime?
+  metadata            Json?
   transactions        BalanceTransaction[]
   booking             Booking?             @relation(fields: [bookingId], references: [id])
   userCoupon          UserCoupon?          @relation(fields: [userCouponId], references: [id])
   user                User?                @relation(fields: [userId], references: [id])
+  groupBuyPackage     GroupBuyPackage?     @relation(fields: [groupBuyPackageId], references: [id])
+  parentOrder         Order?               @relation("OrderFeeOrders", fields: [parentOrderId], references: [id])
+  feeOrders           Order[]              @relation("OrderFeeOrders")
   payments            Payment[]
 
   @@index([userId])
   @@index([status])
   @@index([createdAt])
+  @@index([orderKind])
+  @@index([feeType])
+  @@index([parentOrderId])
+  @@index([disruptionStatus])
 }
 
 model ApprovalRequest {
@@ -340,22 +360,62 @@ model BalanceTransaction {
 }
 
 model Game {
-  id           String    @id @default(uuid())
-  title        String
-  subtitle     String?
-  description  String?
-  coverImage   String?
-  videoUrl     String?
-  price        Int       @default(0)
-  duration     Int       @default(30)
-  tags         String[]
-  status       String    @default("ACTIVE")
-  sortOrder    Int       @default(0)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  detailImages String[]
-  notice       String?
-  bookings     Booking[]
+  id              String            @id @default(uuid())
+  title           String
+  subtitle        String?
+  description     String?
+  coverImage      String?
+  videoUrl        String?
+  price           Int               @default(0)
+  duration        Int               @default(30)
+  minPlayers      Int               @default(1)
+  maxPlayers      Int               @default(4)
+  tags            String[]
+  status          String            @default("ACTIVE")
+  sortOrder       Int               @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  detailImages    String[]
+  notice          String?
+  bookings        Booking[]
+  groupBuyPackages GroupBuyPackage[]
+}
+
+model GroupBuyPackage {
+  id                    String   @id @default(uuid())
+  gameId                String
+  title                 String
+  subtitle              String?
+  type                  String   @default("DOUBLE") // DOUBLE / THREE / PRIVATE
+  label                 String   @default("双人团")
+  minPeople             Int      @default(2)
+  maxPeople             Int      @default(2)
+  originalPricePerPerson Int     @default(0)
+  groupPricePerPerson   Int      @default(0)
+  totalGroupPrice       Int      @default(0)
+  coverImage            String?
+  tags                  String[]
+  status                String   @default("ACTIVE") // ACTIVE / INACTIVE
+  sortOrder             Int      @default(0)
+  startDate             DateTime? @db.Date
+  endDate               DateTime? @db.Date
+  description           String?
+  soldText              String   @default("近期售 200+")
+  refundTags            String[] @default(["随时退", "过期自动退"])
+  packageItems          String[] @default([])
+  processSteps          String[] @default(["购买团购券", "选择门店与场次", "到店核销入场"])
+  notice                String?
+  refundNotice          String?
+  buyButtonText         String   @default("立即抢购")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  game                  Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  venues                Venue[]  @relation("GroupBuyPackageToVenue")
+  orders                Order[]
+
+  @@index([gameId])
+  @@index([status])
+  @@index([type])
 }
 
 model DailyFinancialReport {
@@ -389,6 +449,9 @@ model DailyFinancialReport {
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
   noShowPenalty           Int       @default(0)
+  otherIncomeTotal        Int       @default(0)
+  rescheduleFeeIncome     Int       @default(0)
+  cancelFeeIncome         Int       @default(0)
   status                  String    @default("DRAFT")
   generatedAt             DateTime?
   generatedById           String?

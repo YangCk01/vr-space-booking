@@ -1,10 +1,11 @@
 import { Router } from 'express'
-import { authenticate, requireRole } from '../middleware/auth'
+import { authenticate } from '../middleware/auth'
+import { requirePermission } from '../middleware/rbac'
 import { list, getTypes } from '../controllers/logController'
 
 const router = Router()
 
-router.get('/', authenticate, requireRole('SUPER_ADMIN','ADMIN'), list)
-router.get('/types', authenticate, requireRole('SUPER_ADMIN','ADMIN'), getTypes)
+router.get('/', authenticate, requirePermission('audit:read'), list)
+router.get('/types', authenticate, requirePermission('audit:read'), getTypes)
 
 export default router

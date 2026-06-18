@@ -24,9 +24,31 @@ async function getMemberPublicConfig() {
   }
 }
 
+function normalizeLevelKey(key?: string | null) {
+  const value = (key || '').toUpperCase()
+  if (value === 'VIP+' || value === 'VIP_PLUS') return 'VIP_PLUS'
+  return value
+}
+
+function getLevelFallbackName(key?: string | null) {
+  switch (normalizeLevelKey(key)) {
+    case 'VIP_PLUS':
+      return 'VIP+'
+    case 'VIP':
+      return 'VIP'
+    case 'MEMBER':
+      return '会员'
+    case 'NORMAL':
+      return '普通会员'
+    default:
+      return '普通会员'
+  }
+}
+
 export default function Profile() {
   const navigate = useNavigate()
-  const { user, isLoggedIn, logout, refreshUser } = useAuth()
+  const { user, isLoading: authLoading, isLoggedIn, logout, refreshUser } = useAuth()
+  const authUser = !authLoading && isLoggedIn ? user : null
 
   useEffect(() => {
     if (isLoggedIn) {
@@ -37,13 +59,13 @@ export default function Profile() {
   const { data: memberConfig } = useQuery({
     queryKey: ['member-public-config'],
     queryFn: getMemberPublicConfig,
-    enabled: isLoggedIn,
+    enabled: !!authUser,
   })
 
   const { data: orderData } = useQuery({
     queryKey: ['orders', 'profile-summary'],
     queryFn: () => getOrders({ pageSize: 50 }),
-    enabled: isLoggedIn,
+    enabled: !!authUser,
   })
 
   const { data: pageSettings } = useQuery({
@@ -52,14 +74,23 @@ export default function Profile() {
     staleTime: 60000,
   })
 
-  const currentLevel = memberConfig?.levels?.find((l) => l.key === user?.level)
+  const currentLevelKey = normalizeLevelKey(authUser?.level)
+  const currentLevel = memberConfig?.levels?.find((l) => normalizeLevelKey(l.key) === currentLevelKey)
+  const currentLevelName = authUser
+    ? (currentLevel?.name || getLevelFallbackName(authUser.level))
+    : ''
   const discountLabel = currentLevel && currentLevel.discount < 100
     ? `享${currentLevel.discount}折`
     : ''
   const allOrders = orderData?.data || []
   const orderCounts = {
-    pendingExperience: allOrders.filter((o: any) => ['PAID', 'READY_TO_VERIFY'].includes(o.status)).length,
-    pendingPayment: allOrders.filter((o: any) => o.status === 'PENDING').length,
+    // 待体验按「份数/券数」统计，多份团购拆单后每张券都计入
+    pendingExperience: allOrders
+      .filter((o: any) => o.orderKind !== 'FEE' && ['PAID', 'READY_TO_VERIFY'].includes(o.status))
+      .reduce((sum: number, o: any) => sum + (o.quantity || 1), 0),
+    pendingPayment: allOrders
+      .filter((o: any) => o.orderKind !== 'FEE' && o.status === 'PENDING')
+      .reduce((sum: number, o: any) => sum + (o.quantity || 1), 0),
   }
   const configuredMenuItems = [
     ...menuItems,
@@ -92,25 +123,28 @@ export default function Profile() {
           <div className="absolute left-[-36px] bottom-[-56px] w-36 h-36 rounded-full border border-white/10" />
           <div className="relative flex items-center gap-4">
             <div className="w-16 h-16 rounded-2xl bg-white/15 border border-white/30 flex items-center justify-center text-white text-xl font-bold overflow-hidden">
-              {isLoggedIn && user?.avatar ? (
-                <img src={resolveImageUrl(user.avatar)} alt="avatar" className="w-full h-full object-cover" />
+              {authUser?.avatar ? (
+                <img src={resolveImageUrl(authUser.avatar)} alt="avatar" className="w-full h-full object-cover" />
               ) : (
-                isLoggedIn ? (user?.name?.[0] || 'U') : 'VR'
+                authUser ? (authUser.name?.[0] || 'U') : 'VR'
               )}
             </div>
             <div className="flex-1 min-w-0">
-            {isLoggedIn ? (
+            {authLoading ? (
               <>
-                <h1 className="text-xl font-black text-white">{user?.name}</h1>
+                <h1 className="text-lg font-bold text-white">加载中...</h1>
+                <p className="text-sm text-white/70 mt-0.5">正在同步账号信息</p>
+              </>
+            ) : authUser ? (
+              <>
+                <h1 className="text-xl font-black text-white">{authUser.name}</h1>
                 <div className="flex items-center gap-2 mt-1">
-                  {currentLevel && (
-                    <span className="px-2 py-0.5 rounded-full bg-white/20 text-[11px] text-white font-semibold">
-                      {currentLevel.name}
-                    </span>
-                  )}
-                  <span className="text-xs text-white/80">{user?.points || 0} 积分</span>
+                  <span className="px-2 py-0.5 rounded-full bg-white/20 text-[11px] text-white font-semibold">
+                    {currentLevelName}
+                  </span>
+                  <span className="text-xs text-white/80">{authUser.points || 0} 积分</span>
                 </div>
-                {currentLevel && (
+                {(currentLevel || currentLevelName) && (
                   <p className="text-xs text-white/70 mt-1">{discountLabel || '会员权益已生效'}</p>
                 )}
               </>
@@ -126,7 +160,7 @@ export default function Profile() {
               </>
             )}
             </div>
-            {isLoggedIn && (
+            {authUser && (
               <button
                 onClick={() => navigate('/account-settings')}
                 className="shrink-0 w-9 h-9 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors flex items-center justify-center"
@@ -143,23 +177,23 @@ export default function Profile() {
         <div className="bg-white rounded-2xl border border-[var(--border-subtle)] p-4 flex items-center justify-around shadow-[0_12px_28px_rgba(15,23,42,0.12)]">
           <div className="text-center">
             <p className="text-lg font-bold text-[var(--text-primary)]">
-              {isLoggedIn ? `¥${((user?.principalBalance || 0) + (user?.bonusBalance || 0)) / 100}` : '0'}
+              {authUser ? `¥${((authUser.principalBalance || 0) + (authUser.bonusBalance || 0)) / 100}` : '0'}
             </p>
             <p className="text-xs text-[var(--text-muted)] flex items-center justify-center gap-1"><Wallet className="w-3 h-3" />余额</p>
           </div>
           <div className="w-px h-8 bg-[var(--border-subtle)]" />
           <div className="text-center">
             <p className="text-lg font-bold text-[var(--text-primary)]">
-              {isLoggedIn ? (user?.points || 0) : '0'}
+              {authUser ? (authUser.points || 0) : '0'}
             </p>
             <p className="text-xs text-[var(--text-muted)] flex items-center justify-center gap-1"><Coins className="w-3 h-3" />积分</p>
           </div>
-          {isLoggedIn && (
+          {authUser && (
             <>
               <div className="w-px h-8 bg-[var(--border-subtle)]" />
               <div className="text-center">
                 <p className="text-lg font-bold text-[var(--text-primary)]">
-                  {currentLevel?.name || user?.level || '普通'}
+                  {currentLevelName}
                 </p>
                 <p className="text-xs text-[var(--text-muted)] flex items-center justify-center gap-1"><Crown className="w-3 h-3" />会员等级</p>
               </div>
@@ -202,7 +236,7 @@ export default function Profile() {
         </div>
       </div>
 
-      {isLoggedIn && (
+      {authUser && (
         <div className="max-w-lg mx-auto px-4 pt-3">
           <button
             onClick={() => navigate('/recharge')}
@@ -257,7 +291,7 @@ export default function Profile() {
           })}
         </div>
 
-        {isLoggedIn && (
+        {authUser && (
           <button
             onClick={logout}
             className="w-full flex items-center justify-between p-4 bg-white rounded-2xl border border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)] text-left hover:border-[var(--border-hover)] transition-colors mt-4"

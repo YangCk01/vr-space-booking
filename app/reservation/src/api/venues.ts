@@ -7,6 +7,7 @@ export interface Venue {
   status: string
   area: number
   capacity: number
+  deviceCount: number
   pricePerHour: number
   image: string | null
   description: string | null
@@ -42,9 +43,19 @@ export async function getVenues(params?: { status?: string; search?: string; pag
   return res.data
 }
 
+export async function getPublicVenues(params?: { status?: string; search?: string; page?: number; pageSize?: number }) {
+  const res = await apiClient.get('/venues/public', { params })
+  return res.data
+}
+
 export async function getVenue(id: string) {
   const res = await apiClient.get(`/venues/${id}`)
   return res.data.data
+}
+
+export async function getPublicVenue(id: string) {
+  const res = await apiClient.get(`/venues/public/${id}`)
+  return res.data.data as Venue
 }
 
 export async function createVenue(input: VenueInput) {

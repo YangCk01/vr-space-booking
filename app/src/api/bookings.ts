@@ -84,3 +84,8 @@ export async function cancelBooking(id: string) {
   const res = await apiClient.delete(`/bookings/${id}`)
   return res.data.data
 }
+
+export async function checkInBooking(id: string) {
+  const res = await apiClient.post(`/bookings/${id}/check-in`)
+  return res.data
+}

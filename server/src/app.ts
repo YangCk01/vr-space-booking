@@ -63,7 +63,7 @@ if (jobsEnabled) {
   // 启动预约生命周期定时任务（状态自动流转 + No-Show 处理）
   startBookingLifecycleJob()
 
-  // 启动预约提醒定时任务（开场前2小时/15分钟通知）
+  // 启动预约提醒定时任务（开场前2小时/核销提前量通知）
   startBookingReminderJob()
 } else {
   console.log('[App] Background jobs disabled by ENABLE_JOBS=false')

@@ -20,6 +20,8 @@ import type { Game, GameInput } from '@/api/games'
 import { uploadFile } from '@/api/upload'
 import { getImageUrl } from '@/lib/imageUrl'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/authStore'
+import { hasPermission } from '@/lib/permissions'
 
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number]
 const MAX_GAME_VIDEO_SIZE = 300 * 1024 * 1024
@@ -36,6 +38,8 @@ const emptyGame: Partial<Game> = {
   detailImages: [],
   price: 0,
   duration: 30,
+  minPlayers: 1,
+  maxPlayers: 4,
   tags: [],
   status: 'ACTIVE',
   sortOrder: 0,
@@ -53,6 +57,8 @@ function toFen(yuan: number): number {
 
 export default function Games() {
   const queryClient = useQueryClient()
+  const currentUser = useAuthStore((s) => s.user)
+  const canManageContent = hasPermission(currentUser, 'content:manage')
   const [searchQuery, setSearchQuery] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editingGame, setEditingGame] = useState<Game | null>(null)
@@ -138,6 +144,8 @@ export default function Games() {
     setFormData({
       ...game,
       price: toYuan(game.price),
+      minPlayers: game.minPlayers ?? 1,
+      maxPlayers: game.maxPlayers ?? 4,
     })
     setTagInput(game.tags.join(', '))
     setShowModal(true)
@@ -238,6 +246,8 @@ export default function Games() {
       detailImages: formData.detailImages || [],
       price: toFen(Number(formData.price) || 0),
       duration: Number(formData.duration) || 30,
+      minPlayers: Number(formData.minPlayers) || 1,
+      maxPlayers: Number(formData.maxPlayers) || 4,
       tags: tagInput.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
       status: formData.status || 'ACTIVE',
       sortOrder: Number(formData.sortOrder) || 0,
@@ -278,19 +288,21 @@ export default function Games() {
                 className="w-[280px] h-9 pl-9 pr-4 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
               />
             </div>
-            <button
-              onClick={openAdd}
-              className="h-9 px-4 bg-vraccent-primary text-white text-vr-body-sm font-medium rounded-lg hover:bg-vraccent-primary/90 transition-colors flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              新增游戏
-            </button>
+            {canManageContent && (
+              <button
+                onClick={openAdd}
+                className="h-9 px-4 bg-vraccent-primary text-white text-vr-body-sm font-medium rounded-lg hover:bg-vraccent-primary/90 transition-colors flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                新增游戏
+              </button>
+            )}
           </div>
         </div>
 
         {/* Batch Action Bar */}
         <AnimatePresence>
-          {selectedIds.length > 0 && (
+          {selectedIds.length > 0 && canManageContent && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -361,6 +373,7 @@ export default function Games() {
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">标题</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">价格</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">时长</th>
+                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">人数</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">标签</th>
                   <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[110px]">状态</th>
                   <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">操作</th>
@@ -431,6 +444,9 @@ export default function Games() {
                           <span className="text-vr-body-sm text-vrtext-primary">{game.duration}分钟</span>
                         </td>
                         <td className="px-4 py-3">
+                          <span className="text-vr-body-sm text-vrtext-primary">{game.minPlayers}-{game.maxPlayers}人</span>
+                        </td>
+                        <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-1">
                             {game.tags.slice(0, 3).map((tag, i) => (
                               <span
@@ -461,20 +477,22 @@ export default function Games() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => openEdit(game)}
-                              className="w-8 h-8 rounded-lg hover:bg-vrbg-elevated flex items-center justify-center text-vrtext-secondary hover:text-vraccent-primary transition-colors"
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => openDelete(game)}
-                              className="w-8 h-8 rounded-lg hover:bg-vrerror/10 flex items-center justify-center text-vrtext-secondary hover:text-vrerror transition-colors"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
+                          {canManageContent && (
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => openEdit(game)}
+                                className="w-8 h-8 rounded-lg hover:bg-vrbg-elevated flex items-center justify-center text-vrtext-secondary hover:text-vraccent-primary transition-colors"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => openDelete(game)}
+                                className="w-8 h-8 rounded-lg hover:bg-vrerror/10 flex items-center justify-center text-vrtext-secondary hover:text-vrerror transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
                         </td>
                       </motion.tr>
                     ))
@@ -722,6 +740,32 @@ export default function Games() {
                       value={formData.duration ?? 30}
                       onChange={(e) => updateField('duration', e.target.value === '' ? 30 : Number(e.target.value.replace(/\D/g, '')))}
                       placeholder="30"
+                      className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary transition-colors"
+                    />
+                  </div>
+                </div>
+
+                {/* Players */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-vr-caption text-vrtext-secondary font-medium block mb-1">最少人数</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={formData.minPlayers ?? 1}
+                      onChange={(e) => updateField('minPlayers', e.target.value === '' ? 1 : Number(e.target.value.replace(/\D/g, '')))}
+                      placeholder="1"
+                      className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-vr-caption text-vrtext-secondary font-medium block mb-1">最多人数</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={formData.maxPlayers ?? 4}
+                      onChange={(e) => updateField('maxPlayers', e.target.value === '' ? 4 : Number(e.target.value.replace(/\D/g, '')))}
+                      placeholder="4"
                       className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary transition-colors"
                     />
                   </div>

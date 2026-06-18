@@ -18,6 +18,7 @@ import { uploadFile } from '@/api/upload'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { getImageUrl } from '@/lib/imageUrl'
+import { hasAnyPermission, hasPermission } from '@/lib/permissions'
 
 /* ─── Animation variants ─── */
 const containerVariants = {
@@ -66,8 +67,30 @@ function toApiStatus(status: string): string {
   return reverseStatusMap[status] || status.toUpperCase()
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const normalized = normalizeStatus(status)
+function isWithinMaintenanceWindow(venue: Venue): boolean {
+  if (venue.status !== 'MAINTENANCE') return false
+  if (!venue.maintenanceStartDate || !venue.maintenanceEndDate || !venue.maintenanceStartTime || !venue.maintenanceEndTime) {
+    return false
+  }
+  const now = new Date()
+  const dateStr = now.toISOString().slice(0, 10)
+  const timeStr = now.toTimeString().slice(0, 5)
+  const startDate = venue.maintenanceStartDate.slice(0, 10)
+  const endDate = venue.maintenanceEndDate.slice(0, 10)
+  if (dateStr < startDate || dateStr > endDate) return false
+  if (dateStr === startDate && timeStr < venue.maintenanceStartTime) return false
+  if (dateStr === endDate && timeStr > venue.maintenanceEndTime) return false
+  return true
+}
+
+function getEffectiveStatus(venue: Venue): string {
+  if (venue.status === 'DISABLED') return 'closed'
+  if (isWithinMaintenanceWindow(venue)) return 'maintenance'
+  return 'open'
+}
+
+function StatusBadge({ venue }: { venue: Venue }) {
+  const normalized = getEffectiveStatus(venue)
   const cfg = statusConfig[normalized] || statusConfig.closed
   return (
     <span className={cn('inline-flex items-center px-3 py-1 rounded-full text-vr-caption font-medium', cfg.bg, cfg.text)}>
@@ -114,6 +137,9 @@ const statusOptions = [
 
 export default function Venues() {
   const queryClient = useQueryClient()
+  const currentUser = useAuthStore((s) => s.user)
+  const canManageVenues = hasPermission(currentUser, 'venue:manage')
+  const canMaintainVenues = hasAnyPermission(currentUser, ['venue:manage', 'venue:maintenance'])
   const [searchQuery, setSearchQuery] = useState('')
   const [activeFilter, setActiveFilter] = useState('all')
   const [uploadingImage, setUploadingImage] = useState(false)
@@ -241,8 +267,31 @@ export default function Venues() {
     setFormData({ ...emptyVenue })
   }
 
+  const todayStr = new Date().toISOString().slice(0, 10)
+
   const handleSubmit = () => {
     if (!formData.name || !formData.area || !formData.capacity || !formData.deviceCount) return
+
+    if (formData.status === 'maintenance') {
+      if (!formData.maintenanceStartDate || !formData.maintenanceEndDate || !formData.maintenanceStartTime || !formData.maintenanceEndTime) {
+        alert('维护状态必须填写维护开始/结束日期和时间')
+        return
+      }
+      if (formData.maintenanceStartDate < todayStr) {
+        alert('维护开始日期不能早于今天')
+        return
+      }
+      if (formData.maintenanceEndDate < formData.maintenanceStartDate) {
+        alert('维护结束日期不能早于维护开始日期')
+        return
+      }
+      const start = new Date(`${formData.maintenanceStartDate}T${formData.maintenanceStartTime}`)
+      const end = new Date(`${formData.maintenanceEndDate}T${formData.maintenanceEndTime}`)
+      if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) {
+        alert('维护结束时间必须晚于维护开始时间')
+        return
+      }
+    }
 
     const payload: any = {
       name: formData.name,
@@ -339,8 +388,7 @@ export default function Venues() {
           />
         </motion.div>
 
-        {/* Add button — only SUPER_ADMIN and OPERATOR */}
-        {['SUPER_ADMIN', 'ADMIN', 'OPERATOR'].includes(useAuthStore.getState().user?.role || '') && (
+        {canManageVenues && (
           <motion.button
             initial={{ opacity: 0, x: 10 }}
             animate={{ opacity: 1, x: 0 }}
@@ -385,7 +433,7 @@ export default function Venues() {
 
       {/* ─── Batch action bar ─── */}
       <AnimatePresence>
-        {selectedIds.length > 0 && (
+        {selectedIds.length > 0 && (canManageVenues || canMaintainVenues) && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -396,20 +444,24 @@ export default function Venues() {
               <span className="text-vr-body-sm text-vrtext-primary font-medium">
                 已选择 {selectedIds.length} 项
               </span>
-              <button
-                onClick={() => setShowBatchDelete(true)}
-                disabled={batchDeleteMutation.isPending}
-                className="h-8 px-3 rounded-lg bg-vrerror text-white text-vr-body-sm font-medium hover:bg-vrerror/90 transition-colors disabled:opacity-50"
-              >
-                {batchDeleteMutation.isPending ? '删除中...' : '批量删除'}
-              </button>
-              <button
-                onClick={() => setShowBatchStatus(true)}
-                disabled={batchUpdateStatusMutation.isPending}
-                className="h-8 px-3 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
-              >
-                {batchUpdateStatusMutation.isPending ? '更新中...' : '批量变更状态'}
-              </button>
+              {canManageVenues && (
+                <button
+                  onClick={() => setShowBatchDelete(true)}
+                  disabled={batchDeleteMutation.isPending}
+                  className="h-8 px-3 rounded-lg bg-vrerror text-white text-vr-body-sm font-medium hover:bg-vrerror/90 transition-colors disabled:opacity-50"
+                >
+                  {batchDeleteMutation.isPending ? '删除中...' : '批量删除'}
+                </button>
+              )}
+              {canMaintainVenues && (
+                <button
+                  onClick={() => setShowBatchStatus(true)}
+                  disabled={batchUpdateStatusMutation.isPending}
+                  className="h-8 px-3 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {batchUpdateStatusMutation.isPending ? '更新中...' : '批量变更状态'}
+                </button>
+              )}
             </div>
             <button
               onClick={() => setSelectedIds([])}
@@ -524,31 +576,35 @@ export default function Venues() {
 
                   {/* Status */}
                   <div className="flex justify-center">
-                    <StatusBadge status={venue.status} />
+                    <StatusBadge venue={venue} />
                   </div>
 
                   {/* Actions */}
                   <div className="flex items-center justify-end gap-2">
-                    <button
-                      onClick={() => openEdit(venue)}
-                      className="p-2 rounded-lg text-vrtext-secondary hover:text-vr-blue hover:bg-[rgba(59,130,246,0.1)] transition-all duration-150"
-                      title="编辑"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => openDelete(venue)}
-                      disabled={venue.status === 'maintenance'}
-                      className={cn(
-                        'p-2 rounded-lg transition-all duration-150',
-                        venue.status === 'maintenance'
-                          ? 'text-vrtext-muted cursor-not-allowed'
-                          : 'text-vrtext-secondary hover:text-vr-red hover:bg-[rgba(239,68,68,0.1)]'
-                      )}
-                      title={venue.status === 'maintenance' ? '维护中场地不可删除' : '删除'}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {canMaintainVenues && (
+                      <button
+                        onClick={() => openEdit(venue)}
+                        className="p-2 rounded-lg text-vrtext-secondary hover:text-vr-blue hover:bg-[rgba(59,130,246,0.1)] transition-all duration-150"
+                        title="编辑"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    )}
+                    {canManageVenues && (
+                      <button
+                        onClick={() => openDelete(venue)}
+                        disabled={venue.status === 'maintenance'}
+                        className={cn(
+                          'p-2 rounded-lg transition-all duration-150',
+                          venue.status === 'maintenance'
+                            ? 'text-vrtext-muted cursor-not-allowed'
+                            : 'text-vrtext-secondary hover:text-vr-red hover:bg-[rgba(239,68,68,0.1)]'
+                        )}
+                        title={venue.status === 'maintenance' ? '维护中场地不可删除' : '删除'}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </motion.div>
               ))
@@ -756,8 +812,16 @@ export default function Venues() {
                       </label>
                       <input
                         type="date"
+                        min={todayStr}
                         value={formData.maintenanceStartDate || ''}
-                        onChange={(e) => setFormData((p: any) => ({ ...p, maintenanceStartDate: e.target.value }))}
+                        onChange={(e) => {
+                          const startDate = e.target.value
+                          setFormData((p: any) => ({
+                            ...p,
+                            maintenanceStartDate: startDate,
+                            maintenanceEndDate: p.maintenanceEndDate && p.maintenanceEndDate < startDate ? startDate : p.maintenanceEndDate,
+                          }))
+                        }}
                         className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vr-blue"
                       />
                     </div>
@@ -767,6 +831,7 @@ export default function Venues() {
                       </label>
                       <input
                         type="date"
+                        min={formData.maintenanceStartDate || todayStr}
                         value={formData.maintenanceEndDate || ''}
                         onChange={(e) => setFormData((p: any) => ({ ...p, maintenanceEndDate: e.target.value }))}
                         className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vr-blue"
@@ -789,6 +854,7 @@ export default function Venues() {
                       </label>
                       <input
                         type="time"
+                        min={formData.maintenanceEndDate === formData.maintenanceStartDate ? formData.maintenanceStartTime : undefined}
                         value={formData.maintenanceEndTime || ''}
                         onChange={(e) => setFormData((p: any) => ({ ...p, maintenanceEndTime: e.target.value }))}
                         className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vr-blue"

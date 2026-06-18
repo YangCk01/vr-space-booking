@@ -5,6 +5,17 @@ import { prisma } from '../utils/prisma'
 import { success, error } from '../utils/response'
 import { logAudit } from '../middleware/auditLog'
 
+function formatRole(role: any) {
+  return {
+    id: role.id,
+    name: role.name,
+    description: role.description,
+    isSystem: role.isSystem,
+    permissions: (role.permissions || []).map((rp: any) => rp.permission).filter(Boolean),
+    userCount: role._count?.users ?? 0,
+  }
+}
+
 export const createRoleValidators = [
   body('name').notEmpty().withMessage('角色名称不能为空'),
   body('permissionIds').optional().isArray().withMessage('权限ID必须为数组'),
@@ -84,7 +95,7 @@ export async function createRole(req: AuthenticatedRequest, res: Response) {
       reason: '角色权限管理',
     })
 
-    return success(res, role, '角色创建成功', 201)
+    return success(res, formatRole(role), '角色创建成功', 201)
   } catch (err) {
     const message = (err as Error).message
     return error(res, message, message.includes('权限不存在') ? 400 : 500)
@@ -103,7 +114,7 @@ export async function listRoles(req: AuthenticatedRequest, res: Response) {
       orderBy: { name: 'asc' },
     })
 
-    return success(res, roles)
+    return success(res, roles.map(formatRole))
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -220,7 +231,7 @@ export async function updateRole(req: AuthenticatedRequest, res: Response) {
       reason: '角色权限管理',
     })
 
-    return success(res, refreshed, '角色更新成功')
+    return success(res, refreshed ? formatRole(refreshed) : null, '角色更新成功')
   } catch (err) {
     const message = (err as Error).message
     return error(res, message, message.includes('权限不存在') ? 400 : 500)
@@ -290,6 +301,9 @@ export async function assignRolesToUser(req: AuthenticatedRequest, res: Response
     })
     if (roles.length !== (roleIds as string[]).length) {
       return error(res, '部分角色不存在', 400)
+    }
+    if (roles.some((role) => role.name === 'SUPER_ADMIN') && req.user?.role !== 'SUPER_ADMIN') {
+      return error(res, '只有主账号可以分配主账号角色', 403)
     }
 
     await prisma.user.update({

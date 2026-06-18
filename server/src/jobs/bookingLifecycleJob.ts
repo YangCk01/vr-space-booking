@@ -7,7 +7,6 @@ interface LifecycleConfig {
   verifyAdvanceMinutes: number
   lateBufferMinutes: number
   noShowDeadlineMinutes: number
-  noShowPenaltyRate: number
   enableAutoNoShow: boolean
   allowOvertime: boolean
   overtimeMinutes: number
@@ -18,7 +17,6 @@ async function getLifecycleConfig(): Promise<LifecycleConfig> {
     'verify_advance_minutes',
     'late_buffer_minutes',
     'no_show_deadline_minutes',
-    'no_show_penalty_rate',
     'enable_auto_no_show',
     'booking_allow_overtime',
     'booking_overtime_minutes',
@@ -35,7 +33,7 @@ async function getLifecycleConfig(): Promise<LifecycleConfig> {
     verifyAdvanceMinutes: map.verify_advance_minutes ?? 15,
     lateBufferMinutes: map.late_buffer_minutes ?? 10,
     noShowDeadlineMinutes: map.no_show_deadline_minutes ?? 15,
-    noShowPenaltyRate: map.no_show_penalty_rate ?? 100,
+
     enableAutoNoShow: map.enable_auto_no_show ?? true,
     allowOvertime: map.booking_allow_overtime ?? false,
     overtimeMinutes: map.booking_overtime_minutes ?? 10,
@@ -73,17 +71,71 @@ export async function processBookingLifecycle(now = new Date()) {
     const diffMs = start.getTime() - now.getTime()
     // 开场前 verifyAdvanceMinutes 分钟内触发，开场后不触发
     if (diffMs > 0 && diffMs <= cfg.verifyAdvanceMinutes * 60 * 1000) {
-      if (b.order && b.order.status === 'PAID') {
-        await prisma.order.update({
-          where: { id: b.order.id },
-          data: { status: 'READY_TO_VERIFY' },
+      // 把订单和预约的状态更新放到同一个事务，避免两边不一致
+      await prisma.$transaction(async (tx) => {
+        if (b.order && b.order.status === 'PAID') {
+          await tx.order.update({
+            where: { id: b.order.id },
+            data: { status: 'READY_TO_VERIFY' },
+          })
+        }
+        if (b.status === 'CONFIRMED') {
+          await tx.booking.update({
+            where: { id: b.id },
+            data: { status: 'READY' },
+          })
+        }
+      })
+    }
+  }
+
+  // ── 1.5 兜底补偿：Booking/Order READY 只允许存在于开场前核销窗口内 ──
+  const inconsistentBookings = await prisma.booking.findMany({
+    where: {
+      status: { in: ['CONFIRMED', 'READY'] },
+      order: { status: { in: ['PAID', 'READY_TO_VERIFY'] } },
+    },
+    include: { order: true },
+  })
+  for (const b of inconsistentBookings) {
+    if (b.order) {
+      const start = getBookingStartTime(b.date, b.startTime)
+      const readyAt = new Date(start.getTime() - cfg.verifyAdvanceMinutes * 60 * 1000)
+      const noShowDeadline = new Date(start.getTime() + cfg.noShowDeadlineMinutes * 60 * 1000)
+      const inVerifyWindow = now >= readyAt && now < noShowDeadline
+
+      if (inVerifyWindow) {
+        await prisma.$transaction(async (tx) => {
+          if (b.status === 'CONFIRMED') {
+            await tx.booking.update({
+              where: { id: b.id },
+              data: { status: 'READY' },
+            })
+          }
+          if (b.order && b.order.status === 'PAID') {
+            await tx.order.update({
+              where: { id: b.order.id },
+              data: { status: 'READY_TO_VERIFY' },
+            })
+          }
         })
-      }
-      if (b.status === 'CONFIRMED') {
-        await prisma.booking.update({
-          where: { id: b.id },
-          data: { status: 'READY' },
+        console.log(`[BookingLifecycleJob] 兜底同步 Booking/Order ${b.id} → READY_TO_VERIFY`)
+      } else if (!inVerifyWindow) {
+        await prisma.$transaction(async (tx) => {
+          if (b.status === 'READY') {
+            await tx.booking.update({
+              where: { id: b.id },
+              data: { status: 'CONFIRMED' },
+            })
+          }
+          if (b.order && b.order.status === 'READY_TO_VERIFY') {
+            await tx.order.update({
+              where: { id: b.order.id },
+              data: { status: 'PAID' },
+            })
+          }
         })
+        console.log(`[BookingLifecycleJob] 修正过早待核销 Booking ${b.id}`)
       }
     }
   }
@@ -105,7 +157,7 @@ export async function processBookingLifecycle(now = new Date()) {
           where: { id: b.id },
           data: { status: 'PLAYING', playingStartedAt: now },
         })
-        if (b.order) {
+        if (b.order && b.order.status !== 'COMPLETED') {
           await tx.order.update({
             where: { id: b.order.id },
             data: { status: 'PLAYING', playingStartedAt: now },
@@ -191,28 +243,14 @@ export async function processBookingLifecycle(now = new Date()) {
             data: { status: 'NO_SHOW', noShowAt: now },
           })
           if (b.order && ['PAID', 'READY_TO_VERIFY'].includes(b.order.status)) {
-            const penaltyAmount = Math.floor((b.order.amount || 0) * cfg.noShowPenaltyRate / 100)
             await tx.order.update({
               where: { id: b.order.id },
               data: {
                 status: 'NO_SHOW',
                 noShowAt: now,
                 noShowReason: 'auto',
-                penaltyAmount,
               },
             })
-            // 记录 No-Show 财务流水
-            if (b.order.userId) {
-              await tx.balanceTransaction.create({
-                data: {
-                  userId: b.order.userId,
-                  orderId: b.order.id,
-                  type: 'NO_SHOW_PENALTY',
-                  amount: penaltyAmount,
-                  remark: `顾客超时未到场，系统自动标记爽约，违约金比例 ${cfg.noShowPenaltyRate}%`,
-                },
-              })
-            }
             // 爽约，释放设备
             try {
               await releaseEquipment(b.id)
@@ -226,14 +264,11 @@ export async function processBookingLifecycle(now = new Date()) {
               const bookingDate = b.date
                 ? new Date(b.date).toLocaleDateString('zh-CN')
                 : ''
-              const penaltyText = penaltyAmount > 0
-                ? `已扣除违约金 ¥${(penaltyAmount / 100).toFixed(2)}`
-                : '未产生违约金'
               pushNotification(
                 b.order.userId,
                 'NO_SHOW',
                 '预约已标记为爽约',
-                `您在 ${bookingDate} ${b.startTime} 的预约因超时未到场被系统自动标记为爽约，${penaltyText}`
+                `您在 ${bookingDate} ${b.startTime} 的预约因超时未到场被系统自动标记为爽约`
               ).catch((e) => console.error('[markNoShow] 推送通知失败:', e))
             }
           }

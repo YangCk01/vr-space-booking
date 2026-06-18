@@ -53,6 +53,8 @@ import { getSystemConfigs } from '@/api/systemConfig'
 import { giftPoints, giftCoupon, getPointsGiftRecords, getCouponGiftRecords } from '@/api/gift'
 import { getUserRechargeRecords } from '@/api/finance'
 import { buildMemberLevelsFromConfig } from '@/lib/memberLevels'
+import { hasPermission } from '@/lib/permissions'
+import { useAuthStore } from '@/stores/authStore'
 
 function useDynamicLevelTabs(levels: Array<{ key: string; name: string }>) {
   return [
@@ -195,6 +197,9 @@ function UserDetailSheet({
   onDisableAccount,
   isUpdating,
   levelsConfig,
+  canEditUser,
+  canViewGiftRecords,
+  canViewRechargeRecords,
 }: {
   user: ApiUser | null
   open: boolean
@@ -204,29 +209,33 @@ function UserDetailSheet({
   onDisableAccount: () => void
   isUpdating: boolean
   levelsConfig?: Array<{ key: string; name: string; discount: number }>
+  canEditUser: boolean
+  canViewGiftRecords: boolean
+  canViewRechargeRecords: boolean
 }) {
   if (!user) return null
 
   const avatarColor = getAvatarColor(user.name)
   const [level, setLevel] = useState(user.level)
   const [activeTab, setActiveTab] = useState<'info' | 'finance'>('info')
+  const canViewFinanceTab = canViewGiftRecords || canViewRechargeRecords
 
   const { data: pointsRecords } = useQuery({
     queryKey: ['gift-points-records', user.id],
     queryFn: () => getPointsGiftRecords({ userId: user.id, pageSize: 20 }),
-    enabled: open && activeTab === 'finance',
+    enabled: open && activeTab === 'finance' && canViewGiftRecords,
   })
 
   const { data: couponRecords } = useQuery({
     queryKey: ['gift-coupon-records', user.id],
     queryFn: () => getCouponGiftRecords({ userId: user.id, pageSize: 20 }),
-    enabled: open && activeTab === 'finance',
+    enabled: open && activeTab === 'finance' && canViewGiftRecords,
   })
 
   const { data: rechargeRecords } = useQuery({
     queryKey: ['user-recharge-records', user.id],
     queryFn: () => getUserRechargeRecords(user.id),
-    enabled: open && activeTab === 'finance',
+    enabled: open && activeTab === 'finance' && canViewRechargeRecords,
   })
 
   // Sync level when user changes
@@ -339,16 +348,18 @@ function UserDetailSheet({
             >
               用户信息
             </button>
-            <button
-              onClick={() => setActiveTab('finance')}
-              className={`flex-1 h-8 rounded-md text-vr-caption font-medium transition-colors ${
-                activeTab === 'finance'
-                  ? 'bg-vraccent-primary text-white'
-                  : 'text-vrtext-secondary hover:text-vrtext-primary'
-              }`}
-            >
-              财务记录
-            </button>
+            {canViewFinanceTab && (
+              <button
+                onClick={() => setActiveTab('finance')}
+                className={`flex-1 h-8 rounded-md text-vr-caption font-medium transition-colors ${
+                  activeTab === 'finance'
+                    ? 'bg-vraccent-primary text-white'
+                    : 'text-vrtext-secondary hover:text-vrtext-primary'
+                }`}
+              >
+                财务记录
+              </button>
+            )}
           </div>
 
           {activeTab === 'info' && (
@@ -384,15 +395,18 @@ function UserDetailSheet({
           </motion.div>
           )}
 
-          {activeTab === 'finance' && (
+          {canViewFinanceTab && activeTab === 'finance' && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1, duration: 0.3 }}
-            className="grid grid-cols-2 gap-4"
+            className={cn(
+              'grid gap-4',
+              canViewGiftRecords && canViewRechargeRecords ? 'grid-cols-2' : 'grid-cols-1'
+            )}
           >
             {/* Left: 赠送记录 */}
-            <div className="space-y-3">
+            {canViewGiftRecords && <div className="space-y-3">
               {/* Points Gift Records */}
               <div className="bg-vrbg-elevated rounded-xl p-4">
                 <h4 className="text-vr-caption text-vrtext-secondary font-medium mb-2">积分赠送</h4>
@@ -443,10 +457,10 @@ function UserDetailSheet({
                   </div>
                 )}
               </div>
-            </div>
+            </div>}
 
             {/* Right: 充值记录 */}
-            <div className="bg-vrbg-elevated rounded-xl p-4">
+            {canViewRechargeRecords && <div className="bg-vrbg-elevated rounded-xl p-4">
               <h4 className="text-vr-caption text-vrtext-secondary font-medium mb-2">充值记录</h4>
               {(rechargeRecords || []).length === 0 ? (
                 <p className="text-vr-caption text-vrtext-muted">暂无记录</p>
@@ -470,7 +484,7 @@ function UserDetailSheet({
                   ))}
                 </div>
               )}
-            </div>
+            </div>}
           </motion.div>
           )}
 
@@ -479,22 +493,24 @@ function UserDetailSheet({
         </div>
 
         {/* Bottom Actions */}
-        <div className="p-6 border-t border-vrborder-subtle flex gap-3">
-          <button
-            onClick={onResetPassword}
-            disabled={isUpdating}
-            className="flex-1 h-10 rounded-lg border border-vrborder-subtle text-vrtext-secondary text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            重置密码
-          </button>
-          <button
-            onClick={onDisableAccount}
-            disabled={isUpdating}
-            className="flex-1 h-10 rounded-lg border border-vrerror text-vrerror text-vr-body-sm font-medium hover:bg-vrerror/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            禁用账户
-          </button>
-        </div>
+        {canEditUser && (
+          <div className="p-6 border-t border-vrborder-subtle flex gap-3">
+            <button
+              onClick={onResetPassword}
+              disabled={isUpdating}
+              className="flex-1 h-10 rounded-lg border border-vrborder-subtle text-vrtext-secondary text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              重置密码
+            </button>
+            <button
+              onClick={onDisableAccount}
+              disabled={isUpdating}
+              className="flex-1 h-10 rounded-lg border border-vrerror text-vrerror text-vr-body-sm font-medium hover:bg-vrerror/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              禁用账户
+            </button>
+          </div>
+        )}
       </SheetContent>
     </Sheet>
   )
@@ -652,6 +668,10 @@ function DeleteConfirmDialog({
 
 export default function UsersPage() {
   const queryClient = useQueryClient()
+  const currentUser = useAuthStore((state) => state.user)
+  const canEditUsers = hasPermission(currentUser, 'user:edit')
+  const canGiftUsers = hasPermission(currentUser, 'user:gift')
+  const canViewRechargeRecords = hasPermission(currentUser, 'finance:read')
   const [activeTab, setActiveTab] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -901,20 +921,22 @@ export default function UsersPage() {
               />
             </motion.div>
 
-            <motion.button
-              initial={{ opacity: 0, x: 10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.3, delay: 0.15 }}
-              onClick={() => {
-                setCreateForm({ name: '', phone: '', password: '', email: '', birthday: '', level: 'NORMAL', status: 'ACTIVE' })
-                setCreateError('')
-                setCreateSheetOpen(true)
-              }}
-              className="h-9 px-4 bg-vraccent-primary text-white rounded-lg text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors flex items-center gap-1.5"
-            >
-              <Plus className="w-4 h-4" />
-              新增用户
-            </motion.button>
+            {canEditUsers && (
+              <motion.button
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.3, delay: 0.15 }}
+                onClick={() => {
+                  setCreateForm({ name: '', phone: '', password: '', email: '', birthday: '', level: 'NORMAL', status: 'ACTIVE' })
+                  setCreateError('')
+                  setCreateSheetOpen(true)
+                }}
+                className="h-9 px-4 bg-vraccent-primary text-white rounded-lg text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                新增用户
+              </motion.button>
+            )}
           </div>
         </div>
 
@@ -983,7 +1005,7 @@ export default function UsersPage() {
 
         {/* Batch Action Bar */}
         <AnimatePresence>
-          {selectedIds.length > 0 && (
+          {canGiftUsers && selectedIds.length > 0 && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -1039,20 +1061,22 @@ export default function UsersPage() {
             <table className="w-full">
               <thead>
                 <tr className="bg-vrbg-elevated">
-                  <th className="px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[40px]">
-                    <input
-                      type="checkbox"
-                      checked={filteredUsers.length > 0 && selectedIds.length === filteredUsers.length}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedIds(filteredUsers.map((u) => u.id))
-                        } else {
-                          setSelectedIds([])
-                        }
-                      }}
-                      className="w-4 h-4 accent-vraccent-primary cursor-pointer"
-                    />
-                  </th>
+                  {canGiftUsers && (
+                    <th className="px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[40px]">
+                      <input
+                        type="checkbox"
+                        checked={filteredUsers.length > 0 && selectedIds.length === filteredUsers.length}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedIds(filteredUsers.map((u) => u.id))
+                          } else {
+                            setSelectedIds([])
+                          }
+                        }}
+                        className="w-4 h-4 accent-vraccent-primary cursor-pointer"
+                      />
+                    </th>
+                  )}
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">用户</th>
                   <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">手机号</th>
                   <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">会员等级</th>
@@ -1072,20 +1096,22 @@ export default function UsersPage() {
                       transition={{ duration: 0.2, delay: Math.min(idx * 0.04, 0.2) }}
                       className="h-[60px] border-t border-vrborder-subtle hover:bg-vrbg-elevated/60 transition-colors"
                     >
-                      <td className="px-4 py-3">
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.includes(user.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedIds((prev) => [...prev, user.id])
-                            } else {
-                              setSelectedIds((prev) => prev.filter((id) => id !== user.id))
-                            }
-                          }}
-                          className="w-4 h-4 accent-vraccent-primary cursor-pointer"
-                        />
-                      </td>
+                      {canGiftUsers && (
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(user.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedIds((prev) => [...prev, user.id])
+                              } else {
+                                setSelectedIds((prev) => prev.filter((id) => id !== user.id))
+                              }
+                            }}
+                            className="w-4 h-4 accent-vraccent-primary cursor-pointer"
+                          />
+                        </td>
+                      )}
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div
@@ -1114,13 +1140,15 @@ export default function UsersPage() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => handleOpenEdit(user)}
-                            className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vraccent-primary hover:bg-vraccent-primary/10 transition-colors"
-                            title="编辑"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
+                          {canEditUsers && (
+                            <button
+                              onClick={() => handleOpenEdit(user)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vraccent-primary hover:bg-vraccent-primary/10 transition-colors"
+                              title="编辑"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             onClick={() => handleOpenDetail(user)}
                             className="w-7 h-7 rounded-lg flex items-center justify-center text-vraccent-primary hover:bg-vraccent-primary/10 transition-colors"
@@ -1128,23 +1156,27 @@ export default function UsersPage() {
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
-                          <button
-                            onClick={() => handleOpenDelete(user)}
-                            className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrerror hover:bg-vrerror/10 transition-colors"
-                            title="删除"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => {
-                              setGiftChoiceUser(user)
-                              setGiftChoiceOpen(true)
-                            }}
-                            className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrsuccess hover:bg-vrsuccess/10 transition-colors"
-                            title="赠送"
-                          >
-                            <Gift className="w-3.5 h-3.5" />
-                          </button>
+                          {canEditUsers && (
+                            <button
+                              onClick={() => handleOpenDelete(user)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrerror hover:bg-vrerror/10 transition-colors"
+                              title="删除"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canGiftUsers && (
+                            <button
+                              onClick={() => {
+                                setGiftChoiceUser(user)
+                                setGiftChoiceOpen(true)
+                              }}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrsuccess hover:bg-vrsuccess/10 transition-colors"
+                              title="赠送"
+                            >
+                              <Gift className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </motion.tr>
@@ -1224,6 +1256,9 @@ export default function UsersPage() {
         onDisableAccount={handleDisableAccount}
         isUpdating={updateMutation.isPending}
         levelsConfig={memberLevels}
+        canEditUser={canEditUsers}
+        canViewGiftRecords={canGiftUsers}
+        canViewRechargeRecords={canViewRechargeRecords}
       />
 
       {/* User Edit Sheet */}

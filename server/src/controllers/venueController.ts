@@ -1,8 +1,180 @@
 import { Request, Response } from 'express'
 import { body, param, validationResult } from 'express-validator'
+import type { Prisma, Venue } from '@prisma/client'
 import { AuthenticatedRequest } from '../types'
 import { prisma } from '../utils/prisma'
 import { success, error, paginated } from '../utils/response'
+import { pushNotification } from './notificationController'
+
+function getMaintenanceEnd(venue: Venue): Date | null {
+  if (!venue.maintenanceEndDate || !venue.maintenanceEndTime) return null
+  const end = new Date(venue.maintenanceEndDate)
+  const [h, m] = venue.maintenanceEndTime.split(':').map(Number)
+  end.setHours(h, m, 0, 0)
+  return end
+}
+
+function isMaintenanceExpired(venue: Venue): boolean {
+  const end = getMaintenanceEnd(venue)
+  return end !== null && new Date() > end
+}
+
+async function restoreExpiredMaintenance(venueId?: string) {
+  const where: any = {
+    status: 'MAINTENANCE',
+    maintenanceEndDate: { not: null },
+    maintenanceEndTime: { not: null },
+  }
+  if (venueId) where.id = venueId
+
+  const venues = await prisma.venue.findMany({ where })
+  const expiredIds = venues.filter(isMaintenanceExpired).map((v) => v.id)
+
+  if (expiredIds.length > 0) {
+    await prisma.venue.updateMany({
+      where: { id: { in: expiredIds } },
+      data: {
+        status: 'FREE',
+        maintenanceStartDate: null,
+        maintenanceEndDate: null,
+        maintenanceStartTime: null,
+        maintenanceEndTime: null,
+      },
+    })
+  }
+}
+
+function dateOnly(value: Date | string): string {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10)
+}
+
+function timeToMinutes(value: string): number {
+  const [h, m] = value.split(':').map(Number)
+  return h * 60 + m
+}
+
+function overlapsMaintenance(venue: Venue, booking: { date: Date; startTime: string; endTime: string }) {
+  if (
+    venue.status !== 'MAINTENANCE' ||
+    !venue.maintenanceStartDate ||
+    !venue.maintenanceEndDate ||
+    !venue.maintenanceStartTime ||
+    !venue.maintenanceEndTime
+  ) {
+    return false
+  }
+
+  const bookingDate = dateOnly(booking.date)
+  const startDate = dateOnly(venue.maintenanceStartDate)
+  const endDate = dateOnly(venue.maintenanceEndDate)
+  if (bookingDate < startDate || bookingDate > endDate) return false
+
+  const bookingStart = timeToMinutes(booking.startTime)
+  const bookingEnd = timeToMinutes(booking.endTime)
+  const maintenanceStart = timeToMinutes(venue.maintenanceStartTime)
+  const maintenanceEnd = timeToMinutes(venue.maintenanceEndTime)
+  return bookingStart < maintenanceEnd && bookingEnd > maintenanceStart
+}
+
+async function syncMaintenanceAffectedOrders(client: Prisma.TransactionClient | typeof prisma, venue: Venue) {
+  const disruptionSource = `VENUE:${venue.id}`
+  const currentDisruptedBookings = await client.booking.findMany({
+    where: {
+      venueId: venue.id,
+      order: {
+        disruptionStatus: 'VENUE_MAINTENANCE',
+        disruptionSource,
+        status: { in: ['PAID', 'READY_TO_VERIFY'] },
+      },
+    },
+    include: { order: true },
+  })
+
+  const hasActiveMaintenance =
+    venue.status === 'MAINTENANCE' &&
+    !!venue.maintenanceStartDate &&
+    !!venue.maintenanceEndDate &&
+    !!venue.maintenanceStartTime &&
+    !!venue.maintenanceEndTime
+
+  const bookings = hasActiveMaintenance
+    ? await client.booking.findMany({
+      where: {
+        venueId: venue.id,
+        status: { in: ['CONFIRMED', 'READY'] },
+        date: {
+          gte: venue.maintenanceStartDate!,
+          lte: venue.maintenanceEndDate!,
+        },
+        order: {
+          status: { in: ['PAID', 'READY_TO_VERIFY'] },
+        },
+      },
+      include: { order: true },
+    })
+    : []
+
+  const affected = bookings.filter((booking) => booking.order && overlapsMaintenance(venue, booking))
+  const affectedOrderIds = new Set(affected.map((booking) => booking.order!.id))
+  const stale = currentDisruptedBookings.filter((booking) => booking.order && !affectedOrderIds.has(booking.order.id))
+  const affectedAt = new Date()
+
+  for (const booking of stale) {
+    const order = booking.order!
+    const metadata = (order.metadata as Record<string, any>) || {}
+    await client.order.update({
+      where: { id: order.id },
+      data: {
+        disruptionStatus: 'NONE',
+        disruptionReason: null,
+        disruptionSource: null,
+        disruptionAt: null,
+        metadata: {
+          ...metadata,
+          maintenanceDisruptionResolvedAt: affectedAt.toISOString(),
+        },
+      },
+    })
+  }
+
+  for (const booking of affected) {
+    const order = booking.order!
+    const wasAlreadyAffected = order.disruptionStatus === 'VENUE_MAINTENANCE' && order.disruptionSource === disruptionSource
+    const metadata = (order.metadata as Record<string, any>) || {}
+    await client.order.update({
+      where: { id: order.id },
+      data: {
+        disruptionStatus: 'VENUE_MAINTENANCE',
+        disruptionReason: '场地故障维护',
+        disruptionSource,
+        disruptionAt: affectedAt,
+        metadata: {
+          ...metadata,
+          maintenanceDisruption: {
+            venueId: venue.id,
+            venueName: venue.name,
+            startDate: dateOnly(venue.maintenanceStartDate!),
+            endDate: dateOnly(venue.maintenanceEndDate!),
+            startTime: venue.maintenanceStartTime,
+            endTime: venue.maintenanceEndTime,
+            affectedAt: affectedAt.toISOString(),
+          },
+        },
+      },
+    })
+
+    if (!wasAlreadyAffected && order.userId) {
+      await pushNotification(
+        order.userId,
+        'VENUE_MAINTENANCE',
+        '场地维护影响预约',
+        `您的订单 ${order.orderNo} 因场地维护受影响，可免费改签或全额退款。`
+      )
+    }
+  }
+
+  return { affected: affected.length, cleared: stale.length }
+}
 
 export const createValidators = [
   body('name').notEmpty().withMessage('场地名称不能为空'),
@@ -21,6 +193,8 @@ export const updateValidators = [
 
 export async function list(req: AuthenticatedRequest, res: Response) {
   try {
+    await restoreExpiredMaintenance()
+
     const status = req.query.status as string | undefined
     const search = req.query.search as string | undefined
     const page = (req.query.page as string) || '1'
@@ -74,15 +248,87 @@ export async function list(req: AuthenticatedRequest, res: Response) {
   }
 }
 
+export async function publicList(req: Request, res: Response) {
+  try {
+    await restoreExpiredMaintenance()
+
+    const status = req.query.status as string | undefined
+    const search = req.query.search as string | undefined
+    const page = (req.query.page as string) || '1'
+    const pageSize = (req.query.pageSize as string) || '100'
+    const pageNum = parseInt(page as string, 10)
+    const sizeNum = parseInt(pageSize as string, 10)
+
+    const where: any = { status: { not: 'DISABLED' } }
+
+    if (status && status !== 'all') {
+      const statusMap: Record<string, string> = {
+        free: 'FREE',
+        'in-use': 'IN_USE',
+        'in_use': 'IN_USE',
+        maintenance: 'MAINTENANCE',
+      }
+      where.status = statusMap[status.toLowerCase()] || status.toUpperCase()
+    }
+
+    if (search) {
+      where.AND = where.AND || []
+      where.AND.push({
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { theme: { contains: search, mode: 'insensitive' } },
+          { address: { contains: search, mode: 'insensitive' } },
+        ],
+      })
+    }
+
+    const [venues, total] = await Promise.all([
+      prisma.venue.findMany({
+        where,
+        skip: (pageNum - 1) * sizeNum,
+        take: sizeNum,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.venue.count({ where }),
+    ])
+
+    return paginated(res, venues, pageNum, sizeNum, total)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+export async function publicGetById(req: Request, res: Response) {
+  try {
+    const id = req.params.id as string
+
+    await restoreExpiredMaintenance(id)
+
+    const venue = await prisma.venue.findFirst({
+      where: { id, status: { not: 'DISABLED' } },
+    })
+
+    if (!venue) {
+      return error(res, '场地不存在', 404)
+    }
+
+    return success(res, venue)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
 export async function getById(req: AuthenticatedRequest, res: Response) {
   try {
     const id = req.params.id as string
-    
+
     // MANAGER 只能查看被分配的场地
     if (req.user?.role === 'MANAGER' && !req.user.managedVenueIds?.includes(id)) {
       return error(res, '无权访问该场地', 403)
     }
-    
+
+    await restoreExpiredMaintenance(id)
+
     const venue = await prisma.venue.findUnique({ where: { id } })
 
     if (!venue) {
@@ -125,7 +371,8 @@ export async function create(req: Request, res: Response) {
         maintenanceEndTime: req.body.maintenanceEndTime || null,
       },
     })
-    return success(res, venue, '场地创建成功', 201)
+    const maintenanceSync = await syncMaintenanceAffectedOrders(prisma, venue)
+    return success(res, { ...venue, maintenanceSync }, '场地创建成功', 201)
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -169,7 +416,8 @@ export async function update(req: Request, res: Response) {
       where: { id },
       data,
     })
-    return success(res, venue, '场地更新成功')
+    const maintenanceSync = await syncMaintenanceAffectedOrders(prisma, venue)
+    return success(res, { ...venue, maintenanceSync }, '场地更新成功')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }

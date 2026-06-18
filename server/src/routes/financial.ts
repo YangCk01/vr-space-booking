@@ -1,25 +1,26 @@
 import { Router } from 'express'
-import { authenticate, requireRole } from '../middleware/auth'
+import { authenticate } from '../middleware/auth'
+import { requirePermission } from '../middleware/rbac'
 import * as controller from '../controllers/financialController'
 import * as refundController from '../controllers/refundController'
 
 const router = Router()
 
-router.use(authenticate, requireRole('SUPER_ADMIN', 'ADMIN', 'FINANCE'))
+router.use(authenticate)
 
 // 财务报表
-router.get('/daily-report', controller.getDailyReport)
-router.get('/daily-reports', controller.listDailyReports)
-router.post('/generate-report', controller.generateReport)
+router.get('/daily-report', requirePermission('finance:report'), controller.getDailyReport)
+router.get('/daily-reports', requirePermission('finance:report'), controller.listDailyReports)
+router.post('/generate-report', requirePermission('finance:report'), controller.generateReport)
 
 // 对账
-router.get('/reconcile', controller.reconcile)
+router.get('/reconcile', requirePermission('finance:reconcile'), controller.reconcile)
 
 // 流水查询
-router.get('/transactions', controller.listTransactions)
+router.get('/transactions', requirePermission('finance:read'), controller.listTransactions)
 
 // 退款清算
-router.get('/users/:id/refund-audit', refundController.auditRefund)
-router.post('/users/:id/refund-clear', refundController.executeRefundClear)
+router.get('/users/:id/refund-audit', requirePermission('finance:read'), refundController.auditRefund)
+router.post('/users/:id/refund-clear', requirePermission('finance:adjust'), refundController.executeRefundClear)
 
 export default router

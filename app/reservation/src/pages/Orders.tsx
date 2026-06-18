@@ -1,26 +1,49 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronLeft, ClipboardList, LogIn, XCircle, MapPin, Clock, Calendar, Users, Ticket, QrCode, Timer, Star } from 'lucide-react'
+import { ChevronLeft, ClipboardList, LogIn, XCircle, MapPin, Clock, Calendar, Users, Ticket, QrCode, Timer, Star, ArrowRight } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { getOrders, cancelOrder } from '@/api/orders'
+import { getOrders, cancelOrder, payOrder } from '@/api/orders'
 import { apiClient } from '@/api/client'
 import { getRefundRules, getBookingLifecycle } from '@/api/settings'
 import { useAuth } from '@/providers/AuthProvider'
 import { cn } from '@/lib/utils'
 import { SimpleQRCode } from '@/components/SimpleQRCode'
 import { useToast } from '@/hooks/useToast'
-import type { RefundTier, RefundRules } from '@/api/settings'
 import { getImageUrl } from '@/lib/imageUrl'
+import { getRefundInfo, canReschedule, formatAmount, timeToMinutes } from '@/lib/refund'
 import { getBookingTargetPath } from '@/lib/selectedVenue'
 
 const tabs = [
   { key: 'all', label: '全部' },
   { key: 'PENDING', label: '待支付' },
   { key: 'PAID', label: '待核销' },
+  { key: 'GROUP_BUY', label: '团购订单' },
   { key: 'COMPLETED', label: '已完成' },
   { key: 'CANCELLED', label: '已取消' },
 ]
+
+const groupBuySubTabs = [
+  { key: 'all', label: '全部' },
+  { key: 'pending_use', label: '待使用' },
+  { key: 'used', label: '已使用' },
+]
+
+function payMethodLabel(method?: string | null) {
+  if (!method) return '-'
+  const map: Record<string, string> = {
+    BALANCE: '余额支付',
+    WECHAT: '微信支付',
+    ALIPAY: '支付宝',
+    CASH: '现金',
+    SCANBOX: '扫码盒',
+  }
+  return map[method] || method
+}
+
+function isRescheduledOrder(o: any) {
+  return !o.groupBuyPackageId && (o.rescheduleCount || 0) > 0 && o.metadata?.originalStartTime
+}
 
 const statusMap: Record<string, { label: string; color: string }> = {
   PENDING: { label: '待支付', color: 'text-[var(--warning)]' },
@@ -34,72 +57,8 @@ const statusMap: Record<string, { label: string; color: string }> = {
 }
 
 /* ─── 阶梯退费计算（动态规则） ─── */
-function timeToMinutes(t: string) {
-  const [h, m] = t.split(':').map(Number)
-  return h * 60 + m
-}
 function minutesToTime(m: number) {
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
-}
-
-function canReschedule(order: any, lifecycle: any) {
-  if (!['PAID', 'READY_TO_VERIFY'].includes(order.status)) return false
-  const booking = order?.booking
-  if (!booking?.date || !booking?.startTime) return false
-  const startDate = new Date(booking.date)
-  const [h, m] = booking.startTime.split(':')
-  startDate.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
-  const now = new Date()
-  const minutesSinceStart = (now.getTime() - startDate.getTime()) / (1000 * 60)
-  const allowAfterStart = lifecycle?.rescheduleAllowAfterStart ?? true
-  const afterStartMinutes = lifecycle?.rescheduleAfterStartMinutes ?? 15
-  if (minutesSinceStart > afterStartMinutes) return false
-  if (minutesSinceStart > 0 && !allowAfterStart) return false
-  return true
-}
-
-function getRefundInfo(order: any, tiers: RefundTier[], cancelHours: number) {
-  const booking = order?.booking
-  if (!booking?.date || !booking?.startTime) {
-    return { rate: 0, refundAmount: 0, refundText: '¥0.00', canCancel: true, deadlineText: '', isExpired: false, activeTier: null as RefundTier | null }
-  }
-  const startDate = new Date(booking.date)
-  const [h, m] = booking.startTime.split(':')
-  startDate.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
-  const now = new Date()
-  const diffMs = startDate.getTime() - now.getTime()
-  const diffHours = diffMs / (1000 * 60 * 60)
-
-  // 按 hours 降序排列，找到第一个满足 diffHours >= hours 的规则
-  const sorted = [...tiers].sort((a, b) => b.hours - a.hours)
-  let activeTier: RefundTier | null = null
-  for (const tier of sorted) {
-    if (diffHours >= tier.hours) {
-      activeTier = tier
-      break
-    }
-  }
-  const rate = activeTier ? activeTier.rate / 100 : 0
-
-  const refundAmount = Math.floor((order.amount || 0) * rate)
-  const refundText = `¥${(refundAmount / 100).toFixed(2)}`
-
-  // 最迟取消提示（使用 cancelHours 作为不可取消阈值）
-  let deadlineText = ''
-  if (diffHours > cancelHours) {
-    const d = new Date(startDate.getTime() - cancelHours * 60 * 60 * 1000)
-    if (cancelHours >= 24) {
-      deadlineText = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前可取消`
-    } else {
-      deadlineText = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 前可取消`
-    }
-  } else if (diffHours > 0) {
-    deadlineText = `开场前${cancelHours}小时内不可取消`
-  } else {
-    deadlineText = '已开场，不可取消'
-  }
-
-  return { rate, refundAmount, refundText, canCancel: diffHours > cancelHours || order.status === 'PENDING', deadlineText, isExpired: diffHours <= 0, activeTier }
 }
 
 export default function Orders() {
@@ -110,6 +69,10 @@ export default function Orders() {
   const { toast, success: toastSuccess, error: toastError } = useToast()
   const initialTab = searchParams.get('tab') || 'all'
   const [activeTab, setActiveTab] = useState(tabs.some((t) => t.key === initialTab) ? initialTab : 'all')
+  const initialSubTab = searchParams.get('subTab') || 'all'
+  const [groupBuySubTab, setGroupBuySubTab] = useState(
+    groupBuySubTabs.some((t) => t.key === initialSubTab) ? initialSubTab : 'all'
+  )
   const [cancelId, setCancelId] = useState<string | null>(null)
   const [ticketOpen, setTicketOpen] = useState(false)
   const [ticketOrder, setTicketOrder] = useState<any>(null)
@@ -119,7 +82,6 @@ export default function Orders() {
   const [rescheduleOrder, setRescheduleOrder] = useState<any>(null)
   const [rescheduleDate, setRescheduleDate] = useState('')
   const [rescheduleTime, setRescheduleTime] = useState('')
-  const [reschedulePayMethod, setReschedulePayMethod] = useState<'BALANCE' | 'WECHAT' | 'ALIPAY'>('BALANCE')
 
   // 全局 tick 用于倒计时刷新
   const [tick, setTick] = useState(0)
@@ -173,7 +135,7 @@ export default function Orders() {
   const cancelHours = refundRulesData?.cancelHours ?? 2
 
   const cancelMutation = useMutation({
-    mutationFn: cancelOrder,
+    mutationFn: (id: string) => cancelOrder(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders'] })
       queryClient.invalidateQueries({ queryKey: ['usable-coupons'] })
@@ -188,20 +150,29 @@ export default function Orders() {
   })
 
   const rescheduleMutation = useMutation({
-    mutationFn: async ({ bookingId, date, startTime, payMethod }: { bookingId: string; date: string; startTime: string; payMethod?: string }) => {
-      const res = await apiClient.post(`/bookings/${bookingId}/reschedule`, { date, startTime, payMethod })
+    mutationFn: async ({ bookingId, date, startTime }: { bookingId: string; date: string; startTime: string }) => {
+      const res = await apiClient.post(`/bookings/${bookingId}/reschedule`, { date, startTime, payMethod: 'BALANCE' })
       return res.data
     },
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ['orders'] })
+    onSuccess: async (data: any) => {
+      const result = data.data
       queryClient.invalidateQueries({ queryKey: ['user-benefits'] })
+
+      // 收费改签：跳转到统一支付页支付改签费
+      if (result?.requirePayment && result?.feeOrder) {
+        navigate(`/pay/${result.feeOrder.id}`)
+        return
+      }
+
+      // 免费改签成功
       setRescheduleOpen(false)
       setRescheduleOrder(null)
       setRescheduleDate('')
       setRescheduleTime('')
-      const fee = data.data?.feeAmount ?? 0
-      const delta = data.data?.deltaAmount ?? 0
-      const freeUsed = data.data?.freeRescheduleUsed
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
+      const fee = result?.feeAmount ?? 0
+      const delta = result?.deltaAmount ?? 0
+      const freeUsed = result?.freeRescheduleUsed
       let msg = '改签成功！'
       if (freeUsed) msg += '已使用本月免费改签权益，免手续费。'
       else if (fee > 0) msg += `手续费：¥${(fee / 100).toFixed(2)}。`
@@ -228,7 +199,7 @@ export default function Orders() {
     enabled: !!rescheduleOrder?.booking?.venueId && !!rescheduleDate,
   })
 
-  // 计算所有时间段（含状态：available / joinable / full / occupied_by_other_game）
+  // 计算所有时间段（含状态：available / joinable / full / occupied_by_other_game / maintenance）
   const slotOptions = useMemo(() => {
     if (!venueDetail || !rescheduleOrder?.booking?.startTime || !rescheduleOrder?.booking?.endTime) return []
     const gameDuration = rescheduleOrder.booking.game?.duration
@@ -245,19 +216,33 @@ export default function Orders() {
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
     const isToday = rescheduleDate === todayStr
     const currentMinutes = now.getHours() * 60 + now.getMinutes()
-    const originalDateStr = rescheduleOrder.booking.date?.slice(0, 10)
-    const originalEndMinutes = timeToMinutes(rescheduleOrder.booking.endTime)
 
     const slots: { time: string; end: string; status: string; currentCount: number; remainingCount: number }[] = []
     for (let m = openMinutes; m + gameDuration <= closeMinutes; m += gameDuration) {
       // 今天且已过当前时间 → 不显示
       if (isToday && m <= currentMinutes) continue
 
-      // 与原订单同一天且在原订单结束时间之前 → 不显示
-      if (rescheduleDate === originalDateStr && m < originalEndMinutes) continue
-
       const timeStr = minutesToTime(m)
       const endStr = minutesToTime(m + gameDuration)
+
+      const inMaintenance =
+        venueDetail.status === 'MAINTENANCE' &&
+        venueDetail.maintenanceStartDate &&
+        venueDetail.maintenanceEndDate &&
+        venueDetail.maintenanceStartTime &&
+        venueDetail.maintenanceEndTime &&
+        rescheduleDate >= venueDetail.maintenanceStartDate.slice(0, 10) &&
+        rescheduleDate <= venueDetail.maintenanceEndDate.slice(0, 10) &&
+        (() => {
+          const ms = timeToMinutes(venueDetail.maintenanceStartTime)
+          const me = timeToMinutes(venueDetail.maintenanceEndTime)
+          return m < me && (m + gameDuration) > ms
+        })()
+
+      if (inMaintenance) {
+        slots.push({ time: timeStr, end: endStr, status: 'maintenance', currentCount: 0, remainingCount: 0 })
+        continue
+      }
 
       const overlapping = bookings.filter((b: any) => {
         if (b.status === 'CANCELLED') return false
@@ -289,13 +274,28 @@ export default function Orders() {
   }, [venueDetail, dayBookingsData, rescheduleDate, rescheduleOrder])
 
   const allOrders = data?.data || []
-  const orders = activeTab === 'all'
-    ? allOrders
-    : activeTab === 'PAID'
-      ? allOrders.filter((o: any) => ['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(o.status))
-      : activeTab === 'CANCELLED'
-        ? allOrders.filter((o: any) => ['CANCELLED', 'NO_SHOW', 'REFUNDED'].includes(o.status))
-        : allOrders.filter((o: any) => o.status === activeTab)
+  const orders = useMemo(() => {
+    if (activeTab === 'all') return allOrders
+    if (activeTab === 'PAID') {
+      return allOrders.filter((o: any) => ['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(o.status) && o.orderKind !== 'FEE')
+    }
+    if (activeTab === 'CANCELLED') {
+      return allOrders.filter((o: any) => ['CANCELLED', 'NO_SHOW', 'REFUNDED'].includes(o.status))
+    }
+    if (activeTab === 'GROUP_BUY') {
+      const list = allOrders.filter((o: any) => !!o.groupBuyPackage && o.status !== 'CANCELLED')
+      if (groupBuySubTab === 'pending_use') {
+        // 待使用：仅未预约的团购券
+        return list.filter((o: any) => o.status === 'PAID' && !o.booking)
+      }
+      if (groupBuySubTab === 'used') {
+        // 已使用：已预约（有 booking）或已完成/作废/退款
+        return list.filter((o: any) => o.booking || ['COMPLETED', 'NO_SHOW', 'REFUNDED'].includes(o.status))
+      }
+      return list
+    }
+    return allOrders.filter((o: any) => o.status === activeTab)
+  }, [allOrders, activeTab, groupBuySubTab])
 
   const lastExpiredSyncKey = useRef('')
   const expiredPendingKey = useMemo(() => {
@@ -317,7 +317,11 @@ export default function Orders() {
     if (tabs.some((t) => t.key === nextTab) && nextTab !== activeTab) {
       setActiveTab(nextTab)
     }
-  }, [searchParams, activeTab])
+    const nextSubTab = searchParams.get('subTab') || 'all'
+    if (groupBuySubTabs.some((t) => t.key === nextSubTab) && nextSubTab !== groupBuySubTab) {
+      setGroupBuySubTab(nextSubTab)
+    }
+  }, [searchParams, activeTab, groupBuySubTab])
 
   return (
     <motion.div
@@ -330,7 +334,7 @@ export default function Orders() {
       {/* Header */}
       <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-[var(--border-subtle)]">
         <div className="max-w-lg mx-auto px-4 h-12 flex items-center">
-          <button onClick={() => navigate(-1)} className="mr-3 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+          <button onClick={() => navigate('/', { replace: true })} className="mr-3 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
             <ChevronLeft className="w-5 h-5" />
           </button>
           <h1 className="text-lg font-semibold text-[var(--text-primary)]">我的订单</h1>
@@ -343,6 +347,7 @@ export default function Orders() {
               key={t.key}
               onClick={() => {
                 setActiveTab(t.key)
+                setGroupBuySubTab('all')
                 setSearchParams(t.key === 'all' ? {} : { tab: t.key })
               }}
               className={cn(
@@ -357,6 +362,33 @@ export default function Orders() {
             </button>
           ))}
         </div>
+
+        {/* 团购订单二级筛选 */}
+        {activeTab === 'GROUP_BUY' && (
+          <div className="max-w-lg mx-auto px-4 pt-1 pb-2">
+            <div className="flex gap-2">
+              {groupBuySubTabs.map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => {
+                    setGroupBuySubTab(t.key)
+                    const params: Record<string, string> = { tab: activeTab }
+                    if (t.key !== 'all') params.subTab = t.key
+                    setSearchParams(params)
+                  }}
+                  className={cn(
+                    'px-4 py-1.5 rounded-full text-sm font-medium transition-colors',
+                    groupBuySubTab === t.key
+                      ? 'bg-[var(--accent-primary)] text-white'
+                      : 'bg-[var(--bg-elevated)] text-[var(--text-secondary)]',
+                  )}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* List */}
@@ -383,7 +415,89 @@ export default function Orders() {
           </div>
         ) : (
           orders.map((o: any, i: number) => {
-            const s = statusMap[o.status] || { label: o.status, color: 'text-[var(--text-muted)]' }
+            // 改签费订单单独渲染
+            if (o.orderKind === 'FEE') {
+              return (
+                <motion.div
+                  key={o.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.05 }}
+                  className="bg-white rounded-2xl border border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)] overflow-hidden"
+                >
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)]">
+                    <p className="text-xs font-medium text-[var(--text-secondary)]">{o.orderNo}</p>
+                    <span className={cn('px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-500 inline-flex items-center gap-1')}>
+                      改签费
+                    </span>
+                  </div>
+                  <div className="p-4">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-[var(--text-secondary)]">{o.feeReason || '改签手续费'}</span>
+                        <span className="text-base font-black text-[var(--accent-primary)]">
+                          ¥{((o.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      {o.parentOrder && (
+                        <p className="text-xs text-[var(--text-muted)]">
+                          关联订单：{o.parentOrder.orderNo}
+                        </p>
+                      )}
+                      {o.refundAmount && o.refundAmount > 0 && (
+                        <p className="text-xs text-[var(--error)]">
+                          已退款 ¥{((o.refundAmount || 0) / 100).toFixed(2)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-end gap-2 mt-4">
+                      {o.status === 'PENDING' && (
+                        <>
+                          <button
+                            onClick={() => cancelMutation.mutate(o.id)}
+                            disabled={cancelMutation.isPending}
+                            className="px-4 py-2 rounded-full text-xs font-bold text-[var(--error)] border border-[var(--error)]/25 hover:bg-[var(--error)]/10 transition-colors disabled:opacity-50"
+                          >
+                            取消
+                          </button>
+                          <button
+                            onClick={() => navigate('/pay/' + o.id)}
+                            className="px-4 py-2 rounded-full text-xs font-bold text-white bg-gradient-accent shadow-glow-sm"
+                          >
+                            去支付
+                          </button>
+                        </>
+                      )}
+                      <button
+                        onClick={() => navigate(`/order/${o.id}`)}
+                        className="px-4 py-2 rounded-full text-xs font-bold text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-elevated)] transition-colors"
+                      >
+                        查看详情
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )
+            }
+
+            const isGroupBuy = !!o.groupBuyPackage
+            const groupBuyStatusMap: Record<string, { label: string; color: string }> = {
+              PENDING: { label: '待支付', color: 'text-[var(--warning)]' },
+              PAID: { label: '待使用', color: 'text-[var(--accent-primary)]' },
+              READY_TO_VERIFY: { label: '待核销', color: 'text-blue-400' },
+              PLAYING: { label: '使用中', color: 'text-emerald-400' },
+              COMPLETED: { label: '已使用', color: 'text-[var(--success)]' },
+              NO_SHOW: { label: '已作废', color: 'text-[var(--text-muted)]' },
+              CANCELLED: { label: '已取消', color: 'text-[var(--text-muted)]' },
+              REFUNDED: { label: '已退款', color: 'text-[var(--text-muted)]' },
+            }
+            const s = isGroupBuy
+              ? (groupBuyStatusMap[o.status] || { label: o.status, color: 'text-[var(--text-muted)]' })
+              : (statusMap[o.status] || { label: o.status, color: 'text-[var(--text-muted)]' })
+            const isMaintenanceAffected = o.disruptionStatus === 'VENUE_MAINTENANCE'
+            const displayStatus = isMaintenanceAffected
+              ? { label: '场地维护', color: 'text-orange-500' }
+              : s
             // 倒计时计算
             let countdownText = ''
             let isExpired = false
@@ -393,9 +507,18 @@ export default function Orders() {
                 countdownText = '已过期'
                 isExpired = true
               } else {
-                const m = Math.floor(diff / 60000)
-                const sec = Math.floor((diff % 60000) / 1000)
-                countdownText = `${m}分${sec.toString().padStart(2, '0')}秒后过期`
+                const totalSec = Math.floor(diff / 1000)
+                const d = Math.floor(totalSec / 86400)
+                const h = Math.floor((totalSec % 86400) / 3600)
+                const m = Math.floor((totalSec % 3600) / 60)
+                const sec = totalSec % 60
+                if (d > 0) {
+                  countdownText = `${d}天${h}小时${m}分后过期`
+                } else if (h > 0) {
+                  countdownText = `${h}小时${m}分${sec.toString().padStart(2, '0')}秒后过期`
+                } else {
+                  countdownText = `${m}分${sec.toString().padStart(2, '0')}秒后过期`
+                }
               }
             } else if (o.booking?.date && o.booking?.startTime && ['PAID', 'READY_TO_VERIFY'].includes(o.status)) {
               const startDate = new Date(o.booking.date)
@@ -413,12 +536,19 @@ export default function Orders() {
             const orderGameId = o.booking?.game?.id || o.booking?.gameId || o.booking?.game?.gameId
             return (
               <motion.div
-                key={o.id}
+                key={o._displayTotal ? `${o.id}-${o._displayIndex}` : o.id}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
                 className="bg-white rounded-2xl border border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)] overflow-hidden cursor-pointer hover:border-[var(--accent-primary)]/40 transition-colors"
-                onClick={() => { setTicketOrder(o); setTicketOpen(true) }}
+                onClick={() => {
+                  if (isGroupBuy) {
+                    navigate(`/order/${o.id}`)
+                  } else {
+                    setTicketOrder(o)
+                    setTicketOpen(true)
+                  }
+                }}
               >
                 <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)]">
                   <p className="text-xs font-medium text-[var(--text-secondary)]">{o.orderNo}</p>
@@ -429,9 +559,13 @@ export default function Orders() {
                         {countdownText}
                       </span>
                     )}
-                    <span className={cn('px-2.5 py-1 rounded-full text-[10px] font-bold bg-[var(--bg-active)] inline-flex items-center gap-1', s.color)}>
+                    <span className={cn(
+                      'px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1',
+                      isMaintenanceAffected ? 'bg-orange-50 border border-orange-200' : 'bg-[var(--bg-active)]',
+                      displayStatus.color
+                    )}>
                       <Clock className="w-3 h-3" />
-                      {s.label}
+                      {displayStatus.label}
                     </span>
                   </div>
                 </div>
@@ -439,17 +573,20 @@ export default function Orders() {
                   <div className="flex gap-3">
                     <div className="w-20 h-20 rounded-xl bg-[var(--bg-elevated)] overflow-hidden shrink-0">
                       <img
-                        src={getImageUrl(o.booking?.game?.coverImage || o.booking?.venue?.image || null)}
-                        alt={o.booking?.game?.title || 'VR体验'}
+                        src={getImageUrl(o.groupBuyPackage?.coverImage || o.booking?.game?.coverImage || o.booking?.venue?.image || null)}
+                        alt={o.groupBuyPackage?.title || o.booking?.game?.title || 'VR体验'}
                         className="w-full h-full object-cover"
                       />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-black text-[var(--text-primary)] truncate">{o.booking?.game?.title || 'VR体验'}</h3>
-                      <p className="text-xs text-[var(--text-secondary)] mt-1">{o.venueName}</p>
+                      <h3 className="text-base font-black text-[var(--text-primary)] truncate">{o.groupBuyPackage ? `【${o.groupBuyPackage.label}】${o.groupBuyPackage.title}` : (o.booking?.game?.title || 'VR体验')}</h3>
+                      <p className="text-xs text-[var(--text-secondary)] mt-1">{o.groupBuyPackage ? `${o.groupBuyPackage.venues?.length || 0}店通用` : o.venueName}</p>
                       <p className="text-xs text-[var(--text-secondary)] mt-1 flex items-center gap-1">
-                        <Clock className="w-3.5 h-3.5" />{o.bookingTime}
-                        <span className="mx-1">·</span>{o.booking?.personCount || 1}人
+                        {o.groupBuyPackage ? (
+                          <>{o.quantity || 1}份 · {o.groupBuyPackage.maxPeople * (o.quantity || 1)}人</>
+                        ) : (
+                          <><Clock className="w-3.5 h-3.5" />{o.bookingTime}<span className="mx-1">·</span>{o.booking?.personCount || 1}人</>
+                        )}
                       </p>
                       <div className="flex items-baseline gap-1.5 mt-2">
                         <span className="text-sm text-[var(--text-secondary)]">共</span>
@@ -457,9 +594,20 @@ export default function Orders() {
                         {o.couponDiscount > 0 && (
                           <span className="text-xs text-[var(--success)]">优惠 ¥{(o.couponDiscount / 100).toFixed(2)}</span>
                         )}
+                        {o.refundAmount && o.refundAmount > 0 && (
+                          <span className="text-xs text-[var(--error)]">已退 ¥{((o.refundAmount || 0) / 100).toFixed(2)}</span>
+                        )}
                       </div>
                     </div>
                   </div>
+                  {isMaintenanceAffected && (
+                    <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2.5">
+                      <p className="text-xs font-bold text-orange-600">该场次因场地维护受影响</p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-orange-500">
+                        可免费改签到其他可用场次，或申请全额退款。
+                      </p>
+                    </div>
+                  )}
                   <div className="flex items-center justify-end gap-2 mt-4" onClick={(e) => e.stopPropagation()}>
                     {o.status === 'PENDING' && !isExpired && (
                       <button
@@ -469,7 +617,7 @@ export default function Orders() {
                         去支付
                       </button>
                     )}
-                    {(o.status === 'PENDING' || o.status === 'PAID' || o.status === 'READY_TO_VERIFY') && (
+                    {isGroupBuy && o.status === 'PENDING' && (
                       <button
                         onClick={() => setCancelId(o.id)}
                         disabled={cancelMutation.isPending}
@@ -480,10 +628,40 @@ export default function Orders() {
                         ) : (
                           <XCircle className="w-3 h-3" />
                         )}
-                        {o.status === 'PENDING' ? '取消订单' : '取消预约'}
+                        取消订单
                       </button>
                     )}
-                    {['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(o.status) && (
+                    {isGroupBuy && ['PAID', 'READY_TO_VERIFY'].includes(o.status) && !o.booking && (
+                      <>
+                        <button
+                          onClick={() => navigate(`/order/${o.id}`)}
+                          className="px-4 py-2 rounded-full text-xs font-bold text-white bg-gradient-accent shadow-glow-sm"
+                        >
+                          去使用
+                        </button>
+                        <button
+                          onClick={() => navigate(`/refund/${o.id}`)}
+                          className="px-4 py-2 rounded-full text-xs font-bold text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-elevated)] transition-colors"
+                        >
+                          退款
+                        </button>
+                      </>
+                    )}
+                    {(!isGroupBuy || o.booking) && (o.status === 'PENDING' || o.status === 'PAID' || o.status === 'READY_TO_VERIFY') && (
+                      <button
+                        onClick={() => setCancelId(o.id)}
+                        disabled={cancelMutation.isPending}
+                        className="px-4 py-2 rounded-full text-xs font-bold text-[var(--error)] border border-[var(--error)]/25 hover:bg-[var(--error)]/10 transition-colors disabled:opacity-50 flex items-center gap-1"
+                      >
+                        {cancelMutation.isPending && cancelId === o.id ? (
+                          <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <XCircle className="w-3 h-3" />
+                        )}
+                        {o.status === 'PENDING' ? '取消订单' : isMaintenanceAffected ? '全额退款' : '取消预约'}
+                      </button>
+                    )}
+                    {(!isGroupBuy || o.booking) && ['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(o.status) && (
                       <button
                         onClick={() => { setTicketOrder(o); setTicketOpen(true) }}
                         className="px-4 py-2 rounded-full text-xs font-bold text-[var(--accent-primary)] border border-[var(--accent-primary)]/25 hover:bg-[var(--accent-primary)]/10 transition-colors inline-flex items-center gap-1"
@@ -496,12 +674,17 @@ export default function Orders() {
                       <>
                         <button
                           onClick={() => {
-                            if (orderGameId) navigate(getBookingTargetPath(orderGameId))
-                            else navigate('/venues')
+                            if (isGroupBuy && o.groupBuyPackage?.id) {
+                              navigate(`/group-buy/${o.groupBuyPackage.id}`)
+                            } else if (orderGameId) {
+                              navigate(getBookingTargetPath(orderGameId))
+                            } else {
+                              navigate('/venues')
+                            }
                           }}
                           className="px-4 py-2 rounded-full text-xs font-bold text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-elevated)] transition-colors"
                         >
-                          再次预约
+                          {isGroupBuy ? '再来一单' : '再次预约'}
                         </button>
                         <button
                           onClick={() => toastSuccess('评价功能即将开放')}
@@ -517,13 +700,12 @@ export default function Orders() {
                         onClick={() => {
                           setRescheduleOrder(o)
                           setRescheduleDate(o.booking?.date ? o.booking.date.slice(0, 10) : '')
-                          setRescheduleTime(o.booking?.startTime || '')
-                          setReschedulePayMethod('BALANCE')
+                          setRescheduleTime('')
                           setRescheduleOpen(true)
                         }}
                         className="px-4 py-2 rounded-full text-xs font-bold text-[var(--accent-primary)] border border-[var(--accent-primary)]/25 hover:bg-[var(--accent-primary)]/10 transition-colors"
                       >
-                        改签
+                        {isMaintenanceAffected ? '免费改签' : '改签'}
                       </button>
                     )}
                   </div>
@@ -554,13 +736,17 @@ export default function Orders() {
               {(() => {
                 const o = data?.data?.find((oo: any) => oo.id === cancelId)
                 if (!o) return null
+                const isGroupBuy = !!o.groupBuyPackage
+                const isMaintenanceAffected = o.disruptionStatus === 'VENUE_MAINTENANCE'
                 const info = getRefundInfo(o, refundTiers, cancelHours)
                 const isPaid = ['PAID', 'READY_TO_VERIFY'].includes(o.status)
+                const refundText = (isGroupBuy || isMaintenanceAffected) ? `¥${((o.amount || 0) / 100).toFixed(2)}` : info.refundText
+                const canCancel = isGroupBuy || isMaintenanceAffected ? true : info.canCancel
                 return (
                   <div className="p-5 space-y-4">
                     {/* 标题 */}
                     <div className="flex items-center justify-between">
-                      <h3 className="text-base font-bold text-[var(--text-primary)]">确认取消订单？</h3>
+                      <h3 className="text-base font-bold text-[var(--text-primary)]">{isMaintenanceAffected ? '确认全额退款？' : '确认取消订单？'}</h3>
                       <button onClick={() => setCancelId(null)} className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10 transition-colors">
                         <XCircle className="w-5 h-5" />
                       </button>
@@ -568,16 +754,26 @@ export default function Orders() {
 
                     {/* 订单信息 */}
                     <div className="bg-[var(--bg-elevated)] rounded-xl p-3 space-y-1">
-                      <p className="text-sm font-semibold text-[var(--text-primary)]">{o.venueName}</p>
-                      <p className="text-xs text-[var(--text-muted)]">{o.bookingTime}</p>
-                      <p className="text-xs text-[var(--text-muted)]">{o.booking?.game?.title || 'VR体验'} · {o.booking?.personCount || 1}人</p>
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">{isGroupBuy ? o.groupBuyPackage.title : o.venueName}</p>
+                      <p className="text-xs text-[var(--text-muted)]">{isGroupBuy ? `${o.groupBuyPackage.venues?.length || 0}店通用` : o.bookingTime}</p>
+                      <p className="text-xs text-[var(--text-muted)]">{isGroupBuy ? `${o.quantity || 1}份 · 每份${o.groupBuyPackage.maxPeople}人` : `${o.booking?.game?.title || 'VR体验'} · ${o.booking?.personCount || 1}人`}</p>
                       <p className="text-sm font-bold text-[var(--error)] mt-1">¥{((o.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                     </div>
 
                     {/* 退费说明 */}
                     {isPaid && (
                       <div className="space-y-2">
-                        {info.isExpired ? (
+                        {isMaintenanceAffected ? (
+                          <div className="rounded-xl p-3 bg-orange-500/10 border border-orange-500/20">
+                            <p className="text-sm font-medium text-orange-500">场地维护影响，可全额退款 {refundText}</p>
+                            <p className="text-xs text-[var(--text-muted)] mt-0.5">确认后订单将取消，款项按原支付方式退回。</p>
+                          </div>
+                        ) : isGroupBuy ? (
+                          <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/20">
+                            <p className="text-sm font-medium text-emerald-400">预计退回 {refundText}</p>
+                            <p className="text-xs text-[var(--text-muted)] mt-0.5">未核销前可全额退款</p>
+                          </div>
+                        ) : info.isExpired ? (
                           <div className="rounded-xl p-3 bg-red-500/10 border border-red-500/20">
                             <p className="text-sm font-medium text-red-400">已过最迟取消时间</p>
                             <p className="text-xs text-[var(--text-muted)] mt-0.5">该订单已开场或超出取消时限，不可取消</p>
@@ -589,7 +785,7 @@ export default function Orders() {
                           </div>
                         ) : (
                           <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/20">
-                            <p className="text-sm font-medium text-emerald-400">预计退回 {info.refundText}</p>
+                            <p className="text-sm font-medium text-emerald-400">预计退回 {refundText}</p>
                             <p className="text-xs text-[var(--text-muted)] mt-0.5">{info.activeTier?.label || `按当前退费规则退${info.rate * 100}%`}</p>
                           </div>
                         )}
@@ -614,18 +810,18 @@ export default function Orders() {
                       <button
                         onClick={() => {
                           if (!cancelId) return
-                          if (isPaid && !info.canCancel) return
+                          if (isPaid && !canCancel) return
                           cancelMutation.mutate(cancelId)
                         }}
-                        disabled={cancelMutation.isPending || (isPaid && !info.canCancel)}
+                        disabled={cancelMutation.isPending || (isPaid && !canCancel)}
                         className={cn(
                           'flex-1 py-2.5 rounded-xl text-sm font-medium text-white transition-colors disabled:opacity-50',
-                          isPaid && !info.canCancel
+                          isPaid && !canCancel
                             ? 'bg-[var(--text-muted)] cursor-not-allowed'
                             : 'bg-[var(--error)] hover:bg-red-600'
                         )}
                       >
-                        {cancelMutation.isPending ? '取消中...' : isPaid && !info.canCancel ? '不可取消' : '确认取消'}
+                        {cancelMutation.isPending ? '处理中...' : isPaid && !canCancel ? '不可取消' : isMaintenanceAffected ? '确认退款' : '确认取消'}
                       </button>
                     </div>
                   </div>
@@ -652,10 +848,10 @@ export default function Orders() {
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-[var(--bg-card)] rounded-2xl border border-[var(--border-subtle)] shadow-2xl w-full max-w-sm overflow-hidden"
+              className="bg-white rounded-2xl border border-[var(--border-subtle)] shadow-2xl w-full max-w-[365px] max-h-[92dvh] overflow-hidden flex flex-col"
             >
               {/* Header */}
-              <div className="bg-gradient-to-r from-[var(--accent-primary)]/20 to-[var(--accent-secondary)]/20 px-5 py-4">
+              <div className="px-5 pt-4 pb-3 shrink-0">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Ticket className="w-5 h-5 text-[var(--accent-primary)]" />
@@ -663,20 +859,30 @@ export default function Orders() {
                   </div>
                   <button
                     onClick={() => setTicketOpen(false)}
-                    className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10 transition-colors"
+                    className="p-0.5 rounded-full text-slate-400 hover:text-[var(--text-primary)] hover:bg-slate-100 transition-colors"
                   >
                     <XCircle className="w-5 h-5" />
                   </button>
                 </div>
-                <p className="text-xs text-[var(--text-secondary)] mt-1">
-                  订单号：{ticketOrder.orderNo}
-                </p>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-xs text-[var(--text-secondary)]">订单号：{ticketOrder.orderNo}</p>
+                  <span className="text-xs font-bold text-[var(--accent-primary)]">
+                    {ticketOrder.status === 'PENDING' ? '待支付' :
+                     ticketOrder.status === 'PAID' ? '已付款' :
+                     ticketOrder.status === 'READY_TO_VERIFY' ? '待核销' :
+                     ticketOrder.status === 'PLAYING' ? '游戏中' :
+                     ticketOrder.status === 'COMPLETED' ? '已完成' :
+                     ticketOrder.status === 'NO_SHOW' ? '已作废' :
+                     ticketOrder.status === 'CANCELLED' ? '已取消' :
+                     ticketOrder.status === 'REFUNDED' ? '已退款' : ticketOrder.status}
+                  </span>
+                </div>
               </div>
 
               {/* Content */}
-              <div className="p-5 space-y-4">
+              <div className="px-5 pb-5 space-y-3 overflow-y-auto">
                 {/* 状态 */}
-                <div className="flex items-center justify-center">
+                <div className="hidden">
                   <span className={cn(
                     'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium',
                     ticketOrder.status === 'PAID' || ticketOrder.status === 'READY_TO_VERIFY' ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]' :
@@ -695,8 +901,35 @@ export default function Orders() {
                   </span>
                 </div>
 
+                {/* 改签时间（改签后的普通订单） */}
+                {isRescheduledOrder(ticketOrder) && (
+                  <div className="bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20 rounded-xl p-3 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-[var(--accent-primary)]">改签时间</span>
+                      <span className="text-xs text-[var(--text-secondary)]">请按改签后的时间到店核销</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 bg-white rounded-xl p-2.5 text-center">
+                        <p className="text-[10px] text-[var(--text-muted)] mb-1">改签前</p>
+                        <p className="text-xs font-bold text-[var(--text-primary)]">{ticketOrder.metadata.originalBookingDate || '-'}</p>
+                        <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                          {ticketOrder.metadata.originalStartTime}{ticketOrder.metadata.originalEndTime ? `-${ticketOrder.metadata.originalEndTime}` : ''}
+                        </p>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                      <div className="flex-1 bg-[var(--accent-primary)] rounded-xl p-2.5 text-center text-white">
+                        <p className="text-[10px] text-white/80 mb-1">改签后</p>
+                        <p className="text-xs font-bold">{(ticketOrder.booking?.date || '').slice(0, 10)}</p>
+                        <p className="text-xs mt-0.5">
+                          {ticketOrder.booking?.startTime}{ticketOrder.booking?.endTime ? `-${ticketOrder.booking?.endTime}` : ''}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* 开场倒计时 + 最迟入场（仅待核销状态） */}
-                {['PAID', 'READY_TO_VERIFY'].includes(ticketOrder.status) && ticketOrder.booking?.date && ticketOrder.booking?.startTime && (() => {
+                {['PAID', 'READY_TO_VERIFY'].includes(ticketOrder.status) && !ticketOrder.groupBuyPackageId && ticketOrder.booking?.date && ticketOrder.booking?.startTime && (() => {
                   const startDate = new Date(ticketOrder.booking.date)
                   const [h, m] = ticketOrder.booking.startTime.split(':')
                   startDate.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
@@ -711,10 +944,10 @@ export default function Orders() {
                       ? `${hours}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
                       : `${mins}:${String(secs).padStart(2, '0')}`
                     return (
-                      <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 space-y-2">
+                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs text-blue-400 font-medium">距离开场</span>
-                          <span className="text-sm font-mono font-bold text-blue-400">{countdown}</span>
+                          <span className="text-xs text-blue-500 font-bold">距离开场</span>
+                          <span className="text-sm font-mono font-bold text-[var(--accent-primary)]">{countdown}</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-[var(--text-muted)]">最迟入场</span>
@@ -727,9 +960,9 @@ export default function Orders() {
                     )
                   }
                   return (
-                    <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-3">
+                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs text-orange-400 font-medium">场次进行中</span>
+                        <span className="text-xs text-orange-500 font-medium">场次进行中</span>
                         <span className="text-xs text-[var(--text-muted)]">最迟入场 {lateEntryStr}</span>
                       </div>
                     </div>
@@ -737,67 +970,196 @@ export default function Orders() {
                 })()}
 
                 {/* 订单信息 */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    <MapPin className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-                    <div>
-                      <p className="text-xs text-[var(--text-muted)]">场地</p>
-                      <p className="text-sm text-[var(--text-primary)]">{ticketOrder.venueName}</p>
+                {ticketOrder.groupBuyPackage ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <MapPin className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                      <div>
+                        <p className="text-xs text-[var(--text-muted)]">适用门店</p>
+                        <p className="text-sm text-[var(--text-primary)]">{ticketOrder.groupBuyPackage.venues?.length > 0 ? ticketOrder.groupBuyPackage.venues.map((v: any) => v.name).join('、') : ticketOrder.venueName}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Calendar className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                      <div>
+                        <p className="text-xs text-[var(--text-muted)]">团购套餐</p>
+                        <p className="text-sm text-[var(--text-primary)]">{ticketOrder.groupBuyPackage.title}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Users className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                      <div>
+                        <p className="text-xs text-[var(--text-muted)]">份数 / 人数</p>
+                        <p className="text-sm text-[var(--text-primary)]">{ticketOrder.quantity || 1}份 · 每份{ticketOrder.groupBuyPackage.maxPeople}人</p>
+                      </div>
+                    </div>
+                    {ticketOrder.verifyCode && (
+                      <div className="flex items-center gap-3">
+                        <Ticket className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                        <div>
+                          <p className="text-xs text-[var(--text-muted)]">券码</p>
+                          <p className="text-sm font-mono text-[var(--text-primary)]">{ticketOrder.verifyCode}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <MapPin className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                      <div>
+                        <p className="text-xs text-[var(--text-muted)]">场地</p>
+                        <p className="text-sm text-[var(--text-primary)]">{ticketOrder.venueName}</p>
+                      </div>
+                    </div>
+                    {!isRescheduledOrder(ticketOrder) && (
+                      <div className="flex items-center gap-3">
+                        <Clock className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                        <div>
+                          <p className="text-xs text-[var(--text-muted)]">时间</p>
+                          <p className="text-sm text-[var(--text-primary)]">{ticketOrder.bookingTime}</p>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3">
+                      <Calendar className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                      <div>
+                        <p className="text-xs text-[var(--text-muted)]">游戏</p>
+                        <p className="text-sm text-[var(--text-primary)]">{ticketOrder.booking?.game?.title || 'VR体验'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Users className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                      <div>
+                        <p className="text-xs text-[var(--text-muted)]">人数</p>
+                        <p className="text-sm text-[var(--text-primary)]">{ticketOrder.booking?.personCount || 1}人</p>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Clock className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-                    <div>
-                      <p className="text-xs text-[var(--text-muted)]">时间</p>
-                      <p className="text-sm text-[var(--text-primary)]">{ticketOrder.bookingTime}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Calendar className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-                    <div>
-                      <p className="text-xs text-[var(--text-muted)]">游戏</p>
-                      <p className="text-sm text-[var(--text-primary)]">{ticketOrder.booking?.game?.title || 'VR体验'}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Users className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-                    <div>
-                      <p className="text-xs text-[var(--text-muted)]">人数</p>
-                      <p className="text-sm text-[var(--text-primary)]">{ticketOrder.booking?.personCount || 1}人</p>
-                    </div>
-                  </div>
-                </div>
+                )}
 
-                <div className="border-t border-[var(--border-subtle)] pt-3 flex items-center justify-between">
-                  <span className="text-xs text-[var(--text-muted)]">实付金额</span>
-                  <span className="text-lg font-bold text-[var(--error)]">
-                    ¥{((ticketOrder.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-
-                {/* 支付方式 */}
-                {ticketOrder.payMethod && (
-                  <div className="flex items-center justify-between py-2">
-                    <span className="text-xs text-[var(--text-muted)]">支付方式</span>
-                    <span className="text-xs text-[var(--text-primary)]">
-                      {ticketOrder.payMethod === 'BALANCE' ? '余额支付'
-                        : ticketOrder.payMethod === 'WECHAT' ? '微信支付'
-                        : ticketOrder.payMethod === 'ALIPAY' ? '支付宝'
-                        : ticketOrder.payMethod === 'CASH' ? '现金'
-                        : ticketOrder.payMethod === 'SCANBOX' ? '扫码盒'
-                        : ticketOrder.payMethod}
-                    </span>
+                {ticketOrder.disruptionStatus === 'VENUE_MAINTENANCE' && (
+                  <div className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-2.5">
+                    <p className="text-xs font-bold text-orange-600">该场次因场地维护受影响</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-orange-500">
+                      可免费改签到其他可用场次，或申请全额退款。
+                    </p>
                   </div>
+                )}
+
+                {/* 费用与支付 */}
+                {isRescheduledOrder(ticketOrder) ? (
+                  <div className="bg-white rounded-xl border border-[var(--border-subtle)] p-3 space-y-2">
+                    <h4 className="text-sm font-bold text-[var(--text-primary)]">费用与支付</h4>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-[var(--text-muted)]">原票实付金额</span>
+                      <span className="text-sm font-bold text-[var(--error)]">
+                        ¥{((ticketOrder.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    {ticketOrder.payMethod && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[var(--text-muted)]">原票支付方式</span>
+                        <span className="text-xs text-[var(--text-primary)]">{payMethodLabel(ticketOrder.payMethod)}</span>
+                      </div>
+                    )}
+                    {ticketOrder.refundAmount && ticketOrder.refundAmount > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[var(--text-muted)]">已退款</span>
+                        <span className="text-sm font-bold text-red-400">
+                          -¥{((ticketOrder.refundAmount || 0) / 100).toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                    {ticketOrder.feeOrders?.filter((feeOrder: any) => (feeOrder.amount || 0) > 0).map((feeOrder: any) => (
+                      <div key={feeOrder.id}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-[var(--text-muted)]">关联改签费</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-[var(--accent-primary)]">
+                              ¥{((feeOrder.amount || 0) / 100).toFixed(2)}
+                            </span>
+                            {feeOrder.status === 'PENDING' && (
+                              <button
+                                onClick={() => navigate('/pay/' + feeOrder.id)}
+                                className="px-2 py-1 rounded-full text-[10px] font-bold text-white bg-gradient-accent"
+                              >
+                                去支付
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {feeOrder.payMethod && (
+                          <div className="flex items-center justify-between mt-1">
+                            <span className="text-xs text-[var(--text-muted)]">改签费支付方式</span>
+                            <span className="text-xs text-[var(--text-primary)]">{payMethodLabel(feeOrder.payMethod)}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <div className="border-t border-[var(--border-subtle)] pt-3 flex items-center justify-between">
+                      <span className="text-xs text-[var(--text-muted)]">实付金额</span>
+                      <span className="text-lg font-bold text-[var(--error)]">
+                        ¥{((ticketOrder.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+
+                    {/* 退款信息 */}
+                    {ticketOrder.refundAmount && ticketOrder.refundAmount > 0 && (
+                      <div className="flex items-center justify-between py-2">
+                        <span className="text-xs text-[var(--text-muted)]">已退款</span>
+                        <span className="text-sm font-bold text-red-400">
+                          -¥{((ticketOrder.refundAmount || 0) / 100).toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* 关联改签费订单 */}
+                    {ticketOrder.feeOrders && ticketOrder.feeOrders.length > 0 && (
+                      <div className="border-t border-[var(--border-subtle)] pt-3 space-y-2">
+                        <span className="text-xs text-[var(--text-muted)]">关联改签费</span>
+                        {ticketOrder.feeOrders.map((feeOrder: any) => (
+                          <div key={feeOrder.id} className="flex items-center justify-between">
+                            <span className="text-xs text-[var(--text-secondary)] font-mono">{feeOrder.orderNo}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-[var(--accent-primary)]">
+                                ¥{((feeOrder.amount || 0) / 100).toFixed(2)}
+                              </span>
+                              {feeOrder.status === 'PENDING' && (
+                                <button
+                                  onClick={() => navigate('/pay/' + feeOrder.id)}
+                                  className="px-2 py-1 rounded-full text-[10px] font-bold text-white bg-gradient-accent"
+                                >
+                                  去支付
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* 支付方式 */}
+                    {ticketOrder.payMethod && (
+                      <div className="flex items-center justify-between py-2">
+                        <span className="text-xs text-[var(--text-muted)]">支付方式</span>
+                        <span className="text-xs text-[var(--text-primary)]">{payMethodLabel(ticketOrder.payMethod)}</span>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {/* QR Code */}
                 {['PAID', 'READY_TO_VERIFY', 'COMPLETED'].includes(ticketOrder.status) ? (
                   <div className="flex flex-col items-center pt-2">
                     <div className="bg-white rounded-xl p-3 shadow-sm">
-                      <SimpleQRCode value={ticketOrder.id} size={160} />
+                      <SimpleQRCode value={ticketOrder.verifyCode || ticketOrder.orderNo || ticketOrder.id} size={160} />
                     </div>
-                    <p className="text-xs text-[var(--text-muted)] mt-2">出示二维码签到入场</p>
-                    <p className="text-[10px] text-[var(--text-secondary)] mt-0.5 font-mono">{ticketOrder.id.slice(0, 12)}</p>
+                    <p className="text-xs text-[var(--text-muted)] mt-2">{ticketOrder.verifyCode ? '出示券码二维码到店核销' : '出示二维码签到入场'}</p>
+                    <p className="text-[10px] text-[var(--text-secondary)] mt-0.5 font-mono">{ticketOrder.verifyCode || ticketOrder.orderNo || ticketOrder.id.slice(0, 12)}</p>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center pt-2 py-4">
@@ -822,21 +1184,20 @@ export default function Orders() {
                         onClick={() => {
                           setRescheduleOrder(ticketOrder)
                           setRescheduleDate(ticketOrder.booking?.date ? ticketOrder.booking.date.slice(0, 10) : '')
-                          setRescheduleTime(ticketOrder.booking?.startTime || '')
-                          setReschedulePayMethod('BALANCE')
+                          setRescheduleTime('')
                           setRescheduleOpen(true)
                           setTicketOpen(false)
                         }}
                         className="flex-1 h-10 rounded-lg text-sm font-medium text-[var(--accent-primary)] border border-[var(--accent-primary)]/30 hover:bg-[var(--accent-primary)]/10 transition-colors"
                       >
-                        改签
+                        {ticketOrder.disruptionStatus === 'VENUE_MAINTENANCE' ? '免费改签' : '改签'}
                       </button>
                     )}
                     <button
                       onClick={() => { setCancelId(ticketOrder.id); setTicketOpen(false) }}
                       className="flex-1 h-10 rounded-lg text-sm font-medium text-[var(--error)] border border-[var(--error)]/30 hover:bg-[var(--error)]/10 transition-colors"
                     >
-                      取消订单
+                      {ticketOrder.disruptionStatus === 'VENUE_MAINTENANCE' ? '全额退款' : '取消订单'}
                     </button>
                   </div>
                 )}
@@ -957,9 +1318,53 @@ export default function Orders() {
                   ) : slotOptions.length === 0 ? (
                     <p className="text-xs text-[var(--text-muted)] py-3 text-center bg-[var(--bg-elevated)] rounded-lg">该日期暂无可选场次，请尝试其他日期</p>
                   ) : (
-                    <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+                    <div className="grid grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
                       {slotOptions.map((slot) => {
-                        const disabled = slot.status === 'full' || slot.status === 'occupied_by_other_game'
+                        const selected = rescheduleTime === slot.time
+                        const isCurrentSlot = rescheduleDate === rescheduleOrder.booking?.date?.slice(0, 10) && slot.time === rescheduleOrder.booking?.startTime
+                        const disabled = slot.status === 'full' || slot.status === 'occupied_by_other_game' || slot.status === 'maintenance' || isCurrentSlot
+                        const visual =
+                          slot.status === 'joinable'
+                            ? {
+                              card: 'border-emerald-200 bg-emerald-50/80 text-emerald-950',
+                              sub: 'text-emerald-600',
+                              badge: 'bg-emerald-100 text-emerald-600 border-emerald-200',
+                              label: `余${slot.remainingCount}人`,
+                              desc: `已约${slot.currentCount}人`,
+                            }
+                            : slot.status === 'full'
+                            ? {
+                              card: 'border-rose-200 bg-rose-50/80 text-rose-950',
+                              sub: 'text-rose-500',
+                              badge: 'bg-rose-100 text-rose-500 border-rose-200',
+                              label: '已约满',
+                              desc: '不可改签',
+                            }
+                            : slot.status === 'maintenance'
+                            ? {
+                              card: 'border-orange-200 bg-orange-50/80 text-orange-950',
+                              sub: 'text-orange-500',
+                              badge: 'bg-orange-100 text-orange-600 border-orange-200',
+                              label: '维护中',
+                              desc: '场地维护',
+                            }
+                            : slot.status === 'occupied_by_other_game'
+                            ? {
+                              card: 'border-sky-200 bg-sky-50/80 text-sky-950',
+                              sub: 'text-sky-500',
+                              badge: 'bg-sky-100 text-sky-600 border-sky-200',
+                              label: '占用',
+                              desc: '其他游戏',
+                            }
+                            : {
+                              card: 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)]',
+                              sub: 'text-[var(--text-muted)]',
+                              badge: 'bg-indigo-50 text-[var(--accent-primary)] border-indigo-100',
+                              label: '可改签',
+                              desc: slot.remainingCount > 0 ? `余${slot.remainingCount}人` : '可预约',
+                            }
+                        const slotLabel = isCurrentSlot ? '当前' : visual.label
+                        const slotDesc = isCurrentSlot ? '当前预约时间' : visual.desc
                         return (
                           <button
                             key={slot.time}
@@ -968,18 +1373,31 @@ export default function Orders() {
                             }}
                             disabled={disabled}
                             className={cn(
-                              'py-2 rounded-lg text-xs font-medium border transition-colors flex flex-col items-center justify-center leading-tight',
-                              disabled
-                                ? 'bg-[var(--bg-elevated)] text-[var(--text-muted)] border-[var(--border-subtle)] cursor-not-allowed opacity-60'
-                                : rescheduleTime === slot.time
-                                  ? 'bg-[var(--accent-primary)] text-white border-[var(--accent-primary)]'
-                                  : 'bg-[var(--bg-surface)] text-[var(--text-primary)] border-[var(--border-subtle)] hover:border-[var(--accent-primary)]/50'
+                              'min-h-[54px] rounded-xl border px-2.5 py-2 text-left transition-all',
+                              selected
+                                ? 'bg-[var(--accent-primary)] text-white border-[var(--accent-primary)] shadow-[0_8px_18px_rgba(79,70,229,0.22)]'
+                                : disabled
+                                ? cn(visual.card, 'cursor-not-allowed opacity-85')
+                                : cn(visual.card, 'hover:border-[var(--accent-primary)]/50 active:scale-[0.98]')
                             )}
                           >
-                            <span className={cn(disabled && 'line-through opacity-70')}>{slot.time}</span>
-                            {slot.status === 'full' && <span className="text-[9px] text-red-400 mt-0.5">已满</span>}
-                            {slot.status === 'occupied_by_other_game' && <span className="text-[9px] text-orange-400 mt-0.5">占用</span>}
-                            {slot.status === 'joinable' && <span className="text-[9px] text-emerald-400 mt-0.5">余{slot.remainingCount}人</span>}
+                            <span className="flex items-start justify-between gap-1">
+                              <span className={cn('text-xs font-bold leading-tight', disabled && 'line-through decoration-current/60')}>
+                                {slot.time}-{slot.end}
+                              </span>
+                              <span className={cn(
+                                'shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-bold leading-none',
+                                selected ? 'border-white/35 bg-white/20 text-white' : visual.badge
+                              )}>
+                                {slotLabel}
+                              </span>
+                            </span>
+                            <span className={cn(
+                              'mt-1 block text-[10px] font-medium leading-none',
+                              selected ? 'text-white/80' : visual.sub
+                            )}>
+                              {slotDesc}
+                            </span>
                           </button>
                         )
                       })}
@@ -1022,32 +1440,6 @@ export default function Orders() {
                   </div>
                 )}
 
-                {/* 支付方式选择 */}
-                {rescheduleTime && (
-                  <div>
-                    <label className="text-xs text-[var(--text-secondary)] block mb-2">支付方式</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { key: 'BALANCE', label: '余额支付' },
-                        { key: 'WECHAT', label: '微信支付' },
-                        { key: 'ALIPAY', label: '支付宝' },
-                      ].map((m) => (
-                        <button
-                          key={m.key}
-                          onClick={() => setReschedulePayMethod(m.key as any)}
-                          className={cn(
-                            'py-2 rounded-lg text-xs font-medium border transition-colors',
-                            reschedulePayMethod === m.key
-                              ? 'bg-[var(--accent-primary)] text-white border-[var(--accent-primary)]'
-                              : 'bg-[var(--bg-surface)] text-[var(--text-primary)] border-[var(--border-subtle)] hover:border-[var(--accent-primary)]/50'
-                          )}
-                        >
-                          {m.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* 底部按钮 */}
@@ -1073,7 +1465,6 @@ export default function Orders() {
                         bookingId: rescheduleOrder.booking.id,
                         date: rescheduleDate,
                         startTime: rescheduleTime,
-                        payMethod: reschedulePayMethod,
                       })
                     }}
                     disabled={rescheduleMutation.isPending || !rescheduleTime}

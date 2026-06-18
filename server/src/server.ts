@@ -17,6 +17,8 @@ import { prisma } from './utils/prisma'
 import cron from 'node-cron'
 import { runDailyReport } from './controllers/financialController'
 import { subDays, format } from 'date-fns'
+import { startVenueMaintenanceJob } from './jobs/venueMaintenanceJob'
+import { startBookingLifecycleJob } from './jobs/bookingLifecycleJob'
 
 const PORT = parseInt(process.env.PORT || '4000', 10)
 const jobsEnabled = process.env.ENABLE_JOBS !== 'false'
@@ -115,5 +117,9 @@ httpServer.listen(PORT, '0.0.0.0', () => {
       }
     })
     console.log('[Cron] Daily financial report job scheduled (00:05)')
+
+    startVenueMaintenanceJob()
+    console.log('[Cron] Venue maintenance restore job scheduled (* * * * *)')
+    startBookingLifecycleJob()
   }
 })

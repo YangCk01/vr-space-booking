@@ -9,6 +9,8 @@ import OrderConfirm from './pages/OrderConfirm'
 import OrderSuccess from './pages/OrderSuccess'
 import Recharge from './pages/Recharge'
 import Orders from './pages/Orders'
+import OrderDetail from './pages/OrderDetail'
+import Refund from './pages/Refund'
 import Pay from './pages/Pay'
 import Profile from './pages/Profile'
 import AccountRecords from './pages/AccountRecords'
@@ -16,6 +18,11 @@ import MemberBenefits from './pages/MemberBenefits'
 import Coupons from './pages/Coupons'
 import HelpFeedback from './pages/HelpFeedback'
 import StoreContact from './pages/StoreContact'
+import GroupBookingRules from './pages/GroupBookingRules'
+import GroupBuys from './pages/GroupBuys'
+import GroupBuyDetail from './pages/GroupBuyDetail'
+import GroupBuyConfirm from './pages/GroupBuyConfirm'
+import GroupBooking from './pages/GroupBooking'
 import AccountSettings from './pages/AccountSettings'
 import ChangePhonePage from './pages/ChangePhonePage'
 import ChangePasswordPage from './pages/ChangePasswordPage'
@@ -28,7 +35,7 @@ import { ScrollContainerContext } from './hooks/useScrollContainer'
 export default function App() {
   const location = useLocation()
   // 隐藏底部导航的页面
-  const hideNav = ['/confirm', '/success', '/login', '/recharge', '/game', '/pay', '/account-records', '/member-benefits', '/coupons', '/help', '/account-settings', '/points-mall', '/points-orders', '/change-phone', '/change-password', '/store-contact'].some((p) => location.pathname.startsWith(p))
+  const hideNav = ['/confirm', '/success', '/login', '/recharge', '/game', '/pay', '/order/', '/refund/', '/account-records', '/member-benefits', '/coupons', '/help', '/group-booking-rules', '/group-booking', '/group-buys', '/group-buy', '/group-buy-confirm', '/account-settings', '/points-mall', '/points-orders', '/change-phone', '/change-password', '/store-contact'].some((p) => location.pathname.startsWith(p))
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -42,6 +49,8 @@ export default function App() {
         <Route path="/confirm" element={<OrderConfirm />} />
         <Route path="/success" element={<OrderSuccess />} />
         <Route path="/orders" element={<Orders />} />
+        <Route path="/order/:id" element={<OrderDetail />} />
+        <Route path="/refund/:id" element={<Refund />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/login" element={<AuthPage />} />
         <Route path="/recharge" element={<Recharge />} />
@@ -49,6 +58,11 @@ export default function App() {
         <Route path="/member-benefits" element={<MemberBenefits />} />
         <Route path="/coupons" element={<Coupons />} />
         <Route path="/help" element={<HelpFeedback />} />
+        <Route path="/group-booking-rules" element={<GroupBookingRules />} />
+        <Route path="/group-buys" element={<GroupBuys />} />
+        <Route path="/group-buy/:id" element={<GroupBuyDetail />} />
+        <Route path="/group-buy-confirm/:id" element={<GroupBuyConfirm />} />
+        <Route path="/group-booking/:orderId" element={<GroupBooking />} />
         <Route path="/store-contact" element={<StoreContact />} />
         <Route path="/account-settings" element={<AccountSettings />} />
         <Route path="/change-phone" element={<ChangePhonePage />} />

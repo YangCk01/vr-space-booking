@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { API_BASE_HOST, API_BASE_URL } from '@/lib/apiBase'
+import { readAuthSessionVersion } from '@/lib/authSession'
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -39,6 +40,7 @@ apiClient.interceptors.response.use(
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true
       const refreshToken = localStorage.getItem('refreshToken')
+      const authSessionVersion = readAuthSessionVersion()
 
       if (refreshToken) {
         try {
@@ -46,6 +48,12 @@ apiClient.interceptors.response.use(
             refreshToken,
           })
           const { accessToken, refreshToken: newRefreshToken } = res.data.data
+          if (
+            readAuthSessionVersion() !== authSessionVersion ||
+            localStorage.getItem('refreshToken') !== refreshToken
+          ) {
+            return Promise.reject(error)
+          }
           localStorage.setItem('accessToken', accessToken)
           localStorage.setItem('refreshToken', newRefreshToken)
           originalRequest.headers.Authorization = `Bearer ${accessToken}`

@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { X, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getBookings } from '@/api/bookings'
-import { getVenue } from '@/api/venues'
+import { getPublicVenue } from '@/api/venues'
 import { useAuth } from '@/providers/AuthProvider'
 
 interface TimeSheetProps {
@@ -62,7 +62,7 @@ export default function TimeSheet({ venueId, gamePrice, gameDuration = 30, onSel
 
   const { data: venueData } = useQuery({
     queryKey: ['venue', venueId],
-    queryFn: () => getVenue(venueId),
+    queryFn: () => getPublicVenue(venueId),
     enabled: !!venueId,
   })
 

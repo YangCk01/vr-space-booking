@@ -7,7 +7,8 @@ import { apiClient } from '@/api/client'
 import { useAuth } from '@/providers/AuthProvider'
 import { useToast } from '@/hooks/useToast'
 import { cn } from '@/lib/utils'
-import { getVenues } from '@/api/venues'
+import { getPublicVenues } from '@/api/venues'
+import { saveSelectedVenue as persistSelectedVenue } from '@/lib/selectedVenue'
 
 interface PointsProduct {
   id: string
@@ -74,7 +75,7 @@ export default function PointsMall() {
 
   const { data: venuesData } = useQuery({
     queryKey: ['venues'],
-    queryFn: () => getVenues({ status: 'FREE' }),
+    queryFn: () => getPublicVenues({ pageSize: 100 }),
     enabled: confirmType === 'physical',
   })
 
@@ -525,6 +526,7 @@ export default function PointsMall() {
                       <button
                         key={venue.id}
                         onClick={() => {
+                          persistSelectedVenue(venue)
                           setSelectedVenue(venue)
                           setShowVenuePicker(false)
                         }}

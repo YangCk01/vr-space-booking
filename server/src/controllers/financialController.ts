@@ -118,6 +118,10 @@ export async function getDailyReport(req: AuthenticatedRequest, res: Response) {
         confirmedDirectRevenue: 0,
         prepaidMemberRevenue: 0,
         confirmedMemberRevenue: 0,
+        otherIncomeTotal: 0,
+        noShowPenalty: 0,
+        rescheduleFeeIncome: 0,
+        cancelFeeIncome: 0,
         pointsExchangeCost: 0,
         couponDiscountCost: 0,
         pointsGiftCost: 0,
@@ -754,8 +758,9 @@ export async function runDailyReport(
 
   const refundOut = await prisma.order.aggregate({
     where: {
-      status: 'REFUNDED',
-      payMethod: { in: ['WECHAT', 'ALIPAY'] },
+      orderKind: 'NORMAL',
+      status: { in: ['REFUNDED', 'CANCELLED'] },
+      refundAmount: { gt: 0 },
       updatedAt: { gte: start, lte: end }
     },
     _sum: { refundAmount: true }
@@ -764,6 +769,7 @@ export async function runDailyReport(
   // 5.2 确权营收表（兼容字段 + 新拆分字段）
   const prepaidDirectRevenue = await prisma.order.aggregate({
     where: {
+      orderKind: 'NORMAL',
       status: 'PAID',
       payMethod: { in: ['WECHAT', 'ALIPAY'] },
       paidAt: { gte: start, lte: end }
@@ -773,6 +779,7 @@ export async function runDailyReport(
 
   const confirmedDirectRevenue = await prisma.order.aggregate({
     where: {
+      orderKind: 'NORMAL',
       status: 'COMPLETED',
       payMethod: { in: ['WECHAT', 'ALIPAY'] },
       paidAt: { gte: start, lte: end }
@@ -782,6 +789,7 @@ export async function runDailyReport(
 
   const prepaidMemberRevenue = await prisma.order.aggregate({
     where: {
+      orderKind: 'NORMAL',
       status: 'PAID',
       principalDeduction: { gt: 0 },
       paidAt: { gte: start, lte: end }
@@ -791,6 +799,7 @@ export async function runDailyReport(
 
   const confirmedMemberRevenue = await prisma.order.aggregate({
     where: {
+      orderKind: 'NORMAL',
       status: 'COMPLETED',
       principalDeduction: { gt: 0 },
       paidAt: { gte: start, lte: end }
@@ -918,35 +927,41 @@ export async function runDailyReport(
   })
   const pointsLiab = ptsLiability._sum.points || 0
 
-  // 营业外收入：No-Show 违约金 + 取消手续费
+  // 营业外收入拆分
+  // 1. 历史爽约违约金（兼容旧数据）
   const noShowOrders = await prisma.order.findMany({
     where: {
       status: 'NO_SHOW',
       noShowAt: { gte: start, lte: end },
+      penaltyAmount: { gt: 0 },
     },
     select: { penaltyAmount: true },
   })
   const noShowPenaltySum = noShowOrders.reduce((s, o) => s + (o.penaltyAmount || 0), 0)
 
+  // 2. 取消费（已支付订单取消后未退部分）
   const cancelledOrders = await prisma.order.findMany({
     where: {
+      orderKind: 'NORMAL',
       status: 'CANCELLED',
       cancelledAt: { gte: start, lte: end },
-      refundAmount: { not: null },
+      refundAmount: { gt: 0 },
     },
     select: { amount: true, refundAmount: true },
   })
-  const cancelFeeSum = cancelledOrders.reduce((s, o) => s + (o.amount - (o.refundAmount || 0)), 0)
+  const cancelFeeSum = cancelledOrders.reduce((s, o) => s + Math.max(0, o.amount - (o.refundAmount || 0)), 0)
 
-  // 改签手续费作为营业外收入
-  const rescheduleOrders = await prisma.order.findMany({
+  // 3. 改签手续费：按独立费用订单统计（新流程）
+  const rescheduleFeeSumAgg = await prisma.order.aggregate({
     where: {
-      rescheduleFeeAmount: { gt: 0 },
-      updatedAt: { gte: start, lte: end },
+      orderKind: 'FEE',
+      feeType: 'RESCHEDULE_FEE',
+      status: 'PAID',
+      paidAt: { gte: start, lte: end },
     },
-    select: { rescheduleFeeAmount: true },
+    _sum: { amount: true },
   })
-  const rescheduleFeeSum = rescheduleOrders.reduce((s, o) => s + (o.rescheduleFeeAmount || 0), 0)
+  const rescheduleFeeSum = rescheduleFeeSumAgg._sum.amount || 0
 
   const totalOtherIncome = noShowPenaltySum + cancelFeeSum + rescheduleFeeSum
 
@@ -977,7 +992,10 @@ export async function runDailyReport(
       totalBonusLiability: tbl,
       pointsLiability: pointsLiab,
       dormantPrincipal,
-      noShowPenalty: totalOtherIncome,
+      noShowPenalty: noShowPenaltySum,
+      otherIncomeTotal: totalOtherIncome,
+      rescheduleFeeIncome: rescheduleFeeSum,
+      cancelFeeIncome: cancelFeeSum,
     },
     create: {
       date: dateStr,
@@ -1003,7 +1021,10 @@ export async function runDailyReport(
       totalBonusLiability: tbl,
       pointsLiability: pointsLiab,
       dormantPrincipal,
-      noShowPenalty: totalOtherIncome,
+      noShowPenalty: noShowPenaltySum,
+      otherIncomeTotal: totalOtherIncome,
+      rescheduleFeeIncome: rescheduleFeeSum,
+      cancelFeeIncome: cancelFeeSum,
     }
   })
 

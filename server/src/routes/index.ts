@@ -30,6 +30,7 @@ import roleRoutes from './role'
 import systemConfigRoutes from './systemConfig'
 import userBenefitRoutes from './userBenefits'
 import approvalRoutes from './approvals'
+import groupBuyRoutes from './groupBuy'
 
 const router = Router()
 
@@ -64,5 +65,6 @@ router.use('/roles', roleRoutes)
 router.use('/system-configs', systemConfigRoutes)
 router.use('/user-benefits', userBenefitRoutes)
 router.use('/approvals', approvalRoutes)
+router.use('/group-buys', groupBuyRoutes)
 
 export default router

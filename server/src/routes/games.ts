@@ -10,7 +10,8 @@ import {
   batchUpdatePrice,
   createValidators,
 } from '../controllers/gameController'
-import { authenticate, requireRole } from '../middleware/auth'
+import { authenticate } from '../middleware/auth'
+import { requirePermission } from '../middleware/rbac'
 import { logOperation } from '../middleware/operationLog'
 
 const router = Router()
@@ -23,7 +24,7 @@ router.get('/:id', getById)
 router.post(
   '/',
   authenticate,
-  requireRole('SUPER_ADMIN', 'ADMIN', 'OPERATOR'),
+  requirePermission('content:manage'),
   createValidators,
   logOperation({ type: '创建游戏内容', content: (req) => `创建游戏: ${req.body.title}` }),
   create
@@ -31,7 +32,7 @@ router.post(
 router.put(
   '/:id',
   authenticate,
-  requireRole('SUPER_ADMIN', 'ADMIN', 'OPERATOR'),
+  requirePermission('content:manage'),
   createValidators,
   logOperation({ type: '更新游戏内容', content: (req) => `更新游戏ID: ${req.params.id}` }),
   update
@@ -39,28 +40,28 @@ router.put(
 router.delete(
   '/:id',
   authenticate,
-  requireRole('SUPER_ADMIN', 'ADMIN', 'OPERATOR'),
+  requirePermission('content:manage'),
   logOperation({ type: '删除游戏内容', content: (req) => `删除游戏ID: ${req.params.id}` }),
   remove
 )
 router.post(
   '/batch-delete',
   authenticate,
-  requireRole('SUPER_ADMIN', 'ADMIN', 'OPERATOR'),
+  requirePermission('content:manage'),
   logOperation({ type: '批量删除游戏内容', content: (req) => `批量删除游戏: ${req.body.ids?.length}个` }),
   batchDelete
 )
 router.post(
   '/batch-status',
   authenticate,
-  requireRole('SUPER_ADMIN', 'ADMIN', 'OPERATOR'),
+  requirePermission('content:manage'),
   logOperation({ type: '批量更新游戏状态', content: (req) => `批量更新游戏状态: ${req.body.ids?.length}个 → ${req.body.status}` }),
   batchUpdateStatus
 )
 router.post(
   '/batch-price',
   authenticate,
-  requireRole('SUPER_ADMIN', 'ADMIN', 'OPERATOR'),
+  requirePermission('content:manage'),
   logOperation({ type: '批量更新游戏价格', content: (req) => `批量更新游戏价格: ${req.body.ids?.length}个 → ¥${req.body.price / 100}` }),
   batchUpdatePrice
 )

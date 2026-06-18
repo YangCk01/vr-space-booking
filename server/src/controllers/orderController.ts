@@ -1,10 +1,12 @@
 import { Response } from 'express'
+import { format } from 'date-fns'
 import { AuthenticatedRequest } from '../types'
 import { body, validationResult } from 'express-validator'
 import { prisma } from '../utils/prisma'
 import { success, error, paginated } from '../utils/response'
 import { pushNotification, pushAdminNotification } from '../controllers/notificationController'
-import { format } from 'date-fns'
+import { Prisma } from '@prisma/client'
+import { generateOrderNo } from '../utils/orderNo'
 import { getDiscountByLevel, getPointsConfig } from '../utils/memberConfig'
 import { getUserWallet, hasEnoughBalance, deductProportional } from '../utils/wallet'
 import { checkBatchLimit } from '../services/riskControlService'
@@ -14,22 +16,40 @@ import { expirePendingOrders } from '../jobs/orderTimeoutJob'
 import { processBookingLifecycle } from '../jobs/bookingLifecycleJob'
 import { onCouponUsed } from '../services/campaignRewardService'
 import { releaseEquipment } from '../services/equipmentService'
+import { executeRescheduleInTx } from './bookingController'
 
 export const createValidators = [
-  body('venueId').notEmpty().withMessage('场地不能为空'),
+  body('venueId').if(body('groupBuyPackageId').not().exists()).notEmpty().withMessage('场地不能为空'),
   body('amount').isInt({ min: 0 }).withMessage('金额必须为正整数'),
-  body('bookingTime').notEmpty().withMessage('预约时间不能为空'),
+  body('bookingTime').if(body('groupBuyPackageId').not().exists()).notEmpty().withMessage('预约时间不能为空'),
 ]
 
-function generateOrderNo(): string {
-  const dateStr = format(new Date(), 'yyyyMMdd')
-  const time = Date.now().toString(36).slice(-4).toUpperCase()
-  const random = Math.floor(Math.random() * 9000) + 1000
-  return `VR${dateStr}${time}${random}`
-}
+export const redeemValidators = [
+  body('venueId').notEmpty().withMessage('场地不能为空'),
+  body('date').notEmpty().withMessage('日期不能为空'),
+  body('startTime').notEmpty().withMessage('开始时间不能为空'),
+  body('endTime').notEmpty().withMessage('结束时间不能为空'),
+  body('personName').notEmpty().withMessage('联系人不能为空'),
+  body('personPhone').notEmpty().withMessage('联系电话不能为空'),
+  body('personCount').isInt({ min: 1 }).withMessage('人数至少1人'),
+]
+
+export const redeemCustomerValidators = [
+  body('venueId').notEmpty().withMessage('场地不能为空'),
+  body('date').notEmpty().withMessage('日期不能为空'),
+  body('startTime').notEmpty().withMessage('开始时间不能为空'),
+  body('endTime').notEmpty().withMessage('结束时间不能为空'),
+  body('personName').notEmpty().withMessage('联系人不能为空'),
+  body('personPhone').notEmpty().withMessage('联系电话不能为空'),
+  body('personCount').isInt({ min: 1 }).withMessage('人数至少1人'),
+]
 
 function dayStart(dateStr: string): Date { return new Date(dateStr + 'T00:00:00.000Z') }
 function dayEnd(dateStr: string): Date { return new Date(dateStr + 'T23:59:59.999Z') }
+function timeToMinutes(t: string): number {
+  const [h, m] = t.split(':').map(Number)
+  return h * 60 + m
+}
 
 function getLocalBookingStartTime(date: Date, startTime: string): Date {
   const dateStr = date.toISOString().split('T')[0]
@@ -82,28 +102,101 @@ export async function list(req: AuthenticatedRequest, res: Response) {
     await expirePendingOrders()
     await processBookingLifecycle()
 
-    const { status, search, page = '1', pageSize = '10', startDate, endDate, source } = req.query
+    const { status, search, page = '1', pageSize = '10', startDate, endDate, source, orderType, orderKind, feeType, refundStatus, parentOrderNo } = req.query
     const pageNum = parseInt(page as string, 10)
     const sizeNum = parseInt(pageSize as string, 10)
 
     const where: any = {}
+    const andConditions: any[] = []
 
     if (status && status !== 'all') {
       where.status = status as string
     }
 
+    if (orderKind && orderKind !== 'all') {
+      where.orderKind = orderKind as string
+    }
+
+    if (orderType && orderType !== 'all') {
+      if (orderType === 'RESERVATION') {
+        where.orderKind = 'NORMAL'
+        andConditions.push({ groupBuyPackageId: null })
+      } else if (orderType === 'GROUP_BUY') {
+        where.orderKind = 'NORMAL'
+        andConditions.push({ groupBuyPackageId: { not: null } })
+      } else if (orderType === 'FEE') {
+        where.orderKind = 'FEE'
+      }
+    }
+
     if (source && source !== 'all') {
       where.source = source as string
+      if ((!orderKind || orderKind === 'all') && orderType !== 'FEE') {
+        andConditions.push({ orderKind: { not: 'FEE' } })
+      } else if (orderKind === 'FEE' || orderType === 'FEE') {
+        andConditions.push({ id: '__NO_FEE_ORDER_MATCHES_SOURCE_FILTER__' })
+      }
+    }
+
+    if (feeType && feeType !== 'all') {
+      where.feeType = feeType as string
+    }
+
+    // 退款状态筛选
+    if (refundStatus && refundStatus !== 'all') {
+      if (refundStatus === 'HAS_REFUND') {
+        where.refundAmount = { gt: 0 }
+      } else if (refundStatus === 'NO_REFUND') {
+        andConditions.push({
+          OR: [
+            { refundAmount: null },
+            { refundAmount: 0 },
+          ],
+        })
+      }
+    }
+
+    // 关联订单号搜索：先查找原订单 ID
+    let parentOrderIdFilter: string | undefined
+    if (parentOrderNo) {
+      const parentOrder = await prisma.order.findFirst({
+        where: { orderNo: { contains: parentOrderNo as string, mode: 'insensitive' } },
+        select: { id: true },
+      })
+      parentOrderIdFilter = parentOrder?.id
+      if (!parentOrderIdFilter) {
+        // 没有匹配的原订单，返回空结果
+        return paginated(res, [], pageNum, sizeNum, 0)
+      }
     }
 
     if (search) {
-      where.OR = [
+      const searchWhere: any[] = [
         { orderNo: { contains: search as string, mode: 'insensitive' } },
         { venueName: { contains: search as string, mode: 'insensitive' } },
+        { verifyCode: { contains: search as string, mode: 'insensitive' } },
       ]
+      // 支持扫码识别：二维码内容可能是订单 UUID
+      if (typeof search === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(search)) {
+        searchWhere.push({ id: search })
+      }
+      if (parentOrderIdFilter) {
+        andConditions.push({ OR: searchWhere })
+        andConditions.push({ parentOrderId: parentOrderIdFilter })
+      } else {
+        andConditions.push({ OR: searchWhere })
+      }
+    } else if (parentOrderIdFilter) {
+      where.parentOrderId = parentOrderIdFilter
     }
 
-    // 日期范围筛选（按创建时间）
+    // 默认排除团购父订单（仅用于统一收款），只展示实际子订单
+    andConditions.push({ orderKind: { not: 'GROUP_PARENT' } })
+
+    if (andConditions.length > 0) {
+      where.AND = andConditions
+    }
+
     if (startDate || endDate) {
       where.createdAt = {}
       if (startDate) {
@@ -130,7 +223,11 @@ export async function list(req: AuthenticatedRequest, res: Response) {
     const countWhere = { ...where }
     delete countWhere.status
 
-    const [orders, total, statusGroups] = await Promise.all([
+    // 「全部」tab 角标不受 status/orderKind 过滤影响，仅保留其他筛选条件
+    const countAllWhere = { ...countWhere }
+    delete countAllWhere.orderKind
+
+    const [orders, total, totalAll, statusGroups, normalStatusGroups] = await Promise.all([
       prisma.order.findMany({
         where,
         skip: (pageNum - 1) * sizeNum,
@@ -154,12 +251,31 @@ export async function list(req: AuthenticatedRequest, res: Response) {
             },
           },
           userCoupon: { select: { name: true, type: true, discountRate: true, source: true, giftReason: true, giftRemark: true } },
+          groupBuyPackage: { select: { id: true, title: true, label: true, coverImage: true, totalGroupPrice: true, originalPricePerPerson: true, maxPeople: true, game: { select: { id: true, title: true, duration: true, coverImage: true } }, venues: { select: { id: true, name: true, address: true, openTime: true, closeTime: true, phone: true, image: true } } } },
+          parentOrder: {
+            select: {
+              id: true,
+              orderNo: true,
+              booking: {
+                include: {
+                  game: { select: { id: true, title: true } },
+                },
+              },
+            },
+          },
+          feeOrders: { select: { id: true, orderNo: true, amount: true, status: true, feeType: true, feeReason: true, paidAt: true, payMethod: true } },
         },
       }),
       prisma.order.count({ where }),
+      prisma.order.count({ where: countAllWhere }),
       prisma.order.groupBy({
         by: ['status'],
         where: countWhere,
+        _count: { status: true },
+      }),
+      prisma.order.groupBy({
+        by: ['status'],
+        where: { ...countWhere, orderKind: 'NORMAL' },
         _count: { status: true },
       }),
     ])
@@ -170,6 +286,11 @@ export async function list(req: AuthenticatedRequest, res: Response) {
       statusCounts[g.status.toLowerCase()] = g._count.status
     }
 
+    const normalStatusCounts: Record<string, number> = {}
+    for (const g of normalStatusGroups) {
+      normalStatusCounts[g.status.toLowerCase()] = g._count.status
+    }
+
     const response: any = {
       success: true,
       data: orders,
@@ -178,8 +299,10 @@ export async function list(req: AuthenticatedRequest, res: Response) {
         page: pageNum,
         pageSize: sizeNum,
         total,
+        totalAll,
         totalPages: Math.ceil(total / sizeNum),
         statusCounts,
+        normalStatusCounts,
       },
     }
     return res.status(200).json(response)
@@ -201,6 +324,22 @@ export async function getById(req: AuthenticatedRequest, res: Response) {
         booking: { include: { venue: true, game: true } },
         payments: true,
         userCoupon: { select: { name: true, type: true, discountRate: true, source: true, giftReason: true, giftRemark: true } },
+        groupBuyPackage: { select: { id: true, title: true, label: true, coverImage: true, totalGroupPrice: true, originalPricePerPerson: true, maxPeople: true, game: { select: { id: true, title: true, duration: true, coverImage: true } }, venues: { select: { id: true, name: true, address: true, openTime: true, closeTime: true, phone: true, image: true, status: true, maintenanceStartDate: true, maintenanceEndDate: true, maintenanceStartTime: true, maintenanceEndTime: true } } } },
+        parentOrder: {
+          select: {
+            id: true,
+            orderNo: true,
+            amount: true,
+            status: true,
+            booking: {
+              include: {
+                game: { select: { id: true, title: true, coverImage: true, duration: true } },
+                venue: { select: { name: true, address: true } },
+              },
+            },
+          },
+        },
+        feeOrders: { select: { id: true, orderNo: true, amount: true, status: true, feeType: true, feeReason: true, paidAt: true, payMethod: true } },
       },
     })
 
@@ -246,8 +385,94 @@ export async function create(req: AuthenticatedRequest, res: Response) {
   }
 
   try {
-    const { bookingId, venueId, venueName, amount, bookingTime, userId, source, payMethod, userCouponId } = req.body
+    const { bookingId, venueId, venueName, amount, bookingTime, userId, source, payMethod, userCouponId, groupBuyPackageId } = req.body
     const currentUserId = userId || req.user?.id
+
+    // 团购套餐订单：套餐价已是最终价，不打折、不用券
+    const isGroupBuy = !!groupBuyPackageId
+
+    // 团购订单：创建父订单用于统一支付，同时按份数创建子订单用于展示/核销
+    if (isGroupBuy) {
+      const pkg = await prisma.groupBuyPackage.findUnique({
+        where: { id: groupBuyPackageId },
+        include: { venues: { select: { id: true, name: true } }, game: { select: { id: true, title: true } } },
+      })
+      if (!pkg) return error(res, '团购套餐不存在', 404)
+      if (pkg.status !== 'ACTIVE') return error(res, '团购套餐已下架', 400)
+
+      const quantityNum = Math.max(1, parseInt(req.body.quantity) || 1)
+      const parsedAmount = pkg.totalGroupPrice * quantityNum
+      const originalAmount = (pkg.originalPricePerPerson * pkg.maxPeople) * quantityNum
+      const discountAmount = originalAmount - parsedAmount
+      const venue = pkg.venues[0]
+      const expireAt = new Date(Date.now() + 30 * 60 * 1000)
+      const unitOriginal = pkg.originalPricePerPerson * pkg.maxPeople
+      const unitAmount = pkg.totalGroupPrice
+      const unitDiscount = unitOriginal - unitAmount
+
+      const { parentOrder } = await prisma.$transaction(async (tx) => {
+        // 父订单：用于统一收款
+        const parentOrder = await tx.order.create({
+          data: {
+            orderNo: await generateOrderNo('group', tx),
+            userId: currentUserId || null,
+            venueId: venue?.id || null,
+            venueName: venue?.name || pkg.game?.title || '',
+            groupBuyPackageId: pkg.id,
+            originalAmount,
+            amount: parsedAmount,
+            discountRate: 100,
+            discountAmount,
+            couponDiscount: 0,
+            userCouponId: null,
+            pointsUsed: 0,
+            pointsDeduction: 0,
+            quantity: quantityNum,
+            status: 'PENDING',
+            source: 'ONLINE',
+            expireAt,
+            orderKind: 'GROUP_PARENT',
+          },
+          include: {
+            user: { select: { id: true, name: true, phone: true } },
+            groupBuyPackage: { select: { id: true, title: true, coverImage: true, totalGroupPrice: true, originalPricePerPerson: true, maxPeople: true } },
+          },
+        })
+
+        // 子订单：每份一个独立订单号/券码，用于展示和核销
+        for (let i = 0; i < quantityNum; i++) {
+          const verifyCode = `VR${format(new Date(), 'yyyyMMdd')}${Math.floor(Math.random() * 900000) + 100000}`
+          await tx.order.create({
+            data: {
+              orderNo: await generateOrderNo('group', tx),
+              userId: currentUserId || null,
+              venueId: venue?.id || null,
+              venueName: venue?.name || pkg.game?.title || '',
+              groupBuyPackageId: pkg.id,
+              parentOrderId: parentOrder.id,
+              originalAmount: unitOriginal,
+              amount: unitAmount,
+              discountRate: 100,
+              discountAmount: unitDiscount,
+              couponDiscount: 0,
+              userCouponId: null,
+              pointsUsed: 0,
+              pointsDeduction: 0,
+              quantity: 1,
+              verifyCode,
+              status: 'PENDING',
+              source: 'ONLINE',
+              expireAt,
+              orderKind: 'NORMAL',
+            },
+          })
+        }
+
+        return { parentOrder }
+      })
+
+      return success(res, parentOrder, '订单创建成功', 201)
+    }
 
     // 如果有 bookingId，检查预约是否存在
     if (bookingId) {
@@ -266,16 +491,16 @@ export async function create(req: AuthenticatedRequest, res: Response) {
 
     const parsedAmount = parseInt(amount)
 
-    // 1. 先获取会员折扣率
+    // 1. 先获取会员折扣率（团购订单不打折）
     let discount = 100
-    if (currentUserId) {
+    if (currentUserId && !isGroupBuy) {
       const user = await prisma.user.findUnique({ where: { id: currentUserId } })
       if (user) {
         discount = await getDiscountByLevel(user.level)
       }
     }
 
-    // 2. 验证优惠券并计算折扣顺序
+    // 2. 验证优惠券并计算折扣顺序（团购订单不可用券）
     // 体验券：先抵扣1人原价，剩余再打会员折扣
     // 优惠券（DISCOUNT）：先会员折扣，再折上折
     let couponDiscount = 0
@@ -283,7 +508,7 @@ export async function create(req: AuthenticatedRequest, res: Response) {
     let finalUserCouponId: string | null = null
     let couponType: string | null = null
 
-    if (userCouponId && currentUserId) {
+    if (userCouponId && currentUserId && !isGroupBuy) {
       const coupon = await prisma.userCoupon.findUnique({ where: { id: userCouponId } })
       if (!coupon) throw new Error('优惠券不存在')
       if (coupon.userId !== currentUserId) throw new Error('优惠券不属于当前用户')
@@ -356,11 +581,12 @@ export async function create(req: AuthenticatedRequest, res: Response) {
         // 创建订单（记录所有明细）
         const order = await tx.order.create({
           data: {
-            orderNo: generateOrderNo(),
+            orderNo: await generateOrderNo(groupBuyPackageId ? 'group' : 'normal', tx),
             bookingId: bookingId || null,
             userId: currentUserId,
             venueId,
             venueName: finalVenueName,
+            groupBuyPackageId: groupBuyPackageId || null,
             originalAmount: parsedAmount,
             amount: remainingAmount,
             discountRate: discount,
@@ -449,11 +675,12 @@ export async function create(req: AuthenticatedRequest, res: Response) {
     const expireAt = new Date(Date.now() + 30 * 60 * 1000)
     const order = await prisma.order.create({
       data: {
-        orderNo: generateOrderNo(),
+        orderNo: await generateOrderNo(groupBuyPackageId ? 'group' : 'normal'),
         bookingId: bookingId || null,
         userId: currentUserId || null,
         venueId,
         venueName: finalVenueName,
+        groupBuyPackageId: groupBuyPackageId || null,
         originalAmount: parsedAmount,
         amount: remainingAmount,
         discountRate: discount,
@@ -578,6 +805,13 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
     // 支持通过 orderNo 或 id 查询
     const order = await prisma.order.findFirst({
       where: { OR: [{ id }, { orderNo: id }] },
+      include: {
+        parentOrder: {
+          include: {
+            booking: { include: { venue: true, game: true } },
+          },
+        },
+      },
     })
     if (!order) {
       return error(res, '订单不存在', 404)
@@ -593,6 +827,11 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
     // 检查订单是否已过期
     if (order.expireAt && new Date() > order.expireAt) {
       return error(res, '订单已过期，请重新下单', 400)
+    }
+
+    // ─── 改签费订单支付 ───
+    if (order.orderKind === 'FEE' && order.feeType === 'RESCHEDULE_FEE') {
+      return await payRescheduleFeeOrder(req, res, order, method)
     }
 
     // 余额支付检查
@@ -664,9 +903,24 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
           status: 'PAID',
           payMethod: method || 'WECHAT',
           paidAt: new Date(),
+          // 团购券支付成功后，将过期时间延长为 30 天有效期
+          ...(order.groupBuyPackageId ? { expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) } : {}),
           ...(method === 'BALANCE' ? { principalDeduction, bonusDeduction } : {}),
         },
       })
+
+      // 3.5 团购父订单支付成功后，同步更新所有子订单为已付款
+      if (order.orderKind === 'GROUP_PARENT') {
+        await tx.order.updateMany({
+          where: { parentOrderId: order.id },
+          data: {
+            status: 'PAID',
+            payMethod: method || 'WECHAT',
+            paidAt: new Date(),
+            expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          },
+        })
+      }
 
       // 4. 创建支付记录
       await tx.payment.create({
@@ -719,6 +973,145 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
   }
 }
 
+/* ─── 改签费订单支付并执行改签 ─── */
+async function payRescheduleFeeOrder(
+  req: AuthenticatedRequest,
+  res: Response,
+  feeOrder: any,
+  method: any
+) {
+  const parentOrder = feeOrder.parentOrder
+  if (!parentOrder) {
+    return error(res, '改签费订单未关联原订单', 400)
+  }
+  const booking = parentOrder.booking
+  if (!booking) {
+    return error(res, '原订单未关联预约', 400)
+  }
+
+  const meta = feeOrder.metadata as Record<string, any> | null
+  if (!meta || !meta.newDate) {
+    return error(res, '改签费订单缺少改签参数', 400)
+  }
+
+  const requiredFields = ['newVenueId', 'newDate', 'newStartTime', 'newEndTime', 'newGameId', 'newPersonCount', 'newOriginalAmount', 'deltaAmount', 'feeAmount', 'feeRate', 'isGroupBuy']
+  for (const f of requiredFields) {
+    if (meta[f] === undefined) {
+      return error(res, `改签参数不完整：${f}`, 400)
+    }
+  }
+
+  // 检查支付方式与改签费订单声明一致（允许顾客在支付时重新选择）
+  const payMethod = (method || feeOrder.payMethod || 'BALANCE').toUpperCase()
+  if (!['BALANCE', 'WECHAT', 'ALIPAY'].includes(payMethod)) {
+    return error(res, '不支持的支付方式', 400)
+  }
+
+  // 余额支付需检查余额（改签费 + 可能补的差价）
+  if (payMethod === 'BALANCE' && feeOrder.userId) {
+    const user = await prisma.user.findUnique({ where: { id: feeOrder.userId } })
+    if (!user) return error(res, '用户不存在', 400)
+    const totalNeeded = (meta.feeAmount as number) + Math.max(0, meta.deltaAmount as number)
+    const wallet = { principal: user.principalBalance, bonus: user.bonusBalance }
+    const { hasEnoughBalance } = await import('../utils/wallet')
+    if (!hasEnoughBalance(wallet, totalNeeded)) {
+      return error(res, `余额不足，当前余额 ¥${(wallet.principal + wallet.bonus) / 100}，还需 ¥${totalNeeded / 100}`, 400)
+    }
+  }
+
+  // 幂等：先检查是否已支付
+  if (feeOrder.status !== 'PENDING') {
+    return error(res, '改签费订单状态不允许支付', 400)
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    // 1. 余额扣款（仅改签费，差价由 executeRescheduleInTx 处理）
+    let principalDeduction = 0
+    let bonusDeduction = 0
+    if (payMethod === 'BALANCE' && feeOrder.userId) {
+      const freshUser = await tx.user.findUnique({ where: { id: feeOrder.userId } })
+      if (freshUser) {
+        const { deductProportional } = await import('../utils/wallet')
+        const wallet = { principal: freshUser.principalBalance, bonus: freshUser.bonusBalance }
+        const result = deductProportional(wallet, feeOrder.amount)
+        principalDeduction = result.principalDeduction
+        bonusDeduction = result.bonusDeduction
+        await tx.user.update({
+          where: { id: feeOrder.userId },
+          data: {
+            principalBalance: { decrement: principalDeduction },
+            bonusBalance: { decrement: bonusDeduction },
+          },
+        })
+        await tx.balanceTransaction.create({
+          data: {
+            userId: feeOrder.userId,
+            type: 'DEDUCT',
+            amount: feeOrder.amount,
+            principalAmount: -principalDeduction,
+            bonusAmount: -bonusDeduction,
+            totalAmount: -feeOrder.amount,
+            orderId: feeOrder.id,
+            remark: `改签费订单 ${feeOrder.orderNo} 余额支付（本金¥${principalDeduction / 100}+赠送¥${bonusDeduction / 100}）`,
+          },
+        })
+      }
+    }
+
+    // 2. 更新改签费订单为已支付
+    const updatedFeeOrder = await tx.order.update({
+      where: { id: feeOrder.id },
+      data: {
+        status: 'PAID',
+        payMethod: payMethod as any,
+        paidAt: new Date(),
+        ...(payMethod === 'BALANCE' ? { principalDeduction, bonusDeduction } : {}),
+      },
+    })
+
+    // 3. 创建支付记录
+    await tx.payment.create({
+      data: {
+        orderId: feeOrder.id,
+        amount: feeOrder.amount,
+        method: payMethod as any,
+        status: 'SUCCESS',
+      },
+    })
+
+    // 4. 执行改签
+    await executeRescheduleInTx(tx, booking, parentOrder, {
+      newVenueId: meta.newVenueId,
+      newDate: meta.newDate,
+      newStartTime: meta.newStartTime,
+      newEndTime: meta.newEndTime,
+      newGameId: meta.newGameId,
+      newPersonCount: meta.newPersonCount,
+      newOriginalAmount: meta.newOriginalAmount,
+      deltaAmount: meta.deltaAmount,
+      feeAmount: meta.feeAmount,
+      feeRate: meta.feeRate,
+      method: payMethod,
+      isGroupBuy: meta.isGroupBuy,
+      freeRescheduleUsed: false,
+    })
+
+    return updatedFeeOrder
+  })
+
+  // 发送支付成功通知
+  if (feeOrder.userId) {
+    await pushNotification(
+      feeOrder.userId,
+      'PAY_SUCCESS',
+      '改签费支付成功',
+      `您的改签费订单 ${feeOrder.orderNo} 支付成功，金额 ¥${(feeOrder.amount / 100).toFixed(2)}`
+    )
+  }
+
+  return success(res, result, '改签费支付成功并已执行改签')
+}
+
 interface RefundTier {
   hours: number
   rate: number
@@ -760,7 +1153,7 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
 
     const order = await prisma.order.findFirst({
       where: { OR: [{ id }, { orderNo: id }] },
-      include: { booking: true },
+      include: { booking: true, feeOrders: true },
     })
     if (!order) {
       return error(res, '订单不存在', 404)
@@ -771,9 +1164,10 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
     }
 
     const isPaidOrder = ['PAID', 'READY_TO_VERIFY'].includes(order.status)
+    const isMaintenanceAffected = order.disruptionStatus === 'VENUE_MAINTENANCE'
 
     // 已付款订单遵守取消/退款时限；未支付订单即使已过期也允许关闭并释放场次。
-    if (isPaidOrder && order.booking) {
+    if (isPaidOrder && order.booking && !isMaintenanceAffected) {
       const start = new Date(order.booking.date)
       const [h, m] = order.booking.startTime.split(':')
       start.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
@@ -791,9 +1185,19 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
     // 计算阶梯退费比例
     let refundRate = 1
     if (isPaidOrder && order.booking) {
-      refundRate = await calcRefundRate(order.booking.date, order.booking.startTime)
+      refundRate = isMaintenanceAffected ? 1 : await calcRefundRate(order.booking.date, order.booking.startTime)
     }
     const refundAmount = isPaidOrder ? Math.floor((order.amount || 0) * refundRate) : 0
+    const refundableFeeOrders = isMaintenanceAffected
+      ? order.feeOrders.filter((feeOrder) =>
+        feeOrder.orderKind === 'FEE' &&
+        feeOrder.feeType === 'RESCHEDULE_FEE' &&
+        ['PAID', 'COMPLETED'].includes(feeOrder.status) &&
+        (feeOrder.amount || 0) > 0 &&
+        !(feeOrder.refundAmount && feeOrder.refundAmount > 0)
+      )
+      : []
+    const feeRefundAmount = refundableFeeOrders.reduce((sum, feeOrder) => sum + (feeOrder.amount || 0), 0)
 
     const { earnRate } = await getPointsConfig()
 
@@ -815,8 +1219,20 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
           status: 'CANCELLED',
           cancelledAt: new Date(),
           refundAmount: refundAmount > 0 ? refundAmount : null,
+          disruptionStatus: 'NONE',
+          disruptionReason: null,
+          disruptionSource: null,
+          disruptionAt: null,
         },
       })
+
+      // 团购父订单取消时，同步取消所有子订单
+      if (order.orderKind === 'GROUP_PARENT') {
+        await tx.order.updateMany({
+          where: { parentOrderId: order.id },
+          data: { status: 'CANCELLED', cancelledAt: new Date() },
+        })
+      }
 
       // 已支付订单：按阶梯退费规则退回余额
       if (order.userId && order.payMethod?.startsWith('BALANCE') && isPaidOrder && refundAmount > 0) {
@@ -843,9 +1259,44 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
             bonusAmount: refundBonus,
             totalAmount: refundAmount,
             orderId: order.id,
-            remark: `订单取消恢复余额（本金¥${refundPrincipal / 100}+赠送¥${refundBonus / 100}）退费比例${(refundRate * 100).toFixed(0)}%`,
+            remark: `订单取消恢复余额（本金¥${refundPrincipal / 100}+赠送¥${refundBonus / 100}）退费比例${(refundRate * 100).toFixed(0)}%，原因：${req.body?.reason || '用户取消订单'}`,
           },
         })
+      }
+
+      for (const feeOrder of refundableFeeOrders) {
+        await tx.order.update({
+          where: { id: feeOrder.id },
+          data: {
+            status: 'REFUNDED',
+            cancelledAt: new Date(),
+            refundAmount: feeOrder.amount,
+          },
+        })
+
+        if (feeOrder.userId && feeOrder.payMethod?.startsWith('BALANCE')) {
+          const refundPrincipal = feeOrder.principalDeduction || feeOrder.amount
+          const refundBonus = feeOrder.bonusDeduction || 0
+          await tx.user.update({
+            where: { id: feeOrder.userId },
+            data: {
+              principalBalance: { increment: refundPrincipal },
+              bonusBalance: { increment: refundBonus },
+            },
+          })
+          await tx.balanceTransaction.create({
+            data: {
+              userId: feeOrder.userId,
+              type: 'CANCEL_RESTORE',
+              amount: feeOrder.amount,
+              principalAmount: refundPrincipal,
+              bonusAmount: refundBonus,
+              totalAmount: feeOrder.amount,
+              orderId: feeOrder.id,
+              remark: `场地维护影响，退回改签费 ¥${(feeOrder.amount / 100).toFixed(2)}`,
+            },
+          })
+        }
       }
 
       // 已支付订单取消时收回赠送积分（查询当时发放记录，确保收回数量一致）
@@ -897,7 +1348,8 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
 
     // Send cancel notification
     if (order.userId) {
-      const refundText = refundAmount > 0 ? `，已退回 ¥${(refundAmount / 100).toFixed(2)}` : ''
+      const totalRefundAmount = refundAmount + feeRefundAmount
+      const refundText = totalRefundAmount > 0 ? `，已退回 ¥${(totalRefundAmount / 100).toFixed(2)}` : ''
       await pushNotification(
         order.userId,
         'BOOKING_CANCEL',
@@ -912,12 +1364,12 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
       targetDesc: `订单 ${order.orderNo}`,
       action: 'POST',
       actionName: '取消订单',
-      beforeValue: { status: order.status, amount: order.amount, refundRate },
-      afterValue: { status: 'CANCELLED', refundAmount },
+      beforeValue: { status: order.status, amount: order.amount, refundRate, disruptionStatus: order.disruptionStatus },
+      afterValue: { status: 'CANCELLED', refundAmount, feeRefundAmount },
       reason: req.body?.reason || '用户取消订单',
     })
 
-    return success(res, { ...result, refundRate, refundAmount }, '订单已取消')
+    return success(res, { ...result, refundRate, refundAmount, feeRefundAmount, reason: req.body?.reason || '用户取消订单' }, '订单已取消')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -1465,11 +1917,6 @@ export async function markNoShow(req: AuthenticatedRequest, res: Response) {
       return error(res, '该订单状态不允许标记爽约', 400)
     }
 
-    const setting = await prisma.systemSetting.findUnique({ where: { key: 'no_show_penalty_rate' } })
-    const raw = setting?.value as any
-    const penaltyRate = (typeof raw === 'object' && raw !== null && 'value' in raw ? raw.value : raw) ?? 100
-    const penaltyAmount = Math.floor((order.amount || 0) * penaltyRate / 100)
-
     await prisma.$transaction(async (tx) => {
       await tx.order.update({
         where: { id: order.id },
@@ -1477,7 +1924,6 @@ export async function markNoShow(req: AuthenticatedRequest, res: Response) {
           status: 'NO_SHOW',
           noShowAt: new Date(),
           noShowReason: reason || 'manual',
-          penaltyAmount,
         },
       })
 
@@ -1485,18 +1931,6 @@ export async function markNoShow(req: AuthenticatedRequest, res: Response) {
         await tx.booking.update({
           where: { id: order.bookingId },
           data: { status: 'NO_SHOW', noShowAt: new Date() },
-        })
-      }
-
-      if (order.userId) {
-        await tx.balanceTransaction.create({
-          data: {
-            userId: order.userId,
-            orderId: order.id,
-            type: 'NO_SHOW_PENALTY',
-            amount: penaltyAmount,
-            remark: `店长手动标记爽约，违约金比例 ${penaltyRate}%${reason ? '，原因：' + reason : ''}`,
-          },
         })
       }
     })
@@ -1517,16 +1951,13 @@ export async function markNoShow(req: AuthenticatedRequest, res: Response) {
         ? new Date(order.booking.date).toLocaleDateString('zh-CN')
         : ''
       const startTime = order.booking?.startTime || ''
-      const penaltyText = penaltyAmount > 0
-        ? `已扣除违约金 ¥${(penaltyAmount / 100).toFixed(2)}`
-        : '未产生违约金'
       const reasonMap: Record<string, string> = { manual: '店长手动标记', auto: '系统自动标记' }
       const reasonText = reason ? (reasonMap[reason] || reason) : ''
       pushNotification(
         order.userId,
         'NO_SHOW',
         '预约已标记为爽约',
-        `您在 ${bookingDate} ${startTime} 的预约因未到场被标记为爽约，${penaltyText}${reasonText ? '，原因：' + reasonText : ''}`
+        `您在 ${bookingDate} ${startTime} 的预约因未到场被标记为爽约${reasonText ? '，原因：' + reasonText : ''}`
       ).catch((e) => console.error('[markNoShow] 推送通知失败:', e))
     }
 
@@ -1601,5 +2032,353 @@ export async function activate(req: AuthenticatedRequest, res: Response) {
     return success(res, { status: target.orderStatus, bookingStatus: target.bookingStatus }, target.orderStatus === 'READY_TO_VERIFY' ? '订单已恢复为待核销' : '订单已恢复为已付款')
   } catch (err) {
     return error(res, (err as Error).message, 400)
+  }
+}
+
+
+export async function redeem(req: AuthenticatedRequest, res: Response) {
+  const errors = validationResult(req)
+  if (!errors.isEmpty()) {
+    return error(res, '参数错误', 400, errors.array()[0].msg)
+  }
+
+  try {
+    const { verifyCode, id: orderIdInput, venueId, date, startTime, endTime, personName, personPhone, personCount, note, title, gameId, type, completed = false } = req.body
+
+    const where: any = {
+      status: { in: ['PAID', 'READY_TO_VERIFY'] },
+      groupBuyPackageId: { not: null },
+    }
+    if (verifyCode) {
+      where.verifyCode = verifyCode
+    } else if (orderIdInput) {
+      where.id = orderIdInput
+    } else {
+      return error(res, '请提供券码或订单ID', 400)
+    }
+
+    const order = await prisma.order.findFirst({
+      where,
+      include: {
+        booking: true,
+        groupBuyPackage: {
+          include: {
+            venues: { select: { id: true, name: true } },
+            game: { select: { id: true, title: true } },
+          },
+        },
+      },
+    })
+    if (!order) {
+      return error(res, '团购券订单不存在或已核销', 404)
+    }
+
+    // 已线上预约的团购券：直接完成核销
+    if (order.bookingId && order.booking) {
+      if (!completed) {
+        return error(res, '该团购券已绑定预约，请选择核销', 400)
+      }
+      const result = await prisma.$transaction(async (tx) => {
+        await tx.booking.update({
+          where: { id: order.bookingId as string },
+          data: { status: 'COMPLETED' },
+        })
+        const updatedOrder = await tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: 'COMPLETED',
+            verifiedAt: new Date(),
+          },
+          include: {
+            booking: { include: { venue: true, game: true } },
+            groupBuyPackage: { select: { id: true, title: true, label: true, coverImage: true, game: { select: { id: true, title: true, duration: true } } } },
+          },
+        })
+        return updatedOrder
+      })
+
+      if (order.userId) {
+        await pushNotification(
+          order.userId,
+          'ORDER_COMPLETED',
+          '团购券已核销',
+          `您的团购券 ${order.verifyCode} 已核销，预约 ${order.venueName || ''} ${order.bookingTime || ''}`
+        )
+      }
+
+      await logAudit(req, {
+        targetType: 'ORDER',
+        targetId: order.id,
+        targetDesc: `订单 ${order.orderNo}`,
+        action: 'POST',
+        actionName: '团购券核销',
+        beforeValue: { status: order.status, bookingId: order.bookingId, venueId: order.venueId },
+        afterValue: { status: result.status, bookingId: result.bookingId, venueId: result.venueId },
+        reason: `券码 ${order.verifyCode} 已预约，直接核销`,
+      })
+
+      return success(res, result, '团购券已核销')
+    }
+
+    const venue = await prisma.venue.findUnique({ where: { id: venueId } })
+    if (!venue) {
+      return error(res, '场地不存在', 404)
+    }
+
+    const allowedVenueIds = order.groupBuyPackage?.venues.map((v: any) => v.id) || []
+    if (allowedVenueIds.length > 0 && !allowedVenueIds.includes(venueId)) {
+      return error(res, '该团购券不在所选门店适用范围内', 400)
+    }
+
+    // 检查时段冲突
+    const queryDate = new Date(`${date}T00:00:00.000Z`)
+    const overlapping = await prisma.booking.findMany({
+      where: { venueId, date: queryDate, status: { not: 'CANCELLED' } },
+    })
+    const s1 = timeToMinutes(startTime)
+    const e1 = timeToMinutes(endTime)
+    const conflicts = overlapping.filter((b) => {
+      const s2 = timeToMinutes(b.startTime)
+      const e2 = timeToMinutes(b.endTime)
+      return s1 < e2 && e1 > s2
+    })
+
+    const deviceCount = venue.deviceCount || 1
+    const pc = parseInt(personCount) || 1
+    const finalGameId = gameId || order.groupBuyPackage?.gameId || null
+
+    if (!finalGameId) {
+      if (conflicts.length > 0) {
+        return error(res, '该时段已被预约', 409)
+      }
+    } else {
+      const otherGameBooking = conflicts.some((b) => b.gameId && b.gameId !== finalGameId)
+      if (otherGameBooking) {
+        return error(res, '该时段已有其他游戏预约', 409)
+      }
+      const sameGameBookings = conflicts.filter((b) => b.gameId === finalGameId)
+      const currentCount = sameGameBookings.reduce((sum, b) => sum + (b.personCount || 1), 0)
+      if (currentCount + pc > deviceCount) {
+        return error(res, '该时段该游戏已约满', 409)
+      }
+    }
+
+    const bookingTitle = title || `${venue.name} ${type === 'TEAM' ? '团队预约' : type === 'INDIVIDUAL' ? '散客预约' : type === 'CORPORATE' ? '企业活动' : '团购预约'} ${startTime}-${endTime}`
+
+    const result = await prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.create({
+        data: {
+          venueId,
+          type: type || 'TEAM',
+          gameId: finalGameId,
+          title: bookingTitle,
+          date: queryDate,
+          startTime,
+          endTime,
+          personName,
+          personPhone,
+          personCount: pc,
+          note: note || null,
+          userId: order.userId || null,
+          status: completed ? 'COMPLETED' : 'CONFIRMED',
+        },
+      })
+
+      const orderUpdateData: any = {
+        bookingId: booking.id,
+        venueId,
+        venueName: venue.name,
+        bookingTime: `${date} ${startTime}-${endTime}`,
+      }
+      if (completed) {
+        orderUpdateData.status = 'COMPLETED'
+        orderUpdateData.verifiedAt = new Date()
+      }
+
+      const updatedOrder = await tx.order.update({
+        where: { id: order.id },
+        data: orderUpdateData,
+        include: {
+          booking: { include: { venue: true, game: true } },
+          groupBuyPackage: { select: { id: true, title: true, label: true, coverImage: true, game: { select: { id: true, title: true, duration: true } } } },
+        },
+      })
+
+      return updatedOrder
+    })
+
+    if (order.userId) {
+      await pushNotification(
+        order.userId,
+        completed ? 'ORDER_COMPLETED' : 'BOOKING_SUCCESS',
+        completed ? '团购券已核销' : '团购券预约成功',
+        completed
+          ? `您的团购券 ${order.verifyCode} 已核销，预约 ${venue.name} ${date} ${startTime}-${endTime}`
+          : `您的团购券已预约 ${venue.name} ${date} ${startTime}-${endTime}，请准时到店`
+      )
+    }
+
+    await logAudit(req, {
+      targetType: 'ORDER',
+      targetId: order.id,
+      targetDesc: `订单 ${order.orderNo}`,
+      action: 'POST',
+      actionName: '团购券核销',
+      beforeValue: { status: order.status, bookingId: order.bookingId, venueId: order.venueId },
+      afterValue: { status: result.status, bookingId: result.bookingId, venueId: result.venueId },
+      reason: `券码 ${order.verifyCode} 核销为 ${venue.name} ${date} ${startTime}-${endTime}`,
+    })
+
+    return success(res, result, completed ? '团购券已核销' : '团购券预约成功')
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+
+/**
+ * C 端用户在线预约团购券
+ * 仅允许订单所有者将已付款团购订单绑定到指定门店/时段，状态按核销提前量计算
+ */
+export async function redeemCustomer(req: AuthenticatedRequest, res: Response) {
+  const errors = validationResult(req)
+  if (!errors.isEmpty()) {
+    return error(res, '参数错误', 400, errors.array()[0].msg)
+  }
+
+  try {
+    const orderId = req.params.id as string
+    const userId = req.user?.id
+    const { venueId, date, startTime, endTime, personName, personPhone, personCount, note, type } = req.body
+
+    const order = await prisma.order.findFirst({
+      where: { id: orderId, userId },
+      include: {
+        groupBuyPackage: {
+          include: {
+            venues: { select: { id: true, name: true } },
+            game: { select: { id: true, title: true } },
+          },
+        },
+      },
+    })
+    if (!order) {
+      return error(res, '订单不存在', 404)
+    }
+    if (!order.groupBuyPackageId) {
+      return error(res, '该订单不是团购订单', 400)
+    }
+    if (order.status !== 'PAID') {
+      return error(res, '订单状态不允许预约', 400)
+    }
+    if (order.bookingId) {
+      return error(res, '该团购券已绑定预约', 400)
+    }
+
+    const venue = await prisma.venue.findUnique({ where: { id: venueId } })
+    if (!venue) {
+      return error(res, '场地不存在', 404)
+    }
+
+    const allowedVenueIds = order.groupBuyPackage?.venues.map((v: any) => v.id) || []
+    if (allowedVenueIds.length > 0 && !allowedVenueIds.includes(venueId)) {
+      return error(res, '该团购券不在所选门店适用范围内', 400)
+    }
+
+    const queryDate = new Date(`${date}T00:00:00.000Z`)
+    const overlapping = await prisma.booking.findMany({
+      where: { venueId, date: queryDate, status: { not: 'CANCELLED' } },
+    })
+    const s1 = timeToMinutes(startTime)
+    const e1 = timeToMinutes(endTime)
+    const conflicts = overlapping.filter((b) => {
+      const s2 = timeToMinutes(b.startTime)
+      const e2 = timeToMinutes(b.endTime)
+      return s1 < e2 && e1 > s2
+    })
+
+    const deviceCount = venue.deviceCount || 1
+    const pc = parseInt(personCount) || 1
+    const finalGameId = order.groupBuyPackage?.gameId || null
+
+    if (!finalGameId) {
+      if (conflicts.length > 0) {
+        return error(res, '该时段已被预约', 409)
+      }
+    } else {
+      const otherGameBooking = conflicts.some((b) => b.gameId && b.gameId !== finalGameId)
+      if (otherGameBooking) {
+        return error(res, '该时段已有其他游戏预约', 409)
+      }
+      const sameGameBookings = conflicts.filter((b) => b.gameId === finalGameId)
+      const currentCount = sameGameBookings.reduce((sum, b) => sum + (b.personCount || 1), 0)
+      if (currentCount + pc > deviceCount) {
+        return error(res, '该时段该游戏已约满', 409)
+      }
+    }
+
+    const bookingTitle = `${venue.name} 团购预约 ${startTime}-${endTime}`
+    const targetStatus = await getRestoreNoShowTargetStatus({ date: queryDate, startTime })
+
+    const result = await prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.create({
+        data: {
+          venueId,
+          type: type || 'TEAM',
+          gameId: finalGameId,
+          title: bookingTitle,
+          date: queryDate,
+          startTime,
+          endTime,
+          personName,
+          personPhone,
+          personCount: pc,
+          note: note || null,
+          userId: order.userId || null,
+          status: targetStatus.bookingStatus,
+        },
+      })
+
+      const updatedOrder = await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: targetStatus.orderStatus,
+          bookingId: booking.id,
+          venueId,
+          venueName: venue.name,
+          bookingTime: `${date} ${startTime}-${endTime}`,
+        },
+        include: {
+          booking: { include: { venue: true, game: true } },
+          groupBuyPackage: { select: { id: true, title: true, label: true, coverImage: true, game: { select: { id: true, title: true, duration: true } } } },
+        },
+      })
+
+      return updatedOrder
+    })
+
+    if (order.userId) {
+      await pushNotification(
+        order.userId,
+        'BOOKING_SUCCESS',
+        '团购券预约成功',
+        `您的团购券已预约 ${venue.name} ${date} ${startTime}-${endTime}，请准时到店`
+      )
+    }
+
+    await logAudit(req, {
+      targetType: 'ORDER',
+      targetId: order.id,
+      targetDesc: `订单 ${order.orderNo}`,
+      action: 'POST',
+      actionName: 'C端团购券预约',
+      beforeValue: { status: order.status, bookingId: order.bookingId, venueId: order.venueId },
+      afterValue: { status: result.status, bookingId: result.bookingId, venueId: result.venueId },
+      reason: `用户预约 ${venue.name} ${date} ${startTime}-${endTime}`,
+    })
+
+    return success(res, result, '预约成功')
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
   }
 }

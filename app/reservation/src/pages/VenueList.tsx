@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Search, MapPin, Clock, ChevronLeft, ChevronRight } from 'lucide-react'
-import { getVenues } from '@/api/venues'
+import { getPublicVenues } from '@/api/venues'
 import { getGames } from '@/api/games'
 import { getImageUrl } from '@/lib/imageUrl'
 import { getBookingTargetPath } from '@/lib/selectedVenue'
@@ -14,12 +14,13 @@ export default function VenueList() {
   const [searchParams] = useSearchParams()
   const gameId = searchParams.get('gameId')
   const mode = searchParams.get('mode')
+  const groupBuy = searchParams.get('groupBuy')
   const [search, setSearch] = useState('')
   const choosingVenue = mode === 'venue' && !!gameId
 
   const { data: venueData, isLoading: venueLoading } = useQuery({
     queryKey: ['venues'],
-    queryFn: () => getVenues(),
+    queryFn: () => getPublicVenues({ pageSize: 100 }),
     enabled: choosingVenue,
   })
 
@@ -102,6 +103,8 @@ export default function VenueList() {
               status={v.status}
               index={i}
               gameId={gameId}
+              venue={v}
+              groupBuy={groupBuy || undefined}
             />
           ))
         ) : games.length === 0 ? (

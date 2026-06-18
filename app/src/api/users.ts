@@ -69,6 +69,12 @@ export interface StaffUser {
   name: string
   phone: string
   role: 'OPERATOR' | 'FINANCE' | 'MANAGER' | 'SUPER_ADMIN' | 'ADMIN'
+  roles?: {
+    id: string
+    name: string
+    description?: string | null
+    isSystem: boolean
+  }[]
   status: 'ACTIVE' | 'INACTIVE'
   managedVenues?: { id: string; name: string }[]
   createdAt: string
@@ -77,6 +83,7 @@ export interface StaffUser {
 export async function getStaffList(params?: {
   search?: string
   role?: string
+  roleId?: string
   page?: number
   pageSize?: number
 }) {
@@ -89,6 +96,7 @@ export async function createStaff(data: {
   phone: string
   password?: string
   role: string
+  roleIds?: string[]
   status?: string
   venueIds?: string[]
 }) {
@@ -96,7 +104,7 @@ export async function createStaff(data: {
   return res.data.data
 }
 
-export async function updateStaff(id: string, data: Partial<StaffUser> & { password?: string; venueIds?: string[] }) {
+export async function updateStaff(id: string, data: Partial<StaffUser> & { password?: string; venueIds?: string[]; roleIds?: string[] }) {
   const res = await apiClient.put(`/users/staff/${id}`, data)
   return res.data.data
 }

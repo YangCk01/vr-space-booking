@@ -1,5 +1,6 @@
 import { Router } from 'express'
-import { authenticate, requireRole } from '../middleware/auth'
+import { authenticate } from '../middleware/auth'
+import { requirePermission } from '../middleware/rbac'
 import { overview, flow, refunds } from '../controllers/financeController'
 import * as financialController from '../controllers/financialController'
 import * as refundController from '../controllers/refundController'
@@ -7,30 +8,30 @@ import * as refundController from '../controllers/refundController'
 const router = Router()
 
 // 原有接口
-router.get('/overview', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), overview)
-router.get('/flow', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), flow)
-router.get('/refunds', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), refunds)
+router.get('/overview', authenticate, requirePermission('finance:read'), overview)
+router.get('/flow', authenticate, requirePermission('finance:read'), flow)
+router.get('/refunds', authenticate, requirePermission('finance:read'), refunds)
 
 // 新增：每日财务报表
-router.get('/daily-report', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.getDailyReport)
-router.get('/daily-reports', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.listDailyReports)
-router.post('/generate-report', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.generateReport)
-router.post('/daily-report/confirm', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.confirmDailyReport)
-router.post('/daily-report/reopen', authenticate, requireRole('SUPER_ADMIN','ADMIN'), financialController.reopenDailyReport)
+router.get('/daily-report', authenticate, requirePermission('finance:report'), financialController.getDailyReport)
+router.get('/daily-reports', authenticate, requirePermission('finance:report'), financialController.listDailyReports)
+router.post('/generate-report', authenticate, requirePermission('finance:report'), financialController.generateReport)
+router.post('/daily-report/confirm', authenticate, requirePermission('finance:adjust'), financialController.confirmDailyReport)
+router.post('/daily-report/reopen', authenticate, requirePermission('finance:adjust'), financialController.reopenDailyReport)
 
 // 新增：对账
-router.get('/reconcile', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.reconcile)
-router.get('/reconcile-details', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.reconcileDetails)
-router.post('/fix-reconcile-diff', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.fixReconcileDiff)
+router.get('/reconcile', authenticate, requirePermission('finance:reconcile'), financialController.reconcile)
+router.get('/reconcile-details', authenticate, requirePermission('finance:reconcile'), financialController.reconcileDetails)
+router.post('/fix-reconcile-diff', authenticate, requirePermission('finance:adjust'), financialController.fixReconcileDiff)
 
 // 新增：全平台累计汇总
-router.get('/total-summary', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.totalSummary)
+router.get('/total-summary', authenticate, requirePermission('finance:report'), financialController.totalSummary)
 
 // 新增：流水查询
-router.get('/transactions', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), financialController.listTransactions)
+router.get('/transactions', authenticate, requirePermission('finance:read'), financialController.listTransactions)
 
 // 新增：退款清算
-router.get('/users/:id/refund-audit', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), refundController.auditRefund)
-router.post('/users/:id/refund-clear', authenticate, requireRole('SUPER_ADMIN','ADMIN','FINANCE'), refundController.executeRefundClear)
+router.get('/users/:id/refund-audit', authenticate, requirePermission('finance:read'), refundController.auditRefund)
+router.post('/users/:id/refund-clear', authenticate, requirePermission('finance:adjust'), refundController.executeRefundClear)
 
 export default router

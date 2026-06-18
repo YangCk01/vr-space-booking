@@ -4,19 +4,24 @@ export interface FinanceOverview {
   todayRevenue: number
   todayRefund: number
   todayRecharge: number
+  todayOtherIncome: number
   totalUserBalance: number
   periodRevenue: number
   periodRefund: number
   periodRecharge: number
   periodOtherIncome: number
+  periodRescheduleFee: number
+  periodNoShowPenalty: number
+  periodCancelFee: number
   periodRechargeConsumption: number
-  revenueTrend: Array<{ date: string; revenue: number; refund: number; recharge: number; otherIncome: number }>
+  revenueTrend: Array<{ date: string; revenue: number; refund: number; recharge: number; otherIncome: number; rescheduleFee: number; noShowPenalty: number; cancelFee: number }>
 }
 
 export interface FlowItem {
   id: string
-  type: 'ORDER' | 'REFUND' | 'RECHARGE' | 'BALANCE_DEDUCT' | 'BALANCE_REFUND'
+  type: 'ORDER' | 'REFUND' | 'RECHARGE' | 'BALANCE_DEDUCT' | 'BALANCE_REFUND' | 'RESCHEDULE_FEE'
   orderNo: string
+  parentOrderNo?: string
   userName: string
   userPhone: string
   amount: number
@@ -82,6 +87,9 @@ export interface DailyReport {
   pointsGiftCost: number
   couponDiscountCost: number
   noShowPenalty?: number
+  otherIncomeTotal?: number
+  rescheduleFeeIncome?: number
+  cancelFeeIncome?: number
   couponGiftCount: number
   experienceGiftCount: number
   couponCampaignCount?: number

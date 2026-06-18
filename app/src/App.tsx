@@ -21,6 +21,7 @@ import VenueAnalytics from './pages/VenueAnalytics'
 import Campaigns from './pages/Campaigns'
 import TriggerRules from './pages/TriggerRules'
 import Approvals from './pages/Approvals'
+import GroupBuys from './pages/GroupBuys'
 
 export default function App() {
   return (
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="/venue-analytics" element={<VenueAnalytics />} />
           <Route path="/campaigns" element={<Campaigns />} />
           <Route path="/trigger-rules" element={<TriggerRules />} />
+          <Route path="/group-buys" element={<GroupBuys />} />
         </Routes>
       </AuthGuard>
     </>

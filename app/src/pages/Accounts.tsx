@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { format } from 'date-fns'
+import { useSearchParams } from 'react-router-dom'
 import {
   Search,
   Plus,
@@ -49,9 +50,13 @@ import {
   resetStaffPassword,
   assignManagerVenues,
 } from '@/api/users'
+import { getRoles } from '@/api/role'
 import { getVenues } from '@/api/venues'
 import type { StaffUser } from '@/api/users'
+import type { Role } from '@/api/role'
 import type { Venue } from '@/api/venues'
+import { useAuthStore } from '@/stores/authStore'
+import { hasPermission } from '@/lib/permissions'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -150,6 +155,7 @@ interface StaffFormData {
   phone: string
   password: string
   role: string
+  roleIds: string[]
   status: string
   venueIds: string[]
 }
@@ -162,6 +168,7 @@ function StaffFormSheet({
   onSubmit,
   isPending,
   venues,
+  availableRoles,
 }: {
   mode: 'create' | 'edit'
   staff: StaffUser | null
@@ -170,18 +177,22 @@ function StaffFormSheet({
   onSubmit: (data: StaffFormData) => void
   isPending: boolean
   venues: Venue[]
+  availableRoles: Role[]
 }) {
   const [form, setForm] = useState<StaffFormData>({
     name: '',
     phone: '',
     password: '',
     role: 'OPERATOR',
+    roleIds: [],
     status: 'ACTIVE',
     venueIds: [],
   })
   const [error, setError] = useState('')
 
   const isSuperAdmin = mode === 'edit' && staff?.role === 'SUPER_ADMIN'
+  const selectableRoles = availableRoles.filter((role) => role.name !== 'SUPER_ADMIN')
+  const primaryRoleId = availableRoles.find((role) => role.name === form.role)?.id
 
   useEffect(() => {
     if (mode === 'edit' && staff) {
@@ -190,6 +201,9 @@ function StaffFormSheet({
         phone: staff.phone,
         password: '',
         role: staff.role,
+        roleIds: staff.roles?.length
+          ? staff.roles.map((role) => role.id)
+          : (availableRoles.find((role) => role.name === staff.role)?.id ? [availableRoles.find((role) => role.name === staff.role)!.id] : []),
         status: staff.status,
         venueIds: staff.managedVenues?.map((v) => v.id) || [],
       })
@@ -200,12 +214,15 @@ function StaffFormSheet({
         phone: '',
         password: '',
         role: 'OPERATOR',
+        roleIds: availableRoles.find((role) => role.name === 'OPERATOR')?.id
+          ? [availableRoles.find((role) => role.name === 'OPERATOR')!.id]
+          : [],
         status: 'ACTIVE',
         venueIds: [],
       })
       setError('')
     }
-  }, [staff, mode, open])
+  }, [staff, mode, open, availableRoles])
 
   const handleSubmit = () => {
     if (!form.name.trim() || !form.phone.trim()) {
@@ -216,8 +233,37 @@ function StaffFormSheet({
       setError('手机号必须为 11 位数字')
       return
     }
+    const nextRoleIds = primaryRoleId
+      ? Array.from(new Set([primaryRoleId, ...form.roleIds]))
+      : form.roleIds
+    if (nextRoleIds.length === 0) {
+      setError('请至少绑定一个权限角色')
+      return
+    }
     setError('')
-    onSubmit(form)
+    onSubmit({ ...form, roleIds: nextRoleIds })
+  }
+
+  const handlePrimaryRoleChange = (roleName: string) => {
+    const nextPrimaryRoleId = availableRoles.find((role) => role.name === roleName)?.id
+    setForm((prev) => {
+      const currentPrimaryRoleId = availableRoles.find((role) => role.name === prev.role)?.id
+      const roleIds = prev.roleIds.filter((id) => id !== currentPrimaryRoleId)
+      if (nextPrimaryRoleId && !roleIds.includes(nextPrimaryRoleId)) {
+        roleIds.unshift(nextPrimaryRoleId)
+      }
+      return { ...prev, role: roleName, roleIds }
+    })
+  }
+
+  const togglePermissionRole = (roleId: string) => {
+    if (roleId === primaryRoleId) return
+    setForm((prev) => ({
+      ...prev,
+      roleIds: prev.roleIds.includes(roleId)
+        ? prev.roleIds.filter((id) => id !== roleId)
+        : [...prev.roleIds, roleId],
+    }))
   }
 
   const toggleVenue = (venueId: string) => {
@@ -288,13 +334,60 @@ function StaffFormSheet({
             <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">角色</label>
             <select
               value={form.role}
-              onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
+              onChange={(e) => handlePrimaryRoleChange(e.target.value)}
               className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
             >
               {roleOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
+            <p className="mt-1 text-vr-caption text-vrtext-tertiary">
+              主角色用于账号分类和店长场地范围；下方权限角色决定实际功能权限。
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">权限角色</label>
+            <div className="bg-vrbg-surface border border-vrborder-subtle rounded-lg p-3 space-y-2 max-h-[220px] overflow-y-auto">
+              {selectableRoles.length === 0 && (
+                <p className="text-vr-caption text-vrtext-muted">暂无可分配角色</p>
+              )}
+              {selectableRoles.map((role) => {
+                const checked = form.roleIds.includes(role.id) || role.id === primaryRoleId
+                const locked = role.id === primaryRoleId
+                return (
+                  <label
+                    key={role.id}
+                    className={cn(
+                      'flex items-start gap-2 rounded-md px-2 py-2 transition-colors',
+                      locked ? 'cursor-default bg-vraccent-primary/5' : 'cursor-pointer hover:bg-vrbg-elevated'
+                    )}
+                  >
+                    <Checkbox
+                      checked={checked}
+                      disabled={locked}
+                      onCheckedChange={() => togglePermissionRole(role.id)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="text-vr-body-sm text-vrtext-primary font-medium">
+                          {roleLabelMap[role.name] || role.name}
+                        </span>
+                        {role.isSystem && (
+                          <span className="text-[10px] text-vrwarning bg-vrwarning/10 rounded px-1.5 py-0.5">系统</span>
+                        )}
+                        {locked && (
+                          <span className="text-[10px] text-vraccent-primary bg-vraccent-primary/10 rounded px-1.5 py-0.5">主角色</span>
+                        )}
+                      </span>
+                      <span className="block text-vr-caption text-vrtext-tertiary mt-0.5">
+                        {role.description || '自定义权限角色'} · {role.permissions?.length || 0} 项权限
+                      </span>
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
           </div>
 
           <div>
@@ -502,6 +595,10 @@ function VenueAssignDialog({
 
 export default function AccountsPage() {
   const queryClient = useQueryClient()
+  const currentUser = useAuthStore((s) => s.user)
+  const canManageAccounts = hasPermission(currentUser, 'account:manage')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const roleIdFilter = searchParams.get('roleId') || undefined
   const [activeTab, setActiveTab] = useState<RoleFilter>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -520,10 +617,11 @@ export default function AccountsPage() {
   const roleParam = activeTab === 'all' ? undefined : activeTab
 
   const { data: staffData, isFetching } = useQuery({
-    queryKey: ['staff', roleParam, searchQuery, currentPage, pageSize],
+    queryKey: ['staff', roleParam, roleIdFilter, searchQuery, currentPage, pageSize],
     queryFn: () =>
       getStaffList({
         role: roleParam,
+        roleId: roleIdFilter,
         search: searchQuery || undefined,
         page: currentPage,
         pageSize,
@@ -533,6 +631,11 @@ export default function AccountsPage() {
   const { data: venuesData } = useQuery({
     queryKey: ['venues', 'all'],
     queryFn: () => getVenues({ pageSize: 999 }),
+  })
+
+  const { data: roles = [] } = useQuery({
+    queryKey: ['roles'],
+    queryFn: () => getRoles(),
   })
 
   const staffList: StaffUser[] = staffData?.data || []
@@ -625,6 +728,7 @@ export default function AccountsPage() {
         phone: formData.phone,
         password: formData.password || undefined,
         role: formData.role,
+        roleIds: formData.roleIds,
         status: formData.status,
         venueIds: formData.role === 'MANAGER' ? formData.venueIds : undefined,
       })
@@ -633,6 +737,7 @@ export default function AccountsPage() {
         name: formData.name,
         phone: formData.phone,
         role: formData.role as StaffUser['role'],
+        roleIds: formData.roleIds,
         status: formData.status as StaffUser['status'],
         venueIds: formData.role === 'MANAGER' ? formData.venueIds : undefined,
       }
@@ -697,16 +802,18 @@ export default function AccountsPage() {
               />
             </motion.div>
 
-            <motion.button
-              initial={{ opacity: 0, x: 10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.3, delay: 0.15 }}
-              onClick={handleOpenCreate}
-              className="h-9 px-4 bg-vraccent-primary text-white rounded-lg text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors flex items-center gap-1.5"
-            >
-              <Plus className="w-4 h-4" />
-              新增账号
-            </motion.button>
+            {canManageAccounts && (
+              <motion.button
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.3, delay: 0.15 }}
+                onClick={handleOpenCreate}
+                className="h-9 px-4 bg-vraccent-primary text-white rounded-lg text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                新增账号
+              </motion.button>
+            )}
           </div>
         </div>
 
@@ -719,7 +826,11 @@ export default function AccountsPage() {
                 initial={{ opacity: 0, y: 5 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.25, delay: idx * 0.05 }}
-                onClick={() => { setActiveTab(tab.key); setCurrentPage(1) }}
+                onClick={() => {
+                  setActiveTab(tab.key)
+                  setCurrentPage(1)
+                  if (roleIdFilter) setSearchParams({})
+                }}
                 className={cn(
                   'relative py-3 text-vr-body-sm font-medium transition-colors',
                   activeTab === tab.key ? 'text-vraccent-primary' : 'text-vrtext-secondary hover:text-vrtext-primary'
@@ -737,7 +848,7 @@ export default function AccountsPage() {
             ))}
           </div>
           <span className="text-vr-caption text-vrtext-tertiary">
-            {totalStaff} 位账号
+            {roleIdFilter ? '已按权限角色筛选 · ' : ''}{totalStaff} 位账号
           </span>
         </div>
 
@@ -777,7 +888,15 @@ export default function AccountsPage() {
                         <span className="text-vr-body-sm text-vrtext-primary font-mono">{staff.phone}</span>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <RoleBadge role={staff.role} />
+                        <div className="flex flex-wrap justify-center gap-1">
+                          {staff.roles && staff.roles.length > 0 ? (
+                            staff.roles.map((role) => (
+                              <RoleBadge key={role.id} role={role.name} />
+                            ))
+                          ) : (
+                            <RoleBadge role={staff.role} />
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-center">
                         <StatusBadge status={staff.status} />
@@ -808,21 +927,25 @@ export default function AccountsPage() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => handleOpenEdit(staff)}
-                            className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vraccent-primary hover:bg-vraccent-primary/10 transition-colors"
-                            title="编辑"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleResetPassword(staff)}
-                            className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrwarning hover:bg-vrwarning/10 transition-colors"
-                            title="重置密码"
-                          >
-                            <Key className="w-3.5 h-3.5" />
-                          </button>
-                          {staff.role === 'MANAGER' && (
+                          {canManageAccounts && (
+                            <button
+                              onClick={() => handleOpenEdit(staff)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vraccent-primary hover:bg-vraccent-primary/10 transition-colors"
+                              title="编辑"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canManageAccounts && (
+                            <button
+                              onClick={() => handleResetPassword(staff)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrwarning hover:bg-vrwarning/10 transition-colors"
+                              title="重置密码"
+                            >
+                              <Key className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canManageAccounts && staff.role === 'MANAGER' && (
                             <button
                               onClick={() => handleOpenVenueAssign(staff)}
                               className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrsuccess hover:bg-vrsuccess/10 transition-colors"
@@ -831,13 +954,15 @@ export default function AccountsPage() {
                               <MapPin className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          <button
-                            onClick={() => handleOpenDelete(staff)}
-                            className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrerror hover:bg-vrerror/10 transition-colors"
-                            title="删除"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {canManageAccounts && (
+                            <button
+                              onClick={() => handleOpenDelete(staff)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrerror hover:bg-vrerror/10 transition-colors"
+                              title="删除"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                   </motion.tr>
@@ -922,6 +1047,7 @@ export default function AccountsPage() {
         onSubmit={handleSheetSubmit}
         isPending={createMutation.isPending || updateMutation.isPending}
         venues={venues}
+        availableRoles={roles}
       />
 
       {/* Delete Confirm */}

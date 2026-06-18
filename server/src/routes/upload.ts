@@ -7,7 +7,7 @@ const router = Router()
 // 通用上传接口
 router.post('/:type', authenticate, (req: Request, res: Response) => {
   const type = req.params.type as string
-  const allowedTypes = ['venues', 'logos', 'avatars', 'games', 'products', 'pages']
+  const allowedTypes = ['venues', 'logos', 'avatars', 'games', 'products', 'pages', 'group-buys']
 
   if (!allowedTypes.includes(type)) {
     return res.status(400).json({ success: false, message: '不支持的上传类型' })

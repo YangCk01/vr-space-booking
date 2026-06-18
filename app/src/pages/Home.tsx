@@ -52,6 +52,31 @@ function readSetting<T>(settings: Record<string, any> | undefined, key: string, 
   return (value ?? fallback) as T
 }
 
+function datePart(value: string | Date | null | undefined): string | null {
+  if (!value) return null
+  return value instanceof Date ? format(value, 'yyyy-MM-dd') : String(value).slice(0, 10)
+}
+
+function maintenanceBoundary(dateValue: string | Date | null | undefined, timeValue: string | null | undefined): Date | null {
+  const day = datePart(dateValue)
+  if (!day || !timeValue) return null
+  const time = timeValue.length === 5 ? `${timeValue}:00` : timeValue
+  const parsed = new Date(`${day}T${time}`)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function getEffectiveVenueStatus(venue: Venue): 'open' | 'maintenance' | 'closed' {
+  if (venue.status === 'DISABLED') return 'closed'
+  if (venue.status !== 'MAINTENANCE') return 'open'
+
+  const start = maintenanceBoundary(venue.maintenanceStartDate, venue.maintenanceStartTime)
+  const end = maintenanceBoundary(venue.maintenanceEndDate, venue.maintenanceEndTime)
+  if (!start || !end) return 'maintenance'
+
+  const now = new Date()
+  return now >= start && now <= end ? 'maintenance' : 'open'
+}
+
 /* ─── Status badge component ─── */
 function StatusBadge({ status, text }: { status: string; text: string }) {
   const config: Record<string, { bg: string; text: string }> = {
@@ -710,23 +735,17 @@ export default function Home() {
       return currentHour >= startHour && currentHour < endHour
     })
 
-    const statusMap: Record<string, string> = {
-      FREE: 'open',
-      IN_USE: 'open',
-      MAINTENANCE: 'maintenance',
-      DISABLED: 'closed',
-    }
-    const statusTextMap: Record<string, string> = {
-      FREE: '营业中',
-      IN_USE: '营业中',
-      MAINTENANCE: '维护中',
-      DISABLED: '暂停营业',
+    const effectiveStatus = getEffectiveVenueStatus(v)
+    const statusTextMap: Record<typeof effectiveStatus, string> = {
+      open: '营业中',
+      maintenance: '维护中',
+      closed: '暂停营业',
     }
 
     return {
       ...v,
-      status: statusMap[v.status] || v.status?.toLowerCase() || 'free',
-      statusText: statusTextMap[v.status] || v.status,
+      status: effectiveStatus,
+      statusText: statusTextMap[effectiveStatus],
       todayBookings: activeBookings.length,
       currentSlot: currentBooking
         ? `${currentBooking.startTime}-${currentBooking.endTime}`

@@ -6,8 +6,12 @@ export type SelectedVenue = Pick<Venue, 'id' | 'name' | 'address'> & {
 }
 
 export const SELECTED_VENUE_KEY = 'reservation:selectedVenue'
+export const SELECTED_VENUE_CHANGE_EVENT = 'reservation:selectedVenue:change'
 
-export function readSelectedVenue(): SelectedVenue | null {
+const listeners = new Set<() => void>()
+
+function readSelectedVenueFromStorage(): SelectedVenue | null {
+  if (typeof window === 'undefined') return null
   try {
     const raw = localStorage.getItem(SELECTED_VENUE_KEY)
     return raw ? JSON.parse(raw) : null
@@ -16,15 +20,41 @@ export function readSelectedVenue(): SelectedVenue | null {
   }
 }
 
-export function saveSelectedVenue(venue: Venue) {
+let selectedVenueSnapshot = readSelectedVenueFromStorage()
+
+function updateSelectedVenueSnapshot(nextVenue: SelectedVenue | null) {
+  selectedVenueSnapshot = nextVenue
+  listeners.forEach((listener) => listener())
+}
+
+export function readSelectedVenue(): SelectedVenue | null {
+  return selectedVenueSnapshot
+}
+
+export function subscribeSelectedVenue(listener: () => void) {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+export function syncSelectedVenueFromStorage() {
+  updateSelectedVenueSnapshot(readSelectedVenueFromStorage())
+}
+
+export function setSelectedVenueSnapshot(nextVenue: SelectedVenue | null) {
+  updateSelectedVenueSnapshot(nextVenue)
+}
+
+export function saveSelectedVenue(venue: Pick<Venue, 'id' | 'name'> & Partial<Venue>) {
   const nextVenue: SelectedVenue = {
     id: venue.id,
     name: venue.name,
-    address: venue.address,
+    address: venue.address ?? null,
     latitude: (venue as any).latitude ?? (venue as any).lat ?? null,
     longitude: (venue as any).longitude ?? (venue as any).lng ?? null,
   }
   localStorage.setItem(SELECTED_VENUE_KEY, JSON.stringify(nextVenue))
+  updateSelectedVenueSnapshot(nextVenue)
+  window.dispatchEvent(new CustomEvent(SELECTED_VENUE_CHANGE_EVENT, { detail: nextVenue }))
   return nextVenue
 }
 

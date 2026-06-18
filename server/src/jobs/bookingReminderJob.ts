@@ -58,7 +58,7 @@ export function startBookingReminderJob() {
 
         // 使用精确类型的 reminder key，避免不同类型提醒冲突
         const key2h = `${booking.id}-2h`
-        const key15m = `${booking.id}-15m`
+        const keyVerifyAdvance = `${booking.id}-verify-advance`
         const keyUrgent = `${booking.id}-urgent`
 
         // 场景1：开场前2小时提醒
@@ -68,22 +68,22 @@ export function startBookingReminderJob() {
             booking.userId,
             'BOOKING_REMIND',
             '场次即将开始',
-            `您预约的 ${booking.venue?.name || 'VR体验'} ${booking.startTime} 场次将在2小时后开始，请提前15分钟到场准备。`
+            `您预约的 ${booking.venue?.name || 'VR体验'} ${booking.startTime} 场次将在2小时后开始，请提前${verifyAdvanceMinutes}分钟到场准备。`
           )
           sentReminders.add(key2h)
           console.log(`[ReminderJob] 发送2小时提醒: ${booking.id}`)
         }
 
-        // 场景2：开场前15分钟提醒（进入待核销阶段）
+        // 场景2：开场前核销提前量提醒（进入待核销阶段）
         else if (diffMinutes <= verifyAdvanceMinutes && diffMinutes > verifyAdvanceMinutes - 5) {
-          if (sentReminders.has(key15m)) continue
+          if (sentReminders.has(keyVerifyAdvance)) continue
           await pushNotification(
             booking.userId,
             'BOOKING_VERIFY',
             '场次即将开始',
             `您预约的 ${booking.venue?.name || 'VR体验'} ${booking.startTime} 场次即将开始，请尽快到场签到入场。`
           )
-          sentReminders.add(key15m)
+          sentReminders.add(keyVerifyAdvance)
           console.log(`[ReminderJob] 发送开场前提醒: ${booking.id}`)
         }
 
@@ -100,7 +100,7 @@ export function startBookingReminderJob() {
               booking.userId,
               'BOOKING_URGENT',
               '预约成功，场次临近',
-              `您预约的 ${booking.venue?.name || 'VR体验'} ${booking.startTime} 场次距开场仅剩${timeText}，请务必提前15分钟到达，迟到将导致游戏时间缩短或无法入场。`
+              `您预约的 ${booking.venue?.name || 'VR体验'} ${booking.startTime} 场次距开场仅剩${timeText}，请务必提前${verifyAdvanceMinutes}分钟到达，迟到将导致游戏时间缩短或无法入场。`
             )
             sentReminders.add(keyUrgent)
             console.log(`[ReminderJob] 发送紧急提醒: ${booking.id}`)

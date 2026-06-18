@@ -13,7 +13,8 @@ export interface Role {
   description?: string
   isSystem: boolean
   permissions: Permission[]
-  createdAt: string
+  userCount?: number
+  createdAt?: string
 }
 
 export async function getRoles() {

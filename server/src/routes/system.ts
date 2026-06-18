@@ -1,5 +1,6 @@
 import { Router } from 'express'
-import { authenticate, requireRole } from '../middleware/auth'
+import { authenticate } from '../middleware/auth'
+import { requirePermission } from '../middleware/rbac'
 import { prisma } from '../utils/prisma'
 import { success, error, paginated } from '../utils/response'
 import { runDataConsistencyCheck } from '../jobs/dataConsistencyJob'
@@ -7,13 +8,13 @@ import { format } from 'date-fns'
 
 const router = Router()
 
-router.use(authenticate, requireRole('SUPER_ADMIN'))
+router.use(authenticate)
 
 /**
  * GET /system/health-checks
  * 查看历史数据一致性校验记录
  */
-router.get('/health-checks', async (req, res) => {
+router.get('/health-checks', requirePermission('audit:read'), async (req, res) => {
   try {
     const page = parseInt((req.query.page as string) || '1', 10)
     const pageSize = parseInt((req.query.pageSize as string) || '20', 10)
@@ -74,7 +75,7 @@ router.get('/health-checks', async (req, res) => {
  * GET /system/health-checks/stats
  * 今日健康检查统计
  */
-router.get('/health-checks/stats', async (req, res) => {
+router.get('/health-checks/stats', requirePermission('audit:read'), async (req, res) => {
   try {
     const today = format(new Date(), 'yyyy-MM-dd')
     const [totalToday, failCount] = await Promise.all([
@@ -101,7 +102,7 @@ router.get('/health-checks/stats', async (req, res) => {
  * POST /system/health-checks/run
  * 手动触发数据一致性校验
  */
-router.post('/health-checks/run', async (req, res) => {
+router.post('/health-checks/run', requirePermission('setting:write'), async (req, res) => {
   try {
     const today = format(new Date(), 'yyyy-MM-dd')
     const result = await runDataConsistencyCheck(today)

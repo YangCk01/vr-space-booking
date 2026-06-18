@@ -20,6 +20,8 @@ import {
   ChevronDown,
   Table2,
   Zap,
+  Package,
+  Ticket,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
@@ -68,6 +70,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { key: 'venues', label: '场地管理', icon: 'Building2', path: '/venues' },
       { key: 'games', label: '内容管理', icon: 'Gamepad2', path: '/games' },
+      { key: 'group-buys', label: '团购套餐', icon: 'Package', path: '/group-buys' },
     ],
   },
   {
@@ -132,26 +135,29 @@ const iconMap: Record<string, React.ComponentType<{ className?: string; size?: n
   Table2,
   Megaphone,
   Zap,
+  Package,
+  Ticket,
 }
 
 // 菜单项 key 到所需权限码的映射
 const keyToPermission: Record<string, string | string[]> = {
   home: 'order:read',
   venues: 'venue:read',
-  games: 'venue:read',
-  booking: 'order:read',
+  games: 'content:read',
+  'group-buys': 'group-buy:read',
+  booking: 'booking:read',
   orders: 'order:read',
   approvals: ['approval:read', 'approval:request'],
   users: 'user:read',
   campaigns: 'marketing:campaign',
-  analytics: 'order:read',
+  analytics: ['finance:report', 'order:read', 'venue:read'],
   finance: 'finance:read',
-  accounts: 'user:read',
+  accounts: 'account:read',
   'member-marketing': 'user:gift',
   'audit-logs': 'audit:read',
   reports: ['marketing:campaign', 'marketing:rule'],
   'coupon-effects': 'marketing:campaign',
-  'venue-analytics': 'venue:read',
+  'venue-analytics': ['finance:report', 'venue:read'],
   settings: 'setting:read',
 }
 

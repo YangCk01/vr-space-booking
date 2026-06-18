@@ -5,7 +5,8 @@ import { motion } from 'framer-motion'
 import { ChevronLeft, MapPin, Clock, AlertCircle, Coins, Ticket, Check } from 'lucide-react'
 import { createBooking, checkConflict } from '@/api/bookings'
 import { createOrder } from '@/api/orders'
-import { getRefundRules } from '@/api/settings'
+import { getBookingLifecycle, getRefundRules } from '@/api/settings'
+import { getPublicGroupBuy } from '@/api/groupBuys'
 import { getImageUrl } from '@/lib/imageUrl'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/providers/AuthProvider'
@@ -21,6 +22,7 @@ interface LocationState {
   endTime: string
   gamePrice: number
   gameId?: string
+  groupBuyPackageId?: string
   slotStatus?: string
   currentCount?: number
   remainingCount?: number
@@ -38,6 +40,19 @@ export default function OrderConfirm() {
     queryKey: ['refundRules'],
     queryFn: getRefundRules,
     staleTime: 1000 * 60 * 5,
+  })
+
+  const { data: lifecycleData } = useQuery({
+    queryKey: ['bookingLifecycle'],
+    queryFn: getBookingLifecycle,
+    staleTime: 1000 * 60 * 5,
+  })
+
+  const { data: groupBuyPackage } = useQuery({
+    queryKey: ['public-group-buy', state?.groupBuyPackageId],
+    queryFn: () => getPublicGroupBuy(state!.groupBuyPackageId!),
+    enabled: !!state?.groupBuyPackageId,
+    staleTime: 60000,
   })
 
   const cancelHours = refundRulesData?.cancelHours ?? 2
@@ -119,10 +134,16 @@ export default function OrderConfirm() {
   const effectiveCurrent = slotInfo?.currentCount ?? state.currentCount ?? 0
   const effectiveMax = slotInfo?.maxCount ?? state.maxCount ?? 10
 
+  const isGroupBuy = !!groupBuyPackage
+  const groupBuyMin = groupBuyPackage?.minPeople ?? 1
+  const groupBuyMax = groupBuyPackage?.maxPeople ?? effectiveMax
+  const groupBuyPricePerPerson = isGroupBuy ? (groupBuyPackage!.groupPricePerPerson / 100) : gamePrice
+  const groupBuyTotal = isGroupBuy ? (groupBuyPackage!.totalGroupPrice / 100) : 0
+
   const durationMin =
     (parseInt(endTime.split(':')[0]) * 60 + parseInt(endTime.split(':')[1])) -
     (parseInt(startTime.split(':')[0]) * 60 + parseInt(startTime.split(':')[1]))
-  const totalPrice = gamePrice * personCount
+  const totalPrice = isGroupBuy ? groupBuyTotal : gamePrice * personCount
   const totalFen = Math.round(totalPrice * 100)
 
   // 价格计算顺序：
@@ -186,6 +207,11 @@ export default function OrderConfirm() {
         setIsSubmitting(false)
         return
       }
+      if (isGroupBuy && (personCount < groupBuyMin || personCount > groupBuyMax)) {
+        setErrorMsg(`该团购套餐要求 ${groupBuyMin}-${groupBuyMax} 人`)
+        setIsSubmitting(false)
+        return
+      }
 
       const booking = await createBookingMutation.mutateAsync({
         venueId,
@@ -210,7 +236,8 @@ export default function OrderConfirm() {
           customer: personName,
           phone: personPhone,
           source: 'ONLINE',
-          userCouponId: selectedCoupon?.id,
+          userCouponId: isGroupBuy ? undefined : selectedCoupon?.id,
+          groupBuyPackageId: groupBuyPackage?.id,
         })
         if (order?.id) {
           queryClient.invalidateQueries({ queryKey: ['bookings'], exact: false })
@@ -276,7 +303,7 @@ export default function OrderConfirm() {
               <div>
                 <p className="text-xs font-bold text-orange-400">重要提示</p>
                 <p className="text-xs text-orange-400/80 mt-0.5">
-                  大空间 VR 为定时场次，请务必提前 15 分钟到场进行佩戴教学，迟到将导致游戏时间缩短或无法入场。
+                  大空间 VR 为定时场次，请务必提前 {lifecycleData?.verifyAdvanceMinutes ?? 15} 分钟到场进行佩戴教学，迟到将导致游戏时间缩短或无法入场。
                 </p>
                 <p className="text-xs text-orange-400/80 mt-1">
                   开场前{cancelHours}小时内不可取消。{refundTiers.length > 0 && (
@@ -294,9 +321,18 @@ export default function OrderConfirm() {
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-[var(--text-primary)]">体验人数</span>
-            <Stepper value={personCount} min={1} max={effectiveRemaining} onChange={setPersonCount} />
+            <Stepper
+              value={personCount}
+              min={isGroupBuy ? groupBuyMin : 1}
+              max={isGroupBuy ? Math.min(groupBuyMax, effectiveRemaining) : effectiveRemaining}
+              onChange={setPersonCount}
+            />
           </div>
-          {effectiveStatus === 'joinable' ? (
+          {isGroupBuy ? (
+            <p className="text-xs text-orange-500">
+              团购套餐要求 {groupBuyMin}-{groupBuyMax} 人，套餐价已锁定
+            </p>
+          ) : effectiveStatus === 'joinable' ? (
             <p className="text-xs text-orange-500">
               该时段已有 {effectiveCurrent} 人预约，您最多可再约 {effectiveRemaining} 人
             </p>
@@ -332,7 +368,7 @@ export default function OrderConfirm() {
 
         {/* Coupon selection */}
         {/* Coupon selection */}
-        {isLoggedIn && (
+        {isLoggedIn && !isGroupBuy && (
           <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4">
             <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3 flex items-center gap-1.5">
               <Ticket className="w-4 h-4 text-[var(--accent-primary)]" />

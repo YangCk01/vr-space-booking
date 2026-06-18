@@ -18,20 +18,41 @@ export interface Order {
   expireAt: string | null
   createdAt: string
   updatedAt: string
+  quantity: number
+  verifyCode: string | null
+  orderKind?: string
+  feeType?: string | null
+  feeReason?: string | null
+  parentOrderId?: string | null
+  parentOrder?: { id: string; orderNo: string } | null
+  feeOrders?: { id: string; orderNo: string; amount: number; status: string; feeType?: string | null; feeReason?: string | null; paidAt?: string | null }[]
+  groupBuyPackage?: {
+    id: string
+    title: string
+    label: string
+    coverImage?: string | null
+    totalGroupPrice: number
+    originalPricePerPerson: number
+    maxPeople: number
+    game?: { id: string; title: string; duration?: number | null; coverImage?: string | null } | null
+    venues: { id: string; name: string; address?: string | null; openTime?: string | null; closeTime?: string | null; phone?: string | null; image?: string | null; status?: string | null; maintenanceStartDate?: string | null; maintenanceEndDate?: string | null; maintenanceStartTime?: string | null; maintenanceEndTime?: string | null }[]
+  } | null
 }
 
 export interface OrderInput {
   bookingId?: string
-  venueId: string
-  venueName: string
+  venueId?: string
+  venueName?: string
   amount: number
-  bookingTime: string
+  bookingTime?: string
   userId?: string
   customer?: string
   phone?: string
   source?: 'ONLINE' | 'OFFLINE'
   payMethod?: string
   userCouponId?: string
+  groupBuyPackageId?: string
+  quantity?: number
 }
 
 export async function getOrders(params?: {
@@ -59,8 +80,25 @@ export async function payOrder(id: string, method?: string) {
   return res.data.data
 }
 
-export async function cancelOrder(id: string) {
-  const res = await apiClient.put(`/orders/${id}/cancel`)
+export async function cancelOrder(id: string, reason?: string) {
+  const res = await apiClient.put(`/orders/${id}/cancel`, { reason })
+  return res.data.data
+}
+
+export interface RedeemInput {
+  venueId: string
+  date: string
+  startTime: string
+  endTime: string
+  personName: string
+  personPhone: string
+  personCount: number
+  note?: string
+  type?: 'TEAM' | 'INDIVIDUAL' | 'CORPORATE'
+}
+
+export async function redeemOrder(id: string, input: RedeemInput) {
+  const res = await apiClient.post(`/orders/${id}/redeem`, input)
   return res.data.data
 }
 

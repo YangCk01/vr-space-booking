@@ -31,6 +31,7 @@ type Props = {
   fixReason: string
   setFixReason: (reason: string) => void
   isFixPending: boolean
+  canFix?: boolean
   onSubmitFix: (params: {
     type: string
     targetId: string
@@ -53,6 +54,7 @@ export default function ReconcileDetailSheet({
   fixReason,
   setFixReason,
   isFixPending,
+  canFix = false,
   onSubmitFix,
 }: Props) {
   const closeFixDialog = () => {
@@ -123,7 +125,7 @@ export default function ReconcileDetailSheet({
                     )}
                     <p className="text-vr-body-sm text-red-300 font-medium mt-2">{plain.title}</p>
                   </div>
-                  {item.diff !== 0 && detailParams && item.canAutoFix !== false && (
+                  {canFix && item.diff !== 0 && detailParams && item.canAutoFix !== false && (
                     <button
                       onClick={() => {
                         setFixDraft(item)
@@ -136,9 +138,9 @@ export default function ReconcileDetailSheet({
                       生成调整单
                     </button>
                   )}
-                  {item.diff !== 0 && item.canAutoFix === false && (
+                  {item.diff !== 0 && (!canFix || item.canAutoFix === false) && (
                     <span className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-vr-caption text-slate-600 dark:bg-slate-700/50 dark:text-slate-300">
-                      需人工处理
+                      {item.canAutoFix === false ? '需人工处理' : '只读'}
                     </span>
                   )}
                 </div>

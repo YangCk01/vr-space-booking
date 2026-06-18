@@ -8,7 +8,7 @@ function readSystemConfig<T>(configs: Array<{ key: string; value: any }> | undef
   return item ? item.value as T : fallback
 }
 
-export default function ReconcileAlertConfigPanel() {
+export default function ReconcileAlertConfigPanel({ canWriteSettings = false }: { canWriteSettings?: boolean }) {
   const queryClient = useQueryClient()
   const { data: configs } = useQuery({
     queryKey: ['systemConfigs'],
@@ -70,6 +70,7 @@ export default function ReconcileAlertConfigPanel() {
             type="checkbox"
             checked={form.enabled}
             onChange={(e) => setForm((p) => ({ ...p, enabled: e.target.checked }))}
+            disabled={!canWriteSettings}
             className="h-4 w-4 accent-blue-500"
           />
           启用告警
@@ -83,7 +84,8 @@ export default function ReconcileAlertConfigPanel() {
             min={0}
             value={form.amountThreshold}
             onChange={(e) => setForm((p) => ({ ...p, amountThreshold: Number(e.target.value) }))}
-            className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+            disabled={!canWriteSettings}
+            className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary disabled:opacity-60"
           />
         </div>
         <div>
@@ -94,18 +96,21 @@ export default function ReconcileAlertConfigPanel() {
             step={0.1}
             value={form.relativeRate}
             onChange={(e) => setForm((p) => ({ ...p, relativeRate: Number(e.target.value) }))}
-            className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+            disabled={!canWriteSettings}
+            className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary disabled:opacity-60"
           />
         </div>
-        <div className="flex items-end">
-          <button
-            onClick={() => mutation.mutate()}
-            disabled={mutation.isPending}
-            className="h-9 px-4 rounded-lg bg-vraccent-primary text-white text-vr-body-sm hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
-          >
-            {mutation.isPending ? '保存中...' : '保存对账配置'}
-          </button>
-        </div>
+        {canWriteSettings && (
+          <div className="flex items-end">
+            <button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending}
+              className="h-9 px-4 rounded-lg bg-vraccent-primary text-white text-vr-body-sm hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
+            >
+              {mutation.isPending ? '保存中...' : '保存对账配置'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

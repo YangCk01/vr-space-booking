@@ -8,6 +8,7 @@ export const typeLabelMap: Record<string, string> = {
   RECHARGE: '充值',
   BALANCE_DEDUCT: '余额扣款',
   BALANCE_REFUND: '余额退款',
+  RESCHEDULE_FEE: '改签费收入',
 }
 
 export const typeColorMap: Record<string, string> = {
@@ -16,6 +17,7 @@ export const typeColorMap: Record<string, string> = {
   RECHARGE: '#3B82F6',
   BALANCE_DEDUCT: '#F59E0B',
   BALANCE_REFUND: '#8B5CF6',
+  RESCHEDULE_FEE: '#F97316',
 }
 
 export const payMethodLabelMap: Record<string, string> = {
@@ -41,6 +43,7 @@ export function exportFlowToExcel(items: FlowItem[], filename: string) {
     时间: i.createdAt ? format(new Date(i.createdAt), 'yyyy-MM-dd HH:mm:ss') : '-',
     类型: typeLabelMap[i.type] || i.type,
     订单号: i.orderNo,
+    关联订单号: i.parentOrderNo || '-',
     用户: i.userName,
     手机号: i.userPhone,
     金额: i.amount / 100,

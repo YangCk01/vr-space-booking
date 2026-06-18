@@ -18,14 +18,21 @@ interface VerifyScanModalProps {
     personCount?: number
   } | null
   onVerify: (id: string) => void
+  skipScan?: boolean
 }
 
-export function VerifyScanModal({ open, onClose, order, onVerify }: VerifyScanModalProps) {
+export function VerifyScanModal({ open, onClose, order, onVerify, skipScan = false }: VerifyScanModalProps) {
   const [status, setStatus] = useState<VerifyScanStatus>('scanning')
 
   useEffect(() => {
     if (!open) {
       setStatus('scanning')
+      return
+    }
+
+    // 真实扫码完成后直接展示订单信息，跳过假扫描动画
+    if (skipScan) {
+      setStatus('recognized')
       return
     }
 
@@ -39,7 +46,7 @@ export function VerifyScanModal({ open, onClose, order, onVerify }: VerifyScanMo
     return () => {
       clearTimeout(t1)
     }
-  }, [open])
+  }, [open, skipScan])
 
   const handleVerify = () => {
     if (!order) return

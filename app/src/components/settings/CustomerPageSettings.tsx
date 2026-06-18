@@ -1,21 +1,28 @@
 import { useEffect, useMemo, useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion } from "framer-motion"
 import {
-  ArrowDown, ArrowUp, Bell, Check, HelpCircle, Image, ImagePlus,
-  MapPin, Phone, Plus, RotateCcw, Save, Smartphone,
-  Trash2, Upload, Video, X,
+  ArrowDown, ArrowUp, Bell, Check, ChevronRight, CreditCard, Crown, Gamepad2, Gift,
+  HelpCircle, Image, ImagePlus, Link2, MapPin, Phone, Plus, Receipt,
+  RotateCcw, Save, Smartphone, Ticket, Trash2, Upload, User, Users, Video, X,
 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
 import { bulkSaveSettings } from "@/api/settings"
 import { uploadFile } from "@/api/upload"
+import { getGames } from "@/api/games"
 import { getImageUrl } from "@/lib/imageUrl"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
 type RawSettings = Record<string, { value?: any } | any>
 
-type SectionKey = "home" | "modules" | "help"
+type SectionKey = "home" | "modules" | "layout" | "help" | "groupBooking"
+
+export interface SectionOrderItem {
+  key: string
+  enabled: boolean
+}
 
 export interface BannerImage {
   id: string
@@ -55,6 +62,7 @@ interface PageForm {
   cHomeHotTitle: string
   cHomeHotLinkText: string
   cHomeCustomModules: ContentCard[]
+  cHomeSectionOrder: SectionOrderItem[]
   cProfileHelpEnabled: boolean
   cProfileHelpTitle: string
   cProfileHelpSubtitle: string
@@ -62,6 +70,7 @@ interface PageForm {
   cProfileHelpContactPhone: string
   cProfileHelpContactWechat: string
   cProfileHelpContactHours: string
+  cGroupBookingRules: string
 }
 
 function readSetting<T>(settings: RawSettings | undefined, key: string, fallback: T): T {
@@ -80,6 +89,30 @@ function normalizeBannerImages(value: unknown): BannerImage[] {
     subtitle: String(item?.subtitle || "全场体验项目最高 30% OFF"),
     linkUrl: String(item?.linkUrl || ""),
   }))
+}
+
+const defaultSectionOrder: SectionOrderItem[] = [
+  { key: "search", enabled: true },
+  { key: "banner", enabled: true },
+  { key: "category", enabled: true },
+  { key: "vip", enabled: true },
+  { key: "customModules", enabled: true },
+  { key: "groupBuy", enabled: true },
+  { key: "hot", enabled: true },
+]
+
+function normalizeSectionOrder(value: unknown): SectionOrderItem[] {
+  if (!Array.isArray(value) || value.length === 0) return defaultSectionOrder
+  const normalized = value.map((item: any) => ({
+    key: String(item?.key || ""),
+    enabled: item?.enabled !== false,
+  })).filter((item) => item.key)
+  // 合并默认项中缺失的 key
+  const existingKeys = new Set(normalized.map((i) => i.key))
+  for (const def of defaultSectionOrder) {
+    if (!existingKeys.has(def.key)) normalized.push({ ...def })
+  }
+  return normalized
 }
 
 function normalizeModules(value: unknown): ContentCard[] {
@@ -118,6 +151,7 @@ function buildInitialForm(settings?: RawSettings): PageForm {
     cHomeHotTitle: readSetting(settings, "c_home_hot_title", "热门体验"),
     cHomeHotLinkText: readSetting(settings, "c_home_hot_link_text", "查看全部"),
     cHomeCustomModules: normalizeModules(readSetting(settings, "c_home_custom_modules", [])),
+    cHomeSectionOrder: normalizeSectionOrder(readSetting(settings, "c_home_section_order", defaultSectionOrder)),
     cProfileHelpEnabled: readSetting(settings, "c_profile_help_enabled", true),
     cProfileHelpTitle: readSetting(settings, "c_profile_help_title", "帮助与反馈"),
     cProfileHelpSubtitle: readSetting(settings, "c_profile_help_subtitle", "常见问题、意见反馈与使用帮助"),
@@ -125,13 +159,16 @@ function buildInitialForm(settings?: RawSettings): PageForm {
     cProfileHelpContactPhone: readSetting(settings, "c_profile_help_contact_phone", "400-XXX-XXXX"),
     cProfileHelpContactWechat: readSetting(settings, "c_profile_help_contact_wechat", ""),
     cProfileHelpContactHours: readSetting(settings, "c_profile_help_contact_hours", "09:00-22:00"),
+    cGroupBookingRules: readSetting(settings, "c_group_booking_rules", "## 拼场规则\n\n1. 选择心仪的 VR 体验项目并发起拼场。\n2. 系统将自动为你匹配同日同场的其他玩家。\n3. 拼场成功后，按实际到场人数计费，未凑满最低开场人数可能会自动取消或改期。\n4. 请按预约时间提前到场签到，迟到可能影响拼场体验。\n5. 如需取消，请遵守退款规则，开场前 2 小时内可能无法退款。"),
   }
 }
 
 const sectionTabs: Array<{ key: SectionKey; label: string; desc: string; icon: React.ComponentType<{ className?: string }> }> = [
   { key: "home", label: "C端首页", desc: "Banner、搜索与会员卡", icon: Smartphone },
   { key: "modules", label: "内容模块", desc: "首页自定义内容卡片", icon: ImagePlus },
+  { key: "layout", label: "模块排序", desc: "调整C端首页各模块顺序与显示", icon: ArrowUp },
   { key: "help", label: "帮助与反馈", desc: "FAQ与客服联系方式", icon: HelpCircle },
+  { key: "groupBooking", label: "拼场规则", desc: "C端拼场规则页面内容", icon: Users },
 ]
 function Field({ label, children, desc }: { label: string; children: React.ReactNode; desc?: string }) {
   return (
@@ -164,6 +201,102 @@ function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
         props.className
       )}
     />
+  )
+}
+
+const quickLinks = [
+  { label: "首页", path: "/", icon: Smartphone },
+  { label: "体验项目列表", path: "/venues", icon: ImagePlus },
+  { label: "充值中心", path: "/recharge", icon: CreditCard },
+  { label: "积分商城", path: "/points-mall", icon: Gift },
+  { label: "会员权益", path: "/member-benefits", icon: Crown },
+  { label: "我的订单", path: "/orders", icon: Receipt },
+  { label: "我的优惠券", path: "/coupons", icon: Ticket },
+  { label: "个人中心", path: "/profile", icon: User },
+]
+
+function LinkUrlInput({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder?: string }) {
+  const [open, setOpen] = useState(false)
+  const { data: games, isLoading: gamesLoading } = useQuery({
+    queryKey: ['settings-games'],
+    queryFn: () => getGames({ status: 'ACTIVE' }),
+    enabled: open,
+  })
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <div className="flex items-center gap-2">
+        <TextInput
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder || "/recharge 或 https://..."}
+          className="flex-1"
+        />
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="shrink-0 h-10 px-3 rounded-lg border border-vrborder-subtle text-vrtext-secondary hover:border-vraccent-primary hover:text-vraccent-primary transition-colors"
+            title="选择跳转页面"
+          >
+            <Link2 className="w-4 h-4" />
+          </button>
+        </PopoverTrigger>
+      </div>
+      <PopoverContent className="w-80 p-0" align="end">
+        <div className="p-3 border-b border-vrborder-subtle">
+          <p className="text-vr-body-sm font-semibold text-vrtext-primary">选择跳转页面</p>
+          <p className="text-vr-caption text-vrtext-tertiary mt-0.5">点击常用页面快速填充链接</p>
+        </div>
+        <div className="p-2 max-h-[360px] overflow-y-auto">
+          {quickLinks.map((link) => {
+            const Icon = link.icon
+            return (
+              <button
+                key={link.path}
+                type="button"
+                onClick={() => { onChange(link.path); setOpen(false) }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-vrbg-elevated transition-colors group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-vrbg-active flex items-center justify-center text-vraccent-primary">
+                  <Icon className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-vr-body-sm text-vrtext-primary">{link.label}</p>
+                  <p className="text-vr-caption text-vrtext-tertiary truncate">{link.path}</p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-vrtext-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+              </button>
+            )
+          })}
+          <div className="mt-2 pt-2 border-t border-vrborder-subtle">
+            <p className="px-3 py-1 text-vr-caption text-vrtext-tertiary">游戏详情</p>
+            {gamesLoading ? (
+              <p className="px-3 py-2 text-vr-caption text-vrtext-tertiary">加载中...</p>
+            ) : (games || []).filter((g: any) => g.status === 'ACTIVE').map((game: any) => (
+              <button
+                key={game.id}
+                type="button"
+                onClick={() => { onChange(`/game/${game.id}`); setOpen(false) }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-vrbg-elevated transition-colors group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-vrbg-active flex items-center justify-center text-vraccent-primary">
+                  <Gamepad2 className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-vr-body-sm text-vrtext-primary">{game.title}</p>
+                  <p className="text-vr-caption text-vrtext-tertiary truncate">/game/{game.id}</p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-vrtext-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="p-3 border-t border-vrborder-subtle bg-vrbg-surface/50">
+          <p className="text-vr-caption text-vrtext-tertiary">
+            提示：也可以手动输入外部链接，如 <span className="text-vraccent-primary">https://example.com</span> 或 <span className="text-vraccent-primary">tel:400-XXX-XXXX</span>
+          </p>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -298,6 +431,105 @@ function VideoUploadField({
 function PreviewCard({ form }: { form: PageForm }) {
   const [activeBanner, setActiveBanner] = useState(0)
 
+  const previewSection = (key: string) => {
+    switch (key) {
+      case "search":
+        return (
+          <div className="h-9 rounded-full bg-slate-100 px-3 flex items-center text-xs text-slate-400">
+            {form.cHomeSearchPlaceholder || "搜索 VR 体验项目..."}
+          </div>
+        )
+      case "banner":
+        return form.cHomeBannerEnabled && form.cHomeBannerImages.length > 0 ? (
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-950 via-violet-950 to-blue-950 p-4 text-white">
+            {form.cHomeBannerImages[activeBanner]?.imageUrl && (
+              <img src={getImageUrl(form.cHomeBannerImages[activeBanner].imageUrl)} alt="" className="absolute inset-0 w-full h-full object-cover opacity-80" />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/35 to-transparent" />
+            <div className="relative">
+              <p className="text-[11px] text-cyan-300 mb-1">{form.cHomeBannerImages[activeBanner]?.badge || "限时特惠"}</p>
+              <p className="text-lg font-black leading-tight whitespace-pre-line">{form.cHomeBannerImages[activeBanner]?.title || "沉浸宇宙\n触手可及"}</p>
+              <p className="text-[11px] text-white/75 mt-2">{form.cHomeBannerImages[activeBanner]?.subtitle || "全场体验项目最高 30% OFF"}</p>
+            </div>
+            {form.cHomeBannerImages.length > 1 && (
+              <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1">
+                {form.cHomeBannerImages.map((_, i) => (
+                  <button key={i} onClick={() => setActiveBanner(i)}
+                    className={cn("h-1.5 rounded-full transition-all", i === activeBanner ? "w-5 bg-white" : "w-1.5 bg-white/50")}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null
+      case "category":
+        return form.cHomeCategoryEnabled ? (
+          <div className="grid grid-cols-4 gap-2">
+            {["动作", "冒险", "解谜", "联机"].map((tag, i) => (
+              <div key={i} className="flex flex-col items-center gap-1">
+                <div className="w-10 h-10 rounded-xl bg-slate-100" />
+                <span className="text-[10px] text-slate-500">{tag}</span>
+              </div>
+            ))}
+          </div>
+        ) : null
+      case "vip":
+        return form.cHomeVipEnabled ? (
+          <div className="rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 p-3 text-white flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold">{form.cHomeVipTitle}</p>
+              <p className="text-[10px] text-white/80 mt-0.5">{form.cHomeVipDesc}</p>
+            </div>
+            <span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-violet-600">{form.cHomeVipButton}</span>
+          </div>
+        ) : null
+      case "customModules":
+        return (
+          <>
+            {form.cHomeCustomModules.filter((m) => m.enabled).slice(0, 3).map((item) => (
+              <div key={item.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                {item.title.trim() && <p className="text-xs font-bold text-slate-900">{item.title}</p>}
+                {item.videoUrl ? (
+                  <div className="mt-2 aspect-video w-full overflow-hidden rounded-lg bg-black">
+                    <video src={getImageUrl(item.videoUrl)} className="w-full h-full object-contain" autoPlay muted loop playsInline preload="metadata" />
+                  </div>
+                ) : item.imageUrl ? (
+                  <img src={getImageUrl(item.imageUrl)} alt="" className="mt-2 h-16 w-full rounded-lg object-cover" />
+                ) : null}
+                {item.content && <p className="mt-1 text-[11px] text-slate-500 line-clamp-2">{item.content}</p>}
+                {item.linkUrl && <p className="mt-2 text-[11px] font-semibold text-violet-600">{item.buttonText || "查看详情"}</p>}
+              </div>
+            ))}
+            {form.cHomeCustomModules.filter((m) => m.enabled).length > 3 && (
+              <p className="text-center text-[11px] text-slate-400">...更多模块</p>
+            )}
+          </>
+        )
+      case "groupBuy":
+        return (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-900">团购推荐</span>
+              <span className="text-slate-400">查看全部</span>
+            </div>
+            <div className="h-20 rounded-xl bg-gradient-to-r from-indigo-900 to-slate-900" />
+          </div>
+        )
+      case "hot":
+        return (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-900">{form.cHomeHotTitle}</span>
+              <span className="text-slate-400">{form.cHomeHotLinkText}</span>
+            </div>
+            <div className="h-24 rounded-xl bg-slate-100" />
+          </div>
+        )
+      default:
+        return null
+    }
+  }
+
   return (
     <div className="sticky top-6 space-y-4 scrollbar-hide">
       <div className="rounded-2xl border border-vrborder-subtle bg-vrbg-surface p-4">
@@ -306,61 +538,9 @@ function PreviewCard({ form }: { form: PageForm }) {
           C端首页预览
         </div>
         <div className="rounded-2xl bg-white p-3 shadow-sm space-y-3">
-          <div className="h-9 rounded-full bg-slate-100 px-3 flex items-center text-xs text-slate-400">
-            {form.cHomeSearchPlaceholder || "搜索 VR 体验项目..."}
-          </div>
-          {form.cHomeBannerEnabled && form.cHomeBannerImages.length > 0 && (
-            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-950 via-violet-950 to-blue-950 p-4 text-white">
-              {form.cHomeBannerImages[activeBanner]?.imageUrl && (
-                <img src={getImageUrl(form.cHomeBannerImages[activeBanner].imageUrl)} alt="" className="absolute inset-0 w-full h-full object-cover opacity-80" />
-              )}
-              <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/35 to-transparent" />
-              <div className="relative">
-                <p className="text-[11px] text-cyan-300 mb-1">{form.cHomeBannerImages[activeBanner]?.badge || "限时特惠"}</p>
-                <p className="text-lg font-black leading-tight whitespace-pre-line">{form.cHomeBannerImages[activeBanner]?.title || "沉浸宇宙\n触手可及"}</p>
-                <p className="text-[11px] text-white/75 mt-2">{form.cHomeBannerImages[activeBanner]?.subtitle || "全场体验项目最高 30% OFF"}</p>
-              </div>
-              {form.cHomeBannerImages.length > 1 && (
-                <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1">
-                  {form.cHomeBannerImages.map((_, i) => (
-                    <button key={i} onClick={() => setActiveBanner(i)}
-                      className={cn("h-1.5 rounded-full transition-all", i === activeBanner ? "w-5 bg-white" : "w-1.5 bg-white/50")}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {form.cHomeVipEnabled && (
-            <div className="rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 p-3 text-white flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold">{form.cHomeVipTitle}</p>
-                <p className="text-[10px] text-white/80 mt-0.5">{form.cHomeVipDesc}</p>
-              </div>
-              <span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-violet-600">{form.cHomeVipButton}</span>
-            </div>
-          )}
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-bold text-slate-900">{form.cHomeHotTitle}</span>
-            <span className="text-slate-400">{form.cHomeHotLinkText}</span>
-          </div>
-          {form.cHomeCustomModules.filter((m) => m.enabled).slice(0, 3).map((item) => (
-            <div key={item.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-              {item.title.trim() && <p className="text-xs font-bold text-slate-900">{item.title}</p>}
-              {item.videoUrl ? (
-                <div className="mt-2 aspect-video w-full overflow-hidden rounded-lg bg-black">
-                  <video src={getImageUrl(item.videoUrl)} className="w-full h-full object-contain" autoPlay muted loop playsInline preload="metadata" />
-                </div>
-              ) : item.imageUrl ? (
-                <img src={getImageUrl(item.imageUrl)} alt="" className="mt-2 h-16 w-full rounded-lg object-cover" />
-              ) : null}
-              {item.content && <p className="mt-1 text-[11px] text-slate-500 line-clamp-2">{item.content}</p>}
-              {item.linkUrl && <p className="mt-2 text-[11px] font-semibold text-violet-600">{item.buttonText || "查看详情"}</p>}
-            </div>
+          {form.cHomeSectionOrder.filter((s) => s.enabled).map((section) => (
+            <div key={section.key}>{previewSection(section.key)}</div>
           ))}
-          {form.cHomeCustomModules.filter((m) => m.enabled).length > 3 && (
-            <p className="text-center text-[11px] text-slate-400">...更多模块</p>
-          )}
         </div>
       </div>
 
@@ -528,6 +708,54 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
     })
   }
 
+  const sectionLabels: Record<string, string> = {
+    search: "搜索栏",
+    banner: "Banner 轮播",
+    category: "标签快捷入口",
+    vip: "会员权益",
+    customModules: "自定义内容模块",
+    groupBuy: "团购推荐",
+    hot: "热门体验",
+  }
+
+  const updateSectionOrder = (fn: (arr: SectionOrderItem[]) => SectionOrderItem[]) => {
+    setForm((prev) => {
+      const next = fn([...prev.cHomeSectionOrder])
+      const banner = next.find((s) => s.key === "banner")
+      const category = next.find((s) => s.key === "category")
+      const vip = next.find((s) => s.key === "vip")
+      return {
+        ...prev,
+        cHomeSectionOrder: next,
+        cHomeBannerEnabled: banner ? banner.enabled : prev.cHomeBannerEnabled,
+        cHomeCategoryEnabled: category ? category.enabled : prev.cHomeCategoryEnabled,
+        cHomeVipEnabled: vip ? vip.enabled : prev.cHomeVipEnabled,
+      }
+    })
+  }
+
+  const moveSection = (key: string, direction: -1 | 1) => {
+    updateSectionOrder((arr) => {
+      const idx = arr.findIndex((s) => s.key === key)
+      const target = idx + direction
+      if (idx < 0 || target < 0 || target >= arr.length) return arr
+      const [item] = arr.splice(idx, 1)
+      arr.splice(target, 0, item)
+      return arr
+    })
+  }
+
+  const toggleSection = (key: string, enabled: boolean) => {
+    updateSectionOrder((arr) => arr.map((s) => s.key === key ? { ...s, enabled } : s))
+  }
+
+  const syncSectionEnabledFromFlags = (key: "banner" | "category" | "vip", value: boolean) => {
+    setForm((prev) => ({
+      ...prev,
+      cHomeSectionOrder: prev.cHomeSectionOrder.map((s) => s.key === key ? { ...s, enabled: value } : s),
+    }))
+  }
+
   const addFaq = () => {
     setForm((prev) => ({
       ...prev,
@@ -621,6 +849,7 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
       { key: "c_home_hot_title", value: form.cHomeHotTitle, category: "page" },
       { key: "c_home_hot_link_text", value: form.cHomeHotLinkText, category: "page" },
       { key: "c_home_custom_modules", value: form.cHomeCustomModules, category: "page" },
+      { key: "c_home_section_order", value: form.cHomeSectionOrder, category: "page" },
       { key: "c_profile_help_enabled", value: form.cProfileHelpEnabled, category: "page" },
       { key: "c_profile_help_title", value: form.cProfileHelpTitle, category: "page" },
       { key: "c_profile_help_subtitle", value: form.cProfileHelpSubtitle, category: "page" },
@@ -628,6 +857,7 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
       { key: "c_profile_help_contact_phone", value: form.cProfileHelpContactPhone, category: "page" },
       { key: "c_profile_help_contact_wechat", value: form.cProfileHelpContactWechat, category: "page" },
       { key: "c_profile_help_contact_hours", value: form.cProfileHelpContactHours, category: "page" },
+      { key: "c_group_booking_rules", value: form.cGroupBookingRules, category: "page" },
 
     ])
   }
@@ -656,6 +886,9 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
           cProfileHelpContactPhone: defaults.cProfileHelpContactPhone, cProfileHelpContactWechat: defaults.cProfileHelpContactWechat,
           cProfileHelpContactHours: defaults.cProfileHelpContactHours,
         }))
+        break
+      case "groupBooking":
+        setForm((prev) => ({ ...prev, cGroupBookingRules: defaults.cGroupBookingRules }))
         break
     }
     toast.success("已恢复默认值")
@@ -710,7 +943,7 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
                       <Image className="w-4 h-4 text-vraccent-primary" />
                       <p className="text-vr-body-sm font-semibold text-vrtext-primary">首页 Banner</p>
                     </div>
-                    <Switch checked={form.cHomeBannerEnabled} onCheckedChange={(v) => update("cHomeBannerEnabled", v)} />
+                    <Switch checked={form.cHomeBannerEnabled} onCheckedChange={(v) => { update("cHomeBannerEnabled", v); syncSectionEnabledFromFlags("banner", v) }} />
                   </div>
                   {form.cHomeBannerImages.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-vrborder-subtle py-8 text-center">
@@ -766,7 +999,7 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
                               <TextInput value={banner.subtitle} onChange={(e) => updateBanner(banner.id, { subtitle: e.target.value })} maxLength={50} />
                             </Field>
                             <Field label="点击跳转链接" desc="可选，点击 Banner 跳转到指定页面">
-                              <TextInput value={banner.linkUrl} onChange={(e) => updateBanner(banner.id, { linkUrl: e.target.value })} placeholder="/recharge 或 https://..." />
+                              <LinkUrlInput value={banner.linkUrl} onChange={(v) => updateBanner(banner.id, { linkUrl: v })} placeholder="/recharge 或 https://..." />
                             </Field>
                           </div>
                         </div>
@@ -787,7 +1020,7 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
                     <p className="text-vr-body-sm font-semibold text-vrtext-primary">标签快捷入口</p>
                     <p className="text-vr-caption text-vrtext-tertiary mt-1">根据已上架游戏标签自动生成</p>
                   </div>
-                  <Switch checked={form.cHomeCategoryEnabled} onCheckedChange={(v) => update("cHomeCategoryEnabled", v)} />
+                  <Switch checked={form.cHomeCategoryEnabled} onCheckedChange={(v) => { update("cHomeCategoryEnabled", v); syncSectionEnabledFromFlags("category", v) }} />
                 </div>
 
                 <div className="rounded-xl border border-vrborder-subtle bg-vrbg-surface p-4 space-y-4">
@@ -796,7 +1029,7 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
                       <Bell className="w-4 h-4 text-vraccent-primary" />
                       <p className="text-vr-body-sm font-semibold text-vrtext-primary">会员权益卡片</p>
                     </div>
-                    <Switch checked={form.cHomeVipEnabled} onCheckedChange={(v) => update("cHomeVipEnabled", v)} />
+                    <Switch checked={form.cHomeVipEnabled} onCheckedChange={(v) => { update("cHomeVipEnabled", v); syncSectionEnabledFromFlags("vip", v) }} />
                   </div>
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                     <Field label="标题">
@@ -902,11 +1135,13 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
                             <TextInput value={item.videoUrl} onChange={(e) => updateModule(item.id, { videoUrl: e.target.value })} placeholder="https://.../video.mp4" />
                           </Field>
                           <Field label="跳转链接（可选）">
-                            <TextInput value={item.linkUrl} onChange={(e) => updateModule(item.id, { linkUrl: e.target.value })} placeholder="/recharge 或 https://..." />
+                            <LinkUrlInput value={item.linkUrl} onChange={(v) => updateModule(item.id, { linkUrl: v })} placeholder="/recharge 或 https://..." />
                           </Field>
-                          <Field label="按钮文案">
-                            <TextInput value={item.buttonText} onChange={(e) => updateModule(item.id, { buttonText: e.target.value })} maxLength={20} />
-                          </Field>
+                          {item.linkUrl && (
+                            <Field label="按钮文案">
+                              <TextInput value={item.buttonText} onChange={(e) => updateModule(item.id, { buttonText: e.target.value })} maxLength={20} />
+                            </Field>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -915,6 +1150,71 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
                     </button>
                   </div>
                 )}
+              </div>
+            )}
+            {active === "layout" && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-vr-body-sm text-vrtext-tertiary">{activeMeta.desc}</p>
+                    <p className="text-vr-caption text-vrtext-tertiary mt-0.5">拖动或点击上下箭头调整模块顺序，关闭后C端首页不展示该模块</p>
+                  </div>
+                  <button
+                    onClick={() => setForm((prev) => ({ ...prev, cHomeSectionOrder: defaultSectionOrder.map((s) => ({ ...s })) }))}
+                    className="text-vr-caption text-vrtext-muted hover:text-vrtext-secondary transition-colors"
+                  >
+                    恢复默认
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-vrborder-subtle bg-vrbg-surface p-4 space-y-3">
+                  {form.cHomeSectionOrder.map((section, index) => (
+                    <div
+                      key={section.key}
+                      className={cn(
+                        "flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors",
+                        section.enabled ? "bg-vrbg-card border-vrborder-subtle" : "bg-vrbg-surface border-vrborder-subtle opacity-60"
+                      )}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="w-7 h-7 rounded-lg bg-vrbg-active text-vraccent-primary flex items-center justify-center text-vr-body-sm font-semibold">
+                          {index + 1}
+                        </span>
+                        <span className="text-vr-body-sm font-medium text-vrtext-primary">
+                          {sectionLabels[section.key] || section.key}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => moveSection(section.key, -1)}
+                          disabled={index === 0}
+                          className="p-2 rounded-lg text-vrtext-tertiary hover:bg-vrbg-elevated disabled:opacity-40"
+                        >
+                          <ArrowUp className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveSection(section.key, 1)}
+                          disabled={index === form.cHomeSectionOrder.length - 1}
+                          className="p-2 rounded-lg text-vrtext-tertiary hover:bg-vrbg-elevated disabled:opacity-40"
+                        >
+                          <ArrowDown className="w-4 h-4" />
+                        </button>
+                        <Switch
+                          checked={section.enabled}
+                          onCheckedChange={(v) => toggleSection(section.key, v)}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-xl bg-vraccent-primary/10 border border-vraccent-primary/20 p-3">
+                  <p className="text-vr-caption text-vraccent-primary">
+                    提示：Banner、标签入口、会员权益的开关会与「C端首页」Tab 中的对应开关保持同步。
+                  </p>
+                </div>
               </div>
             )}
             {active === "help" && (
@@ -1006,6 +1306,27 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
                 </div>
               </div>
             )}
+            {active === "groupBooking" && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <p className="text-vr-body-sm text-vrtext-tertiary">编辑C端拼场规则页面的内容，支持 Markdown 简单语法（# 标题、## 标题、1. 列表）</p>
+                  <button onClick={() => resetSection("groupBooking")} className="text-vr-caption text-vrtext-muted hover:text-vrtext-secondary transition-colors">
+                    恢复默认
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-vrborder-subtle bg-vrbg-surface p-4 space-y-4">
+                  <Field label="规则内容" desc="C端「拼场规则」页面展示的正文，按段落和换行自动排版。">
+                    <TextArea
+                      rows={16}
+                      value={form.cGroupBookingRules}
+                      onChange={(e) => update("cGroupBookingRules", e.target.value)}
+                      placeholder="输入拼场规则内容..."
+                    />
+                  </Field>
+                </div>
+              </div>
+            )}
           </motion.div>
 
           <div className="flex items-center justify-between rounded-xl border border-vrborder-subtle bg-vrbg-card p-4 mt-8">
@@ -1048,7 +1369,7 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
             className="bg-vrbg-card rounded-2xl border border-vrborder-subtle p-6 max-w-sm w-full mx-4 shadow-xl">
             <h3 className="text-vr-h4 text-vrtext-primary font-semibold">确认保存</h3>
             <p className="text-vr-body-sm text-vrtext-secondary mt-2">
-              保存后将立即更新 C 端首页、帮助反馈、联系门店的展示内容，确认保存？
+              保存后将立即更新 C 端首页、帮助反馈、拼场规则、联系门店的展示内容，确认保存？
             </p>
             <div className="flex items-center justify-end gap-3 mt-6">
               <button onClick={() => setConfirmOpen(false)}

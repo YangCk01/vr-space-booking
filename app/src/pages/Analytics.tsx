@@ -42,6 +42,7 @@ import {
 } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
+import { useThemeStore } from '@/stores/themeStore'
 import {
   getDashboard,
   getRevenue,
@@ -198,16 +199,16 @@ function PanelCard({ children, delay = 0, className = '' }: { children: React.Re
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.5, ease }}
-      className={cn('relative rounded-lg border p-5 overflow-hidden', className)}
-      style={{
-        background: 'rgba(15,23,42,0.6)',
-        borderColor: 'rgba(59,130,246,0.15)',
-        boxShadow: 'inset 0 0 20px rgba(59,130,246,0.05)',
-      }}
+      className={cn(
+        'relative rounded-lg border p-5 overflow-hidden',
+        'bg-[var(--vr-bg-card)] dark:bg-[rgba(15,23,42,0.6)]',
+        'border-[var(--vr-border-subtle)] dark:border-[rgba(59,130,246,0.15)]',
+        'shadow-sm dark:shadow-[inset_0_0_20px_rgba(59,130,246,0.05)]',
+        className
+      )}
     >
       <div
-        className="absolute top-0 left-3 right-3 h-[1px]"
-        style={{ background: 'linear-gradient(90deg, transparent, #3B82F6, transparent)' }}
+        className="absolute top-0 left-3 right-3 h-[1px] opacity-60 dark:opacity-100 bg-gradient-to-r from-transparent via-[var(--vr-accent-primary)] to-transparent"
       />
       {children}
     </motion.div>
@@ -262,16 +263,15 @@ function KPICard({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: delay / 1000 }}
-      className="relative rounded-lg border p-5 overflow-hidden"
-      style={{
-        background: 'rgba(15,23,42,0.6)',
-        borderColor: 'rgba(59,130,246,0.15)',
-        boxShadow: 'inset 0 0 20px rgba(59,130,246,0.05)',
-      }}
+      className={cn(
+        'relative rounded-lg border p-5 overflow-hidden',
+        'bg-[var(--vr-bg-card)] dark:bg-[rgba(15,23,42,0.6)]',
+        'border-[var(--vr-border-subtle)] dark:border-[rgba(59,130,246,0.15)]',
+        'shadow-sm dark:shadow-[inset_0_0_20px_rgba(59,130,246,0.05)]'
+      )}
     >
       <div
-        className="absolute top-0 left-3 right-3 h-[1px]"
-        style={{ background: 'linear-gradient(90deg, transparent, #3B82F6, transparent)' }}
+        className="absolute top-0 left-3 right-3 h-[1px] opacity-60 dark:opacity-100 bg-gradient-to-r from-transparent via-[var(--vr-accent-primary)] to-transparent"
       />
       <div className="flex items-start gap-4">
         <div
@@ -308,26 +308,28 @@ function KPICard({
 
 
 /* ------------------------------------------------------------------ */
-/*  Tooltip styles                                                     */
+/*  Tooltip wrapper                                                    */
 /* ------------------------------------------------------------------ */
-const tooltipStyle = {
-  backgroundColor: '#1E293B',
-  border: '1px solid #334155',
-  borderRadius: '8px',
-  padding: '8px 12px',
-  boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+function TooltipCard({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div
+      className={cn(
+        'rounded-lg border p-2 shadow-lg',
+        'bg-[var(--vr-bg-elevated)] border-[var(--vr-border-subtle)] text-[var(--vr-text-primary)]',
+        className
+      )}
+    >
+      {children}
+    </div>
+  )
 }
 
-const tooltipLabelStyle = {
-  color: '#F1F5F9',
-  fontSize: '12px',
-  fontWeight: 500,
-  marginBottom: '4px',
+function TooltipLabel({ children }: { children: React.ReactNode }) {
+  return <p className="text-xs font-medium mb-1 text-[var(--vr-text-primary)]">{children}</p>
 }
 
-const tooltipItemStyle = {
-  color: '#94A3B8',
-  fontSize: '12px',
+function TooltipItem({ children }: { children: React.ReactNode }) {
+  return <p className="text-xs text-[var(--vr-text-secondary)]">{children}</p>
 }
 
 /* ------------------------------------------------------------------ */
@@ -340,8 +342,8 @@ function RevenueTooltip({ active, payload, label }: {
 }) {
   if (!active || !payload?.length) return null
   return (
-    <div style={tooltipStyle}>
-      <p style={tooltipLabelStyle}>{label}</p>
+    <TooltipCard>
+      <TooltipLabel>{label}</TooltipLabel>
       {payload.map((p, i) => {
         const isAmount = p.dataKey?.includes('Amount')
         const labelText =
@@ -350,15 +352,15 @@ function RevenueTooltip({ active, payload, label }: {
           p.dataKey === 'onlineCount' ? '线上订单' :
           p.dataKey === 'offlineCount' ? '线下订单' : p.dataKey
         return (
-          <p key={i} style={tooltipItemStyle}>
+          <TooltipItem key={i}>
             {labelText}: &nbsp;
-            <span style={{ color: p.color || '#3B82F6', fontWeight: 600 }}>
+            <span style={{ color: p.color || 'var(--vr-accent-primary)' }} className="font-semibold">
               {isAmount ? `¥${((p.value || 0) / 100).toLocaleString()}` : `${p.value}单`}
             </span>
-          </p>
+          </TooltipItem>
         )
       })}
-    </div>
+    </TooltipCard>
   )
 }
 
@@ -374,14 +376,14 @@ function BookingTooltip({ active, payload, label, total }: {
   if (!active || !payload?.length || !total) return null
   const pct = ((payload[0].value / total) * 100).toFixed(1)
   return (
-    <div style={tooltipStyle}>
-      <p style={tooltipLabelStyle}>{label}</p>
-      <p style={tooltipItemStyle}>
+    <TooltipCard>
+      <TooltipLabel>{label}</TooltipLabel>
+      <TooltipItem>
         预约场次: &nbsp;
-        <span style={{ color: '#3B82F6', fontWeight: 600 }}>{payload[0].value}场</span>
-      </p>
-      <p style={tooltipItemStyle}>占比: {pct}%</p>
-    </div>
+        <span className="font-semibold text-[var(--vr-accent-primary)]">{payload[0].value}场</span>
+      </TooltipItem>
+      <TooltipItem>占比: {pct}%</TooltipItem>
+    </TooltipCard>
   )
 }
 
@@ -395,13 +397,53 @@ function UserTooltip({ active, payload, label }: {
 }) {
   if (!active || !payload?.length) return null
   return (
-    <div style={tooltipStyle}>
-      <p style={tooltipLabelStyle}>{label}</p>
-      <p style={tooltipItemStyle}>
+    <TooltipCard>
+      <TooltipLabel>{label}</TooltipLabel>
+      <TooltipItem>
         新增用户: &nbsp;
-        <span style={{ color: '#06B6D4', fontWeight: 600 }}>{payload[0].value}人</span>
-      </p>
-    </div>
+        <span className="font-semibold text-[var(--vr-accent-secondary)]">{payload[0].value}人</span>
+      </TooltipItem>
+    </TooltipCard>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Payment Tooltip                                                    */
+/* ------------------------------------------------------------------ */
+function PaymentTooltip({ active, payload }: {
+  active?: boolean
+  payload?: Array<{ value: number; payload?: { method?: string } }>
+}) {
+  if (!active || !payload?.length) return null
+  const p = payload[0]
+  return (
+    <TooltipCard>
+      <TooltipLabel>{p.payload?.method}</TooltipLabel>
+      <TooltipItem>
+        金额: &nbsp;
+        <span className="font-semibold text-[var(--vr-accent-primary)]">¥{((p.value || 0) / 100).toLocaleString()}</span>
+      </TooltipItem>
+    </TooltipCard>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Order Status Tooltip                                               */
+/* ------------------------------------------------------------------ */
+function OrderStatusTooltip({ active, payload }: {
+  active?: boolean
+  payload?: Array<{ value: number; name?: string }>
+}) {
+  if (!active || !payload?.length) return null
+  return (
+    <TooltipCard>
+      {payload.map((p, i) => (
+        <TooltipItem key={i}>
+          {p.name}: &nbsp;
+          <span className="font-semibold text-[var(--vr-text-primary)]">{p.value}单</span>
+        </TooltipItem>
+      ))}
+    </TooltipCard>
   )
 }
 
@@ -410,6 +452,8 @@ function UserTooltip({ active, payload, label }: {
 /* ------------------------------------------------------------------ */
 export default function Analytics() {
   const navigate = useNavigate()
+  const { theme } = useThemeStore()
+  const isDark = theme === 'dark'
   const now = useNow()
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -569,6 +613,12 @@ export default function Analytics() {
     repurchasePending ||
     gamePopularityPending
 
+  /* ─── Chart colors driven by theme ─── */
+  const chartGrid = isDark ? '#1E293B' : '#E2E8F0'
+  const chartTick = isDark ? '#64748B' : '#94A3B8'
+  const chartAxis = isDark ? '#1E293B' : '#E2E8F0'
+  const chartDotStroke = isDark ? '#151D2E' : '#FFFFFF'
+
   /* ─── KPI cards data ─── */
   const isToday = dateRange === 'today'
   const trendLabel = isToday ? '较昨日' : '环比'
@@ -608,10 +658,7 @@ export default function Analytics() {
 
   return (
     <div
-      className="dark relative w-screen min-h-[100dvh] overflow-x-hidden overflow-y-auto"
-      style={{
-        backgroundColor: '#0B1120',
-      }}
+      className="relative w-screen min-h-[100dvh] overflow-x-hidden overflow-y-auto bg-[var(--vr-bg-base)] text-[var(--vr-text-primary)]"
     >
       {/* Grid overlay */}
       <div
@@ -640,7 +687,10 @@ export default function Analytics() {
       >
         {/* Loading overlay */}
         {isLoadingAny && (
-          <div className="absolute inset-0 z-50 bg-[#0B1120]/80 backdrop-blur-sm flex items-center justify-center rounded-lg">
+          <div
+            className="absolute inset-0 z-50 backdrop-blur-sm flex items-center justify-center rounded-lg"
+            style={{ backgroundColor: 'color-mix(in srgb, var(--vr-bg-base), transparent 20%)' }}
+          >
             <div className="flex flex-col items-center gap-3">
               <div className="w-8 h-8 border-2 border-vraccent-primary border-t-transparent rounded-full animate-spin" />
               <span className="text-vr-body-sm text-vrtext-secondary">数据加载中...</span>
@@ -675,13 +725,13 @@ export default function Analytics() {
 
           {/* Center: decorative line */}
           <div className="hidden lg:flex items-center gap-2 flex-1 justify-center mx-8">
-            <div className="h-[1px] flex-1 max-w-[120px]" style={{ background: 'linear-gradient(90deg, #3B82F6, transparent)' }} />
+            <div className="h-[1px] flex-1 max-w-[120px] bg-gradient-to-r from-[var(--vr-accent-primary)] to-transparent opacity-60 dark:opacity-100" />
             <motion.div
               animate={{ rotate: 360 }}
               transition={{ duration: 10, repeat: Infinity, ease: 'linear' }}
               className="w-2 h-2 bg-vraccent-primary rotate-45"
             />
-            <div className="h-[1px] flex-1 max-w-[120px]" style={{ background: 'linear-gradient(90deg, transparent, #3B82F6)' }} />
+            <div className="h-[1px] flex-1 max-w-[120px] bg-gradient-to-r from-transparent to-[var(--vr-accent-primary)] opacity-60 dark:opacity-100" />
           </div>
 
           {/* Right: date picker + time + controls */}
@@ -702,7 +752,7 @@ export default function Analytics() {
                   initial={{ opacity: 0, y: -4, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   transition={{ duration: 0.15 }}
-                  className="absolute right-0 top-full mt-1 w-36 bg-vrbg-elevated border border-vrborder-hover rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.5)] z-50 overflow-hidden"
+                  className="absolute right-0 top-full mt-1 w-36 bg-vrbg-elevated border border-vrborder-hover rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.15)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.5)] z-50 overflow-hidden"
                 >
                   {(['today', '7days', '30days', '90days', 'custom'] as DateRange[]).map((r) => (
                     <button
@@ -727,7 +777,7 @@ export default function Analytics() {
                 <motion.div
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="absolute right-0 top-full mt-1 flex items-center gap-2 bg-vrbg-elevated border border-vrborder-hover rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.5)] z-50 p-2"
+                  className="absolute right-0 top-full mt-1 flex items-center gap-2 bg-vrbg-elevated border border-vrborder-hover rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.15)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.5)] z-50 p-2"
                 >
                   <input
                     type="date"
@@ -782,16 +832,15 @@ export default function Analytics() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.3 }}
-              className="relative rounded-lg border p-5 overflow-hidden"
-              style={{
-                background: 'rgba(15,23,42,0.6)',
-                borderColor: 'rgba(59,130,246,0.15)',
-                boxShadow: 'inset 0 0 20px rgba(59,130,246,0.05)',
-              }}
+              className={cn(
+                'relative rounded-lg border p-5 overflow-hidden',
+                'bg-[var(--vr-bg-card)] dark:bg-[rgba(15,23,42,0.6)]',
+                'border-[var(--vr-border-subtle)] dark:border-[rgba(59,130,246,0.15)]',
+                'shadow-sm dark:shadow-[inset_0_0_20px_rgba(59,130,246,0.05)]'
+              )}
             >
               <div
-                className="absolute top-0 left-3 right-3 h-[1px]"
-                style={{ background: 'linear-gradient(90deg, transparent, #3B82F6, transparent)' }}
+                className="absolute top-0 left-3 right-3 h-[1px] opacity-60 dark:opacity-100 bg-gradient-to-r from-transparent via-[var(--vr-accent-primary)] to-transparent"
               />
               <div className="flex items-center gap-4 h-full">
                 {/* 取消订单 */}
@@ -865,11 +914,11 @@ export default function Analytics() {
                         <stop offset="100%" stopColor="#10B981" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
-                    <XAxis dataKey="date" tick={{ fill: '#64748B', fontSize: 12 }} axisLine={{ stroke: '#1E293B' }} tickLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
+                    <XAxis dataKey="date" tick={{ fill: chartTick, fontSize: 12 }} axisLine={{ stroke: chartAxis }} tickLine={false} />
                     <YAxis
                       yAxisId="left"
-                      tick={{ fill: '#64748B', fontSize: 12 }}
+                      tick={{ fill: chartTick, fontSize: 12 }}
                       axisLine={false}
                       tickLine={false}
                       tickFormatter={(v: number) => `¥${(v / 100).toLocaleString()}`}
@@ -877,7 +926,7 @@ export default function Analytics() {
                     <YAxis
                       yAxisId="right"
                       orientation="right"
-                      tick={{ fill: '#64748B', fontSize: 12 }}
+                      tick={{ fill: chartTick, fontSize: 12 }}
                       axisLine={false}
                       tickLine={false}
                       tickFormatter={(v: number) => `${v}单`}
@@ -891,7 +940,7 @@ export default function Analytics() {
                       strokeWidth={2}
                       fill="url(#onlineAmountGrad)"
                       dot={{ fill: '#3B82F6', r: 3, strokeWidth: 0 }}
-                      activeDot={{ fill: '#3B82F6', r: 5, strokeWidth: 2, stroke: '#151D2E' }}
+                      activeDot={{ fill: '#3B82F6', r: 5, strokeWidth: 2, stroke: chartDotStroke }}
                     />
                     <Area
                       yAxisId="left"
@@ -901,7 +950,7 @@ export default function Analytics() {
                       strokeWidth={2}
                       fill="url(#offlineAmountGrad)"
                       dot={{ fill: '#10B981', r: 3, strokeWidth: 0 }}
-                      activeDot={{ fill: '#10B981', r: 5, strokeWidth: 2, stroke: '#151D2E' }}
+                      activeDot={{ fill: '#10B981', r: 5, strokeWidth: 2, stroke: chartDotStroke }}
                     />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -922,7 +971,7 @@ export default function Analytics() {
                       initial={{ opacity: 0, x: 10 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ duration: 0.3, delay: 0.5 + i * 0.08 }}
-                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-[rgba(30,41,59,0.5)] transition-colors"
+                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-[var(--vr-bg-hover)] dark:hover:bg-[rgba(30,41,59,0.5)] transition-colors"
                     >
                       <span className={`text-vr-caption font-mono w-6 text-center font-bold ${
                         i === 0 ? 'text-vrwarning' : i === 1 ? 'text-vraccent-secondary' : i === 2 ? 'text-vrsuccess' : 'text-vrtext-tertiary'
@@ -981,10 +1030,10 @@ export default function Analytics() {
                       layout="vertical"
                       margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                     >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" horizontal={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} horizontal={false} />
                       <XAxis
                         type="number"
-                        tick={{ fill: '#64748B', fontSize: 12 }}
+                        tick={{ fill: chartTick, fontSize: 12 }}
                         axisLine={false}
                         tickLine={false}
                         tickFormatter={(v: number) => `¥${(v / 100).toLocaleString()}`}
@@ -992,16 +1041,13 @@ export default function Analytics() {
                       <YAxis
                         type="category"
                         dataKey="method"
-                        tick={{ fill: '#94A3B8', fontSize: 12 }}
+                        tick={{ fill: chartTick, fontSize: 12 }}
                         axisLine={false}
                         tickLine={false}
                         width={80}
                       />
                       <Tooltip
-                        formatter={(value: number) => [`¥${(value / 100).toLocaleString()}`, '金额']}
-                        contentStyle={tooltipStyle}
-                        labelStyle={tooltipLabelStyle}
-                        itemStyle={tooltipItemStyle}
+                        content={<PaymentTooltip />}
                         cursor={{ fill: 'rgba(59,130,246,0.03)' }}
                       />
                       <Bar dataKey="amount" radius={[0, 4, 4, 0]} barSize={24}>
@@ -1046,9 +1092,9 @@ export default function Analytics() {
                           <stop offset="100%" stopColor="#1E40AF" />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
-                      <XAxis dataKey="time" tick={{ fill: '#64748B', fontSize: 11 }} axisLine={{ stroke: '#1E293B' }} tickLine={false} />
-                      <YAxis tick={{ fill: '#64748B', fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}场`} />
+                      <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
+                      <XAxis dataKey="time" tick={{ fill: chartTick, fontSize: 11 }} axisLine={{ stroke: chartAxis }} tickLine={false} />
+                      <YAxis tick={{ fill: chartTick, fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}场`} />
                       <Tooltip content={<BookingTooltip total={bookingTotal} />} cursor={{ fill: 'rgba(59,130,246,0.03)' }} />
                       <Bar dataKey="count" fill="url(#bookingGrad)" radius={[4, 4, 0, 0]} barSize={32}>
                         {bookingTimeData.map((_: any, i: number) => (
@@ -1071,11 +1117,11 @@ export default function Analytics() {
                           <stop offset="100%" stopColor="#06B6D4" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
-                      <XAxis dataKey="date" tick={{ fill: '#64748B', fontSize: 12 }} axisLine={{ stroke: '#1E293B' }} tickLine={false} />
-                      <YAxis tick={{ fill: '#64748B', fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}人`} />
+                      <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
+                      <XAxis dataKey="date" tick={{ fill: chartTick, fontSize: 12 }} axisLine={{ stroke: chartAxis }} tickLine={false} />
+                      <YAxis tick={{ fill: chartTick, fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}人`} />
                       <Tooltip content={<UserTooltip />} />
-                      <Area type="monotone" dataKey="users" stroke="#06B6D4" strokeWidth={2} fill="url(#userGrad)" dot={{ fill: '#06B6D4', r: 4, strokeWidth: 2, stroke: '#151D2E' }} activeDot={{ fill: '#06B6D4', r: 6, strokeWidth: 2, stroke: '#151D2E' }} />
+                      <Area type="monotone" dataKey="users" stroke="#06B6D4" strokeWidth={2} fill="url(#userGrad)" dot={{ fill: '#06B6D4', r: 4, strokeWidth: 2, stroke: chartDotStroke }} activeDot={{ fill: '#06B6D4', r: 6, strokeWidth: 2, stroke: chartDotStroke }} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -1109,12 +1155,7 @@ export default function Analytics() {
                         <Cell key={`cell-${index}`} fill={STATUS_COLORS[entry.status] || '#64748B'} />
                       ))}
                     </Pie>
-                    <Tooltip
-                      formatter={(value: number, name: string) => [`${value}单`, name]}
-                      contentStyle={tooltipStyle}
-                      labelStyle={tooltipLabelStyle}
-                      itemStyle={tooltipItemStyle}
-                    />
+                    <Tooltip content={<OrderStatusTooltip />} />
                   </RePieChart>
                 </ResponsiveContainer>
               </div>
@@ -1143,7 +1184,7 @@ export default function Analytics() {
               <div className="flex items-center justify-center py-4">
                 <div className="relative w-32 h-32">
                   <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
-                    <circle cx="50" cy="50" r="42" fill="none" stroke="#1E293B" strokeWidth="8" />
+                    <circle cx="50" cy="50" r="42" fill="none" stroke={chartAxis} strokeWidth="8" />
                     <motion.circle
                       cx="50" cy="50" r="42"
                       fill="none"
@@ -1187,7 +1228,7 @@ export default function Analytics() {
               <div className="flex items-center justify-center py-4">
                 <div className="relative w-32 h-32">
                   <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
-                    <circle cx="50" cy="50" r="42" fill="none" stroke="#1E293B" strokeWidth="8" />
+                    <circle cx="50" cy="50" r="42" fill="none" stroke={chartAxis} strokeWidth="8" />
                     <motion.circle
                       cx="50" cy="50" r="42"
                       fill="none"
@@ -1230,7 +1271,7 @@ export default function Analytics() {
                     initial={{ opacity: 0, x: 10 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.3, delay: 0.75 + i * 0.06 }}
-                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-[rgba(30,41,59,0.5)] transition-colors"
+                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-[var(--vr-bg-hover)] dark:hover:bg-[rgba(30,41,59,0.5)] transition-colors"
                   >
                     <span className={`text-vr-caption font-mono w-6 text-center font-bold ${
                       i === 0 ? 'text-vrwarning' : i === 1 ? 'text-vraccent-secondary' : i === 2 ? 'text-vrsuccess' : 'text-vrtext-tertiary'

@@ -7,18 +7,20 @@ import { getMe } from '@/api/auth'
 const routeToPermission: Record<string, string | string[]> = {
   '/':          'order:read',
   '/venues':    'venue:read',
-  '/games':     'venue:read',
-  '/booking':   'order:read',
+  '/games':     'content:read',
+  '/booking':   'booking:read',
   '/orders':    'order:read',
+  '/approvals': ['approval:read', 'approval:request'],
   '/users':     'user:read',
-  '/analytics': 'order:read',
-  '/venue-analytics': 'order:read',
+  '/analytics': ['finance:report', 'order:read', 'venue:read'],
+  '/venue-analytics': ['finance:report', 'venue:read'],
   '/finance':   'finance:read',
-  '/accounts':  'user:read',
+  '/accounts':  'account:read',
   '/member-marketing': 'user:gift',
   '/settings':  'setting:read',
   '/audit-logs': 'audit:read',
-  '/roles': 'setting:write',
+  '/roles': 'role:read',
+  '/group-buys': 'group-buy:read',
   '/coupon-effects': 'marketing:campaign',
   '/campaigns': 'marketing:campaign',
   '/trigger-rules': 'marketing:rule',
@@ -37,7 +39,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
       // Development bypass for testing
       if (import.meta.env.DEV && localStorage.getItem('devBypassAuth') === '1') {
-        setUser({ id: '1', phone: '13800000000', name: '管理员', email: null, avatar: null, role: 'ADMIN', level: 'VIP', permissions: ['order:read','order:refund','order:verify','order:export','finance:read','finance:adjust','finance:report','user:read','user:edit','user:gift','user:export','venue:read','venue:manage','marketing:campaign','marketing:rule','setting:read','setting:write','audit:read'] })
+        setUser({ id: '1', phone: '13800000000', name: '管理员', email: null, avatar: null, role: 'ADMIN', level: 'VIP', permissions: ['order:read','order:refund','order:verify','order:export','order:reschedule','booking:read','booking:manage','approval:read','approval:request','approval:approve','finance:read','finance:adjust','finance:report','finance:reconcile','user:read','user:edit','user:gift','user:export','account:read','account:manage','role:read','role:manage','venue:read','venue:manage','venue:maintenance','content:read','content:manage','group-buy:read','group-buy:manage','marketing:campaign','marketing:rule','setting:read','setting:write','audit:read'] })
         setAuthenticated(true)
         setLoading(false)
         return

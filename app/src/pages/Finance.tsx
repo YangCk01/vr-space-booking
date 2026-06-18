@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -24,6 +24,8 @@ import {
 } from 'lucide-react'
 import Layout from '@/components/Layout'
 import { cn } from '@/lib/utils'
+import { hasAnyPermission, hasPermission } from '@/lib/permissions'
+import { useAuthStore } from '@/stores/authStore'
 import {
   AreaChart,
   Area,
@@ -129,14 +131,41 @@ function useCountUp(target: number, duration = 800) {
 /* ─── Main Page ─── */
 export default function Finance() {
   const queryClient = useQueryClient()
+  const currentUser = useAuthStore((state) => state.user)
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
   const [reconSubTab, setReconSubTab] = useState<ReconSubTab>('daily')
   const [venueId, setVenueId] = useState('')
+  const canReadFinance = hasPermission(currentUser, 'finance:read')
+  const canViewReports = hasPermission(currentUser, 'finance:report')
+  const canReconcile = hasPermission(currentUser, 'finance:reconcile')
+  const canAdjustFinance = hasPermission(currentUser, 'finance:adjust')
+  const canWriteSettings = hasPermission(currentUser, 'setting:write')
+  const canViewDeviceLogs = canReconcile || hasAnyPermission(currentUser, ['venue:read', 'audit:read'])
+  const canManageDeviceLogs = hasAnyPermission(currentUser, ['venue:maintenance', 'venue:manage'])
+  const canDeleteDeviceLogs = hasPermission(currentUser, 'venue:manage')
+  const visibleTabs = tabs.filter((tab) => {
+    if (tab.key === 'recon') return canViewReports || canReconcile
+    if (tab.key === 'deviceLogs') return canViewDeviceLogs
+    return canReadFinance
+  })
+
+  useEffect(() => {
+    if (visibleTabs.length > 0 && !visibleTabs.some((tab) => tab.key === activeTab)) {
+      setActiveTab(visibleTabs[0].key)
+    }
+  }, [activeTab, canReadFinance, canViewReports, canReconcile, canViewDeviceLogs])
+
+  useEffect(() => {
+    if (!canReconcile && reconSubTab === 'exceptions') {
+      setReconSubTab('daily')
+    }
+  }, [canReconcile, reconSubTab])
 
   /* Venues list */
   const { data: venuesData } = useQuery({
     queryKey: ['venues', 'all'],
     queryFn: () => getVenues({ pageSize: 100 }),
+    enabled: canReadFinance || canViewReports || canReconcile || canViewDeviceLogs,
   })
   const venues = venuesData?.data || []
 
@@ -184,6 +213,7 @@ export default function Finance() {
   const { data: overviewData } = useQuery({
     queryKey: ['finance', 'overview', overviewRange, venueId],
     queryFn: () => getFinanceOverview(overviewRange, undefined, undefined, venueId || undefined),
+    enabled: canReadFinance,
   })
 
   const { data: flowData } = useQuery({
@@ -198,6 +228,7 @@ export default function Finance() {
         page: flowPage,
         pageSize: flowPageSize,
       }),
+    enabled: canReadFinance,
   })
 
   const { data: refundData } = useQuery({
@@ -210,16 +241,19 @@ export default function Finance() {
         page: refundPage,
         pageSize: refundPageSize,
       }),
+    enabled: canReadFinance,
   })
 
   const { data: dailyReport, refetch: refetchDailyReport } = useQuery({
     queryKey: ['finance', 'daily', dailyDate],
     queryFn: () => getDailyReport(dailyDate),
+    enabled: canViewReports,
   })
 
   const { data: totalSummary } = useQuery({
     queryKey: ['finance', 'total-summary'],
     queryFn: () => getTotalSummary(),
+    enabled: canViewReports,
   })
 
   const generateReportMut = useMutation({
@@ -304,7 +338,7 @@ export default function Finance() {
       if (!reconcileDetailParams) return null
       return getReconcileDetails(reconcileDetailParams.type, reconcileDetailParams.date)
     },
-    enabled: !!reconcileDetailParams,
+    enabled: !!reconcileDetailParams && canReconcile,
   })
 
   const openReconcileDetail = (name: string) => {
@@ -344,16 +378,16 @@ export default function Finance() {
           value: `¥${((overviewData.periodRefund || 0) / 100).toLocaleString()}`,
         },
         {
-          icon: <PiggyBank className="w-6 h-6 text-vrsuccess" />,
-          iconBg: 'rgba(16,185,129,0.1)',
-          label: `${periodLabel}充值`,
-          value: `¥${((overviewData.periodRecharge || 0) / 100).toLocaleString()}`,
+          icon: <AlertTriangle className="w-6 h-6 text-amber-500" />,
+          iconBg: 'rgba(249,115,22,0.1)',
+          label: `${periodLabel}改签费`,
+          value: `¥${((overviewData.periodRescheduleFee || 0) / 100).toLocaleString()}`,
         },
         {
-          icon: <AlertTriangle className="w-6 h-6 text-vrwarning" />,
-          iconBg: 'rgba(245,158,11,0.1)',
-          label: `${periodLabel}营业外收入`,
-          value: `¥${((overviewData.periodOtherIncome || 0) / 100).toLocaleString()}`,
+          icon: <Coins className="w-6 h-6 text-vrsuccess" />,
+          iconBg: 'rgba(16,185,129,0.1)',
+          label: `${periodLabel}净收入`,
+          value: `¥${(((overviewData.periodRevenue || 0) - (overviewData.periodRefund || 0) + (overviewData.periodOtherIncome || 0)) / 100).toLocaleString()}`,
         },
       ]
     : []
@@ -365,6 +399,9 @@ export default function Finance() {
     refund: d.refund / 100,
     recharge: d.recharge / 100,
     otherIncome: d.otherIncome / 100,
+    rescheduleFee: d.rescheduleFee / 100,
+    noShowPenalty: d.noShowPenalty / 100,
+    cancelFee: d.cancelFee / 100,
   })) || []
 
   /* ─── Pie data (period-based) ─── */
@@ -372,8 +409,9 @@ export default function Finance() {
     ? [
         { name: '营收', value: overviewData.periodRevenue || 0, color: '#10B981' },
         { name: '退款', value: overviewData.periodRefund || 0, color: '#EF4444' },
-        { name: '充值', value: overviewData.periodRecharge || 0, color: '#3B82F6' },
-        { name: '营业外收入', value: overviewData.periodOtherIncome || 0, color: '#F59E0B' },
+        { name: '改签费', value: overviewData.periodRescheduleFee || 0, color: '#F97316' },
+        { name: '历史爽约违约金', value: overviewData.periodNoShowPenalty || 0, color: '#8B5CF6' },
+        { name: '取消费', value: overviewData.periodCancelFee || 0, color: '#F59E0B' },
       ].filter((d) => d.value > 0)
     : []
 
@@ -395,7 +433,7 @@ export default function Finance() {
 
         {/* Tabs */}
         <div className="flex items-center gap-6 border-b border-vrborder-subtle">
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
@@ -547,6 +585,18 @@ export default function Finance() {
                             <stop offset="0%" stopColor="#F59E0B" stopOpacity={0.2} />
                             <stop offset="100%" stopColor="#F59E0B" stopOpacity={0} />
                           </linearGradient>
+                          <linearGradient id="rescheduleGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#F97316" stopOpacity={0.2} />
+                            <stop offset="100%" stopColor="#F97316" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="penaltyGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#8B5CF6" stopOpacity={0.2} />
+                            <stop offset="100%" stopColor="#8B5CF6" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="cancelGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#F59E0B" stopOpacity={0.2} />
+                            <stop offset="100%" stopColor="#F59E0B" stopOpacity={0} />
+                          </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
                         <XAxis dataKey="date" tick={{ fill: '#64748B', fontSize: 12 }} axisLine={{ stroke: '#1E293B' }} tickLine={false} />
@@ -560,7 +610,9 @@ export default function Finance() {
                         <Area type="monotone" dataKey="revenue" name="营收" stroke="#10B981" fill="url(#revGrad)" strokeWidth={2} dot={false} />
                         <Area type="monotone" dataKey="refund" name="退款" stroke="#EF4444" fill="url(#refGrad)" strokeWidth={2} dot={false} />
                         <Area type="monotone" dataKey="recharge" name="充值" stroke="#3B82F6" fill="url(#recGrad)" strokeWidth={2} dot={false} />
-                        <Area type="monotone" dataKey="otherIncome" name="营业外收入" stroke="#F59E0B" fill="url(#otherGrad)" strokeWidth={2} dot={false} />
+                        <Area type="monotone" dataKey="rescheduleFee" name="改签费" stroke="#F97316" fill="url(#rescheduleGrad)" strokeWidth={2} dot={false} />
+                        <Area type="monotone" dataKey="noShowPenalty" name="历史爽约违约金" stroke="#8B5CF6" fill="url(#penaltyGrad)" strokeWidth={2} dot={false} />
+                        <Area type="monotone" dataKey="cancelFee" name="取消费" stroke="#F59E0B" fill="url(#cancelGrad)" strokeWidth={2} dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
@@ -603,7 +655,7 @@ export default function Finance() {
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 mt-2">
+                  <div className="grid grid-cols-2 gap-2 mt-2">
                     {pieData.map((d) => (
                       <div key={d.name} className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
@@ -771,7 +823,7 @@ export default function Finance() {
                             </span>
                           </td>
                           <td className="px-4 py-3 text-vr-body-sm font-mono">
-                            {(item.type === 'ORDER' || item.type === 'REFUND') && item.orderNo ? (
+                            {(item.type === 'ORDER' || item.type === 'REFUND' || item.type === 'RESCHEDULE_FEE') && item.orderNo ? (
                               <button
                                 onClick={() => handleOpenDetail(item.orderNo)}
                                 className="text-vraccent-primary hover:text-vraccent-primary/80 hover:underline transition-colors"
@@ -780,6 +832,11 @@ export default function Finance() {
                               </button>
                             ) : (
                               <span className="text-vrtext-primary">{item.orderNo}</span>
+                            )}
+                            {item.parentOrderNo && item.parentOrderNo !== '-' && (
+                              <div className="text-vr-caption text-vrtext-muted mt-0.5">
+                                关联：{item.parentOrderNo}
+                              </div>
                             )}
                           </td>
                           <td className="px-4 py-3 text-vr-body-sm text-vrtext-primary">
@@ -999,48 +1056,52 @@ export default function Finance() {
                 >
                   日结中心
                 </button>
-                <button
-                  onClick={() => setReconSubTab('exceptions')}
-                  className={cn(
-                    'px-3 py-1 rounded text-vr-body-sm transition-colors',
-                    (reconSubTab as string) === 'exceptions'
-                      ? 'bg-vraccent-primary text-white'
-                      : 'text-vrtext-secondary hover:text-vrtext-primary'
-                  )}
-                >
-                  对账处理
-                </button>
+                {canReconcile && (
+                  <button
+                    onClick={() => setReconSubTab('exceptions')}
+                    className={cn(
+                      'px-3 py-1 rounded text-vr-body-sm transition-colors',
+                      (reconSubTab as string) === 'exceptions'
+                        ? 'bg-vraccent-primary text-white'
+                        : 'text-vrtext-secondary hover:text-vrtext-primary'
+                    )}
+                  >
+                    对账处理
+                  </button>
+                )}
               </div>
 
               {/* Date picker + Reconcile */}
               <div className="flex flex-wrap items-center gap-3 bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
                 {/* 对账模式切换 */}
-                <div className="flex items-center gap-1 bg-vrbg-surface rounded-lg p-1">
-                  <button
-                    onClick={() => setReconcileMode('daily')}
-                    className={cn(
-                      'px-3 py-1 rounded text-vr-body-sm transition-colors',
-                      reconcileMode === 'daily'
-                        ? 'bg-vraccent-primary text-white'
-                        : 'text-vrtext-secondary hover:text-vrtext-primary'
-                    )}
-                  >
-                    按日对账
-                  </button>
-                  <button
-                    onClick={() => setReconcileMode('total')}
-                    className={cn(
-                      'px-3 py-1 rounded text-vr-body-sm transition-colors',
-                      reconcileMode === 'total'
-                        ? 'bg-vraccent-primary text-white'
-                        : 'text-vrtext-secondary hover:text-vrtext-primary'
-                    )}
-                  >
-                    总对账
-                  </button>
-                </div>
+                {canReconcile && (
+                  <div className="flex items-center gap-1 bg-vrbg-surface rounded-lg p-1">
+                    <button
+                      onClick={() => setReconcileMode('daily')}
+                      className={cn(
+                        'px-3 py-1 rounded text-vr-body-sm transition-colors',
+                        reconcileMode === 'daily'
+                          ? 'bg-vraccent-primary text-white'
+                          : 'text-vrtext-secondary hover:text-vrtext-primary'
+                      )}
+                    >
+                      按日对账
+                    </button>
+                    <button
+                      onClick={() => setReconcileMode('total')}
+                      className={cn(
+                        'px-3 py-1 rounded text-vr-body-sm transition-colors',
+                        reconcileMode === 'total'
+                          ? 'bg-vraccent-primary text-white'
+                          : 'text-vrtext-secondary hover:text-vrtext-primary'
+                      )}
+                    >
+                      总对账
+                    </button>
+                  </div>
+                )}
 
-                {reconcileMode === 'daily' && (
+                {(reconcileMode === 'daily' || canViewReports) && (
                   <div className="flex items-center gap-2">
                     <Calendar className="w-4 h-4 text-vrtext-muted" />
                     <input
@@ -1052,22 +1113,26 @@ export default function Finance() {
                   </div>
                 )}
 
-                <button
-                  onClick={() => refetchReconcile()}
-                  className="h-9 px-4 rounded-lg bg-vraccent-primary/10 border border-vraccent-primary/30 text-vr-body-sm text-vraccent-primary hover:bg-vraccent-primary/20 transition-colors"
-                >
-                  对账校验
-                </button>
-                <button
-                  onClick={() => generateReportMut.mutate(dailyDate)}
-                  disabled={generateReportMut.isPending}
-                  className="h-9 px-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-vr-body-sm text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
-                >
-                  {generateReportMut.isPending ? '生成中...' : '生成报表'}
-                </button>
+                {canReconcile && (
+                  <button
+                    onClick={() => refetchReconcile()}
+                    className="h-9 px-4 rounded-lg bg-vraccent-primary/10 border border-vraccent-primary/30 text-vr-body-sm text-vraccent-primary hover:bg-vraccent-primary/20 transition-colors"
+                  >
+                    对账校验
+                  </button>
+                )}
+                {canViewReports && (
+                  <button
+                    onClick={() => generateReportMut.mutate(dailyDate)}
+                    disabled={generateReportMut.isPending}
+                    className="h-9 px-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-vr-body-sm text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                  >
+                    {generateReportMut.isPending ? '生成中...' : '生成报表'}
+                  </button>
+                )}
               </div>
 
-              <ReconcileAlertConfigPanel />
+              {canReconcile && <ReconcileAlertConfigPanel canWriteSettings={canWriteSettings} />}
 
               {/* Reconcile result */}
               {reconcileData && (
@@ -1166,7 +1231,7 @@ export default function Finance() {
               )}
 
               {/* Daily report cards */}
-              {reconcileMode === 'daily' ? (
+              {canViewReports ? (reconcileMode === 'daily' ? (
                 dailyReport ? (
                   <div className="space-y-4">
                     <div className={cn(
@@ -1202,7 +1267,7 @@ export default function Finance() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        {dailyReport.status !== 'LOCKED' && (
+                        {canViewReports && dailyReport.status !== 'LOCKED' && (
                           <button
                             onClick={() => generateReportMut.mutate(dailyDate)}
                             disabled={generateReportMut.isPending}
@@ -1211,7 +1276,7 @@ export default function Finance() {
                             {generateReportMut.isPending ? '生成中...' : dailyReport.generated ? '重新生成' : '生成报表'}
                           </button>
                         )}
-                        {dailyReport.generated && dailyReport.status !== 'LOCKED' && (
+                        {canAdjustFinance && dailyReport.generated && dailyReport.status !== 'LOCKED' && (
                           <button
                             onClick={() => {
                               if (window.confirm('确认该日报表无异常并锁定日结？锁定后如需重跑必须先重开。')) {
@@ -1224,7 +1289,7 @@ export default function Finance() {
                             {confirmDailyReportMut.isPending ? '确认中...' : '确认日结'}
                           </button>
                         )}
-                        {dailyReport.status === 'LOCKED' && (
+                        {canAdjustFinance && dailyReport.status === 'LOCKED' && (
                           <button
                             onClick={() => {
                               const reason = window.prompt('请输入重开日结原因（至少 4 个字）')
@@ -1294,8 +1359,20 @@ export default function Finance() {
                           <p className="text-vr-body font-semibold text-vrtext-secondary">¥{(dailyReport.couponDiscountCost / 100).toLocaleString()}</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
-                          <p className="text-vr-caption text-vrtext-tertiary">营业外收入-违约金</p>
-                          <p className="text-vr-body font-semibold text-vrwarning">¥{((dailyReport.noShowPenalty || 0) / 100).toLocaleString()}</p>
+                          <p className="text-vr-caption text-vrtext-tertiary">营业外收入合计</p>
+                          <p className="text-vr-body font-semibold text-vrwarning">¥{((dailyReport.otherIncomeTotal || 0) / 100).toLocaleString()}</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">改签手续费</p>
+                          <p className="text-vr-body font-semibold text-vrtext-secondary">¥{((dailyReport.rescheduleFeeIncome || 0) / 100).toLocaleString()}</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">取消费</p>
+                          <p className="text-vr-body font-semibold text-vrtext-secondary">¥{((dailyReport.cancelFeeIncome || 0) / 100).toLocaleString()}</p>
+                        </div>
+                        <div className="bg-vrbg-surface rounded-lg p-3">
+                          <p className="text-vr-caption text-vrtext-tertiary">历史爽约违约金</p>
+                          <p className="text-vr-body font-semibold text-vrtext-secondary">¥{((dailyReport.noShowPenalty || 0) / 100).toLocaleString()}</p>
                         </div>
                       </div>
                     </div>
@@ -1489,11 +1566,15 @@ export default function Finance() {
                 <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-12 text-center text-vrtext-tertiary text-vr-body-sm">
                   加载中...
                 </div>
+              )) : (
+                <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-12 text-center text-vrtext-tertiary text-vr-body-sm">
+                  当前角色没有财务报表权限。
+                </div>
               )}
             </motion.div>
           )}
 
-          {activeTab === 'recon' && reconSubTab === 'exceptions' && (
+          {canReconcile && activeTab === 'recon' && reconSubTab === 'exceptions' && (
             <motion.div
               key="recon-exceptions"
               initial={{ opacity: 0, y: 10 }}
@@ -1532,7 +1613,7 @@ export default function Finance() {
                 <h2 className="text-lg font-semibold text-vrtext-primary">对账处理台</h2>
                 <p className="text-vr-body-sm text-vrtext-tertiary mt-1">差异定位、处理方案、调整记录与审计追踪</p>
               </div>
-              <ReconExceptionsPanel />
+              <ReconExceptionsPanel canAdjust={canAdjustFinance} />
             </motion.div>
           )}
 
@@ -1550,7 +1631,11 @@ export default function Finance() {
                 <h2 className="text-lg font-semibold text-vrtext-primary">设备日志管理</h2>
                 <p className="text-vr-body-sm text-vrtext-tertiary mt-1">头显设备运行日志录入与硬件对账统计</p>
               </div>
-              <DeviceLogPanel venues={venues} />
+              <DeviceLogPanel
+                venues={venues}
+                canManage={canManageDeviceLogs}
+                canDelete={canDeleteDeviceLogs}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -1703,6 +1788,7 @@ export default function Finance() {
         fixReason={fixReason}
         setFixReason={setFixReason}
         isFixPending={fixReconcileDiffMut.isPending}
+        canFix={canAdjustFinance}
         onSubmitFix={(params) => fixReconcileDiffMut.mutate(params)}
       />
 

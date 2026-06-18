@@ -122,7 +122,7 @@ function isSystemException(e: ReconException): boolean {
   return false
 }
 
-export default function ReconExceptionsPanel() {
+export default function ReconExceptionsPanel({ canAdjust = false }: { canAdjust?: boolean }) {
   const today = format(new Date(), 'yyyy-MM-dd')
   // 默认范围：本月1号到今天
   const now = new Date()
@@ -556,7 +556,7 @@ export default function ReconExceptionsPanel() {
         </div>
       )}
 
-      <ReconConfigPanel />
+      <ReconConfigPanel canAdjust={canAdjust} />
 
       {apiError && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-red-400 text-sm">
@@ -572,7 +572,7 @@ export default function ReconExceptionsPanel() {
       <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-vr-body-sm font-medium text-vrtext-primary">对账批次</h3>
-          {batches && batches.length > 0 && (
+          {canAdjust && batches && batches.length > 0 && (
             <button
               onClick={() => {
                 if (window.confirm('确定要清空所有对账批次和异常记录吗？此操作不可恢复。')) {
@@ -722,7 +722,7 @@ export default function ReconExceptionsPanel() {
                         {hw?.summary || exc.handleRemark || '-'}
                       </td>
                       <td className="py-2.5 px-3 text-right">
-                        {isPending ? (
+                        {isPending && canAdjust ? (
                           <div className="flex items-center justify-end gap-1">
                             {exc.exceptionType === 'LONG' && (
                               <>

@@ -1,6 +1,6 @@
 import { Router } from 'express'
-import { authenticate, requireRole } from '../middleware/auth'
-import { requirePermission } from '../middleware/rbac'
+import { authenticate } from '../middleware/auth'
+import { requireAnyPermission, requirePermission } from '../middleware/rbac'
 import {
   createRole,
   listRoles,
@@ -15,13 +15,12 @@ import {
 const router = Router()
 
 router.use(authenticate)
-router.use(requireRole('SUPER_ADMIN', 'ADMIN'))
 
-router.post('/', requirePermission('setting:write'), createRoleValidators, createRole)
-router.get('/', listRoles)
-router.get('/permissions', listPermissions)
-router.put('/:id', requirePermission('setting:write'), updateRoleValidators, updateRole)
-router.put('/:id/permissions', requirePermission('setting:write'), updateRolePermissionsValidators, updateRole)
-router.delete('/:id', requirePermission('setting:write'), deleteRole)
+router.post('/', requirePermission('role:manage'), createRoleValidators, createRole)
+router.get('/', requireAnyPermission('role:read', 'account:read', 'account:manage'), listRoles)
+router.get('/permissions', requireAnyPermission('role:read', 'role:manage'), listPermissions)
+router.put('/:id', requirePermission('role:manage'), updateRoleValidators, updateRole)
+router.put('/:id/permissions', requirePermission('role:manage'), updateRolePermissionsValidators, updateRole)
+router.delete('/:id', requirePermission('role:manage'), deleteRole)
 
 export default router

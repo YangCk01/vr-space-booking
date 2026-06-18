@@ -33,6 +33,12 @@ export async function expirePendingOrders(now = new Date()) {
 
         if (updated.count === 0) return
 
+        // 同步取消该订单下的子订单（团购父订单过期时同步处理）
+        await tx.order.updateMany({
+          where: { parentOrderId: order.id, status: 'PENDING' },
+          data: { status: 'CANCELLED', cancelledAt: now },
+        })
+
         // 恢复优惠券（如果已被预占）
         if (order.userCouponId) {
           const coupon = await tx.userCoupon.findUnique({ where: { id: order.userCouponId } })

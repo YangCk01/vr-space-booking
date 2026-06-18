@@ -1,8 +1,32 @@
 import { useNavigate } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
 import { motion } from 'framer-motion'
+import type { Venue } from '@/api/venues'
 import { getImageUrl } from '@/lib/imageUrl'
+import { saveSelectedVenue } from '@/lib/selectedVenue'
 import { cn } from '@/lib/utils'
+
+function isWithinMaintenanceWindow(venue: Venue): boolean {
+  if (venue.status !== 'MAINTENANCE') return false
+  if (!venue.maintenanceStartDate || !venue.maintenanceEndDate || !venue.maintenanceStartTime || !venue.maintenanceEndTime) {
+    return false
+  }
+  const now = new Date()
+  const dateStr = now.toISOString().slice(0, 10)
+  const timeStr = now.toTimeString().slice(0, 5)
+  const startDate = venue.maintenanceStartDate.slice(0, 10)
+  const endDate = venue.maintenanceEndDate.slice(0, 10)
+  if (dateStr < startDate || dateStr > endDate) return false
+  if (dateStr === startDate && timeStr < venue.maintenanceStartTime) return false
+  if (dateStr === endDate && timeStr > venue.maintenanceEndTime) return false
+  return true
+}
+
+function getEffectiveStatus(venue: Partial<Venue>): string {
+  if (venue.status === 'DISABLED') return 'DISABLED'
+  if (isWithinMaintenanceWindow(venue as Venue)) return 'MAINTENANCE'
+  return venue.status === 'IN_USE' ? 'IN_USE' : 'FREE'
+}
 
 interface VenueCardProps {
   id: string
@@ -14,6 +38,8 @@ interface VenueCardProps {
   status?: string
   index?: number
   gameId?: string | null
+  groupBuy?: string | null
+  venue?: Pick<Venue, 'id' | 'name'> & Partial<Venue>
 }
 
 export default function VenueCard({
@@ -26,6 +52,8 @@ export default function VenueCard({
   status,
   index = 0,
   gameId,
+  groupBuy,
+  venue,
 }: VenueCardProps) {
   const navigate = useNavigate()
 
@@ -35,14 +63,22 @@ export default function VenueCard({
     MAINTENANCE: { text: '维护中', color: 'text-[var(--warning)]' },
     DISABLED: { text: '暂停', color: 'text-[var(--text-muted)]' },
   }
-  const s = statusMap[status || 'FREE'] || statusMap.FREE
+  const effectiveStatus = venue ? getEffectiveStatus(venue) : (status || 'FREE')
+  const s = statusMap[effectiveStatus] || statusMap.FREE
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.08, duration: 0.35, ease: [0, 0, 0.2, 1] }}
-      onClick={() => navigate(gameId ? `/venue/${id}?gameId=${gameId}` : `/venue/${id}`)}
+      onClick={() => {
+        saveSelectedVenue(venue || { id, name, theme, image, area, capacity, status })
+        const params = new URLSearchParams()
+        if (gameId) params.set('gameId', gameId)
+        if (groupBuy) params.set('groupBuy', groupBuy)
+        const qs = params.toString()
+        navigate(qs ? `/venue/${id}?${qs}` : `/venue/${id}`)
+      }}
       className={cn(
         'relative flex items-center gap-4 p-3 rounded-2xl border transition-all duration-300 cursor-pointer',
         'bg-white border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)]',

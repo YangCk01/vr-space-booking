@@ -1,12 +1,13 @@
 import { Router } from 'express'
-import { authenticate, requireRole } from '../middleware/auth'
+import { authenticate } from '../middleware/auth'
+import { requirePermission } from '../middleware/rbac'
 import { listAuditLogs } from '../services/auditLogService'
 import { success, error } from '../utils/response'
 import { prisma } from '../utils/prisma'
 
 const router = Router()
 
-router.use(authenticate, requireRole('SUPER_ADMIN', 'FINANCE'))
+router.use(authenticate, requirePermission('audit:read'))
 
 router.get('/', async (req, res) => {
   try {

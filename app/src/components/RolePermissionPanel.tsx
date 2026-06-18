@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Shield,
@@ -12,6 +13,7 @@ import {
   Lock,
   Pencil,
   AlertTriangle,
+  Users,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
@@ -44,18 +46,25 @@ const roleLabels: Record<string, string> = {
 }
 
 const moduleLabels: Record<string, string> = {
+  account: '账号',
   approval: '审批',
   audit: '审计',
+  booking: '排场',
+  content: '内容',
   finance: '财务',
+  'group-buy': '团购',
   marketing: '营销',
   order: '订单',
+  role: '角色',
   setting: '系统设置',
   user: '会员与用户',
-  venue: '场地与内容',
+  venue: '场地',
 }
 
 const highRiskPermissionCodes = new Set([
   'setting:write',
+  'account:manage',
+  'role:manage',
   'finance:adjust',
   'approval:approve',
   'audit:read',
@@ -161,6 +170,7 @@ function PermissionMatrix({
 
 export function RolePermissionPanel() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const currentUser = useAuthStore((s) => s.user)
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -170,10 +180,13 @@ export function RolePermissionPanel() {
   const [editPerms, setEditPerms] = useState<Record<string, string[]>>({})
   const [editRoleOpen, setEditRoleOpen] = useState(false)
   const [editRoleForm, setEditRoleForm] = useState<{ id: string; name: string; description: string } | null>(null)
-  const canViewRoles = Boolean(currentUser && ['SUPER_ADMIN', 'ADMIN'].includes(currentUser.role))
+  const canViewRoles = Boolean(
+    currentUser?.role === 'SUPER_ADMIN' ||
+    currentUser?.permissions?.includes('role:read')
+  )
   const canManageRoles = Boolean(
     currentUser?.role === 'SUPER_ADMIN' ||
-    (currentUser?.role === 'ADMIN' && currentUser.permissions?.includes('setting:write'))
+    currentUser?.permissions?.includes('role:manage')
   )
 
   const { data: roles, isLoading } = useQuery({
@@ -379,11 +392,22 @@ export function RolePermissionPanel() {
                           )}
                         </div>
                         <p className="text-vr-caption text-vrtext-tertiary mt-0.5">
-                          {role.description || '暂无描述'} · {role.permissions.length} 项权限
+                          {role.description || '暂无描述'} · {role.permissions.length} 项权限 · {role.userCount || 0} 位账号
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          navigate(`/accounts?roleId=${role.id}`)
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-vr-caption text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
+                        title="查看已绑定账号"
+                      >
+                        <Users className="w-3.5 h-3.5" />
+                        查看账号
+                      </button>
                       {canManageRoles && !role.isSystem && (
                         <>
                           <button

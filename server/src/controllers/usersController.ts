@@ -3,6 +3,50 @@ import { param, body, validationResult } from 'express-validator'
 import { prisma } from '../utils/prisma'
 import { success, error, paginated } from '../utils/response'
 
+const STAFF_LEGACY_ROLES = ['OPERATOR', 'FINANCE', 'MANAGER', 'ADMIN']
+
+async function resolveStaffRoleIds(primaryRole: string, roleIds?: string[]) {
+  const requested = Array.from(new Set([...(roleIds || []), primaryRole].filter(Boolean)))
+  const roles = await prisma.role.findMany({
+    where: {
+      OR: [
+        { id: { in: requested } },
+        { name: { in: requested } },
+      ],
+    },
+    select: { id: true, name: true },
+  })
+
+  const primary = roles.find((role) => role.name === primaryRole)
+  if (!primary) {
+    throw new Error('主角色不存在，请先初始化权限角色')
+  }
+
+  if (roles.some((role) => role.name === 'SUPER_ADMIN')) {
+    throw new Error('员工账号不能分配主账号角色')
+  }
+
+  const foundIds = new Set(roles.map((role) => role.id))
+  const missing = (roleIds || []).filter((roleId) => !foundIds.has(roleId))
+  if (missing.length > 0) {
+    throw new Error('部分权限角色不存在')
+  }
+
+  return Array.from(new Set([primary.id, ...roles.map((role) => role.id)]))
+}
+
+function formatStaffUser(user: any) {
+  if (!user) return null
+  return {
+    ...user,
+    roles: user.roles || [],
+    managedVenues: user.managedVenues?.map((mv: any) => ({
+      id: mv.venue.id,
+      name: mv.venue.name,
+    })) || [],
+  }
+}
+
 export const updateValidators = [
   param('id').notEmpty().withMessage('ID 不能为空'),
   body('name').optional().notEmpty().withMessage('姓名不能为空'),
@@ -276,6 +320,7 @@ export async function listStaff(req: Request, res: Response) {
     const search = req.query.search as string | undefined
     const status = req.query.status as string | undefined
     const role = req.query.role as string | undefined
+    const roleId = req.query.roleId as string | undefined
     const page = (req.query.page as string) || '1'
     const pageSize = (req.query.pageSize as string) || '20'
     const pageNum = parseInt(page, 10)
@@ -290,6 +335,9 @@ export async function listStaff(req: Request, res: Response) {
     }
     if (role && role !== 'all') {
       where.role = role.toUpperCase()
+    }
+    if (roleId) {
+      where.roles = { some: { id: roleId } }
     }
     if (search) {
       where.OR = [
@@ -306,6 +354,15 @@ export async function listStaff(req: Request, res: Response) {
         take: sizeNum,
         orderBy: { createdAt: 'desc' },
         include: {
+          roles: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              isSystem: true,
+            },
+            orderBy: { name: 'asc' },
+          },
           managedVenues: {
             include: {
               venue: {
@@ -318,14 +375,7 @@ export async function listStaff(req: Request, res: Response) {
       prisma.user.count({ where }),
     ])
 
-    // 格式化 managedVenues 为 { id, name } 数组，便于前端直接使用
-    const formattedUsers = users.map((u) => ({
-      ...u,
-      managedVenues: u.managedVenues?.map((mv) => ({
-        id: mv.venue.id,
-        name: mv.venue.name,
-      })) || [],
-    }))
+    const formattedUsers = users.map(formatStaffUser)
 
     return paginated(res, formattedUsers, pageNum, sizeNum, total, '获取员工列表成功')
   } catch (err) {
@@ -335,14 +385,13 @@ export async function listStaff(req: Request, res: Response) {
 
 export async function createStaff(req: Request, res: Response) {
   try {
-    const { phone, name, password, email, role, status, venueIds } = req.body
+    const { phone, name, password, email, role, roleIds, status, venueIds } = req.body
 
     if (!phone || !name || !role) {
       return error(res, '手机号、姓名和角色不能为空', 400)
     }
 
-    const validRoles = ['OPERATOR', 'FINANCE', 'MANAGER', 'ADMIN']
-    if (!validRoles.includes(role)) {
+    if (!STAFF_LEGACY_ROLES.includes(role)) {
       return error(res, '无效的角色', 400)
     }
 
@@ -358,7 +407,7 @@ export async function createStaff(req: Request, res: Response) {
     const bcrypt = await import('bcryptjs')
     const hashedPassword = await bcrypt.default.hash(password || '123456', 12)
 
-    const roleRecord = await prisma.role.findUnique({ where: { name: role } })
+    const resolvedRoleIds = await resolveStaffRoleIds(role, Array.isArray(roleIds) ? roleIds : undefined)
 
     const user = await prisma.$transaction(async (tx) => {
       const newUser = await tx.user.create({
@@ -369,7 +418,7 @@ export async function createStaff(req: Request, res: Response) {
           email: email || null,
           role,
           status: status?.toUpperCase() || 'ACTIVE',
-          ...(roleRecord ? { roles: { connect: { id: roleRecord.id } } } : {}),
+          roles: { connect: resolvedRoleIds.map((id) => ({ id })) },
         },
       })
 
@@ -390,6 +439,15 @@ export async function createStaff(req: Request, res: Response) {
     const userWithVenues = await prisma.user.findUnique({
       where: { id: user.id },
       include: {
+        roles: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            isSystem: true,
+          },
+          orderBy: { name: 'asc' },
+        },
         managedVenues: {
           include: {
             venue: { select: { id: true, name: true } },
@@ -398,13 +456,7 @@ export async function createStaff(req: Request, res: Response) {
       },
     })
 
-    const formattedUser = {
-      ...userWithVenues,
-      managedVenues: userWithVenues?.managedVenues?.map((mv: any) => ({
-        id: mv.venue.id,
-        name: mv.venue.name,
-      })) || [],
-    }
+    const formattedUser = formatStaffUser(userWithVenues)
 
     return success(res, formattedUser, '员工创建成功', 201)
   } catch (err) {
@@ -415,7 +467,7 @@ export async function createStaff(req: Request, res: Response) {
 export async function updateStaff(req: Request, res: Response) {
   try {
     const id = req.params.id as string
-    const { name, phone, role, status, venueIds } = req.body
+    const { name, phone, role, roleIds, status, venueIds } = req.body
 
     const user = await prisma.user.findUnique({ where: { id } })
     if (!user) {
@@ -426,8 +478,7 @@ export async function updateStaff(req: Request, res: Response) {
       return error(res, '不能修改超级管理员', 403)
     }
 
-    const validRoles = ['OPERATOR', 'FINANCE', 'MANAGER', 'ADMIN']
-    if (role !== undefined && !validRoles.includes(role)) {
+    if (role !== undefined && !STAFF_LEGACY_ROLES.includes(role)) {
       return error(res, '无效的角色', 400)
     }
 
@@ -442,11 +493,10 @@ export async function updateStaff(req: Request, res: Response) {
       data.password = await bcrypt.default.hash(req.body.password, 12)
     }
 
-    let roleConnect: string | undefined
-    if (role !== undefined) {
-      const newRole = await prisma.role.findUnique({ where: { name: role } })
-      if (newRole) roleConnect = newRole.id
-    }
+    const nextPrimaryRole = role !== undefined ? role : user.role
+    const resolvedRoleIds = (role !== undefined || roleIds !== undefined)
+      ? await resolveStaffRoleIds(nextPrimaryRole, Array.isArray(roleIds) ? roleIds : undefined)
+      : undefined
 
     const updated = await prisma.$transaction(async (tx) => {
       if (user.role === 'MANAGER' && role && role !== 'MANAGER') {
@@ -479,13 +529,22 @@ export async function updateStaff(req: Request, res: Response) {
         where: { id },
         data: {
           ...data,
-          ...(roleConnect ? {
+          ...(resolvedRoleIds ? {
             roles: {
-              set: [{ id: roleConnect }],
+              set: resolvedRoleIds.map((roleId) => ({ id: roleId })),
             },
           } : {}),
         },
         include: {
+          roles: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              isSystem: true,
+            },
+            orderBy: { name: 'asc' },
+          },
           managedVenues: {
             include: {
               venue: {
@@ -497,14 +556,7 @@ export async function updateStaff(req: Request, res: Response) {
       })
     })
 
-    // 格式化 managedVenues 为 { id, name } 数组
-    const formattedUpdated = {
-      ...updated,
-      managedVenues: updated.managedVenues?.map((mv: any) => ({
-        id: mv.venue.id,
-        name: mv.venue.name,
-      })) || [],
-    }
+    const formattedUpdated = formatStaffUser(updated)
 
     return success(res, formattedUpdated, '员工更新成功')
   } catch (err) {

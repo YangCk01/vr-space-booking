@@ -1,6 +1,6 @@
 import { Router } from 'express'
-import { authenticate, requireAdmin } from '../middleware/auth'
 import { requirePermission } from '../middleware/rbac'
+import { authenticate } from '../middleware/auth'
 import * as controller from '../controllers/couponEffectController'
 
 const router = Router()

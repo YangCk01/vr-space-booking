@@ -90,6 +90,7 @@ export interface PagePublicSettings {
   cHomeHotTitle: string
   cHomeHotLinkText: string
   cHomeCustomModules: ContentCard[]
+  cHomeSectionOrder: { key: string; enabled: boolean }[]
   cProfileHelpEnabled: boolean
   cProfileHelpTitle: string
   cProfileHelpSubtitle: string
@@ -105,6 +106,7 @@ export interface PagePublicSettings {
   cProfileContactHours: string
   cProfileContactQr: string
   cProfileContactMapLinks: MapLink[]
+  cGroupBookingRules: string
 }
 
 export async function getPagePublicSettings() {

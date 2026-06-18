@@ -25,6 +25,8 @@ import { getBookings, createBooking, checkConflict } from '@/api/bookings'
 import type { Booking } from '@/api/bookings'
 import { createOrder } from '@/api/orders'
 import { buildMemberLevelsFromConfig } from '@/lib/memberLevels'
+import { useAuthStore } from '@/stores/authStore'
+import { hasPermission } from '@/lib/permissions'
 import {
   format,
   startOfWeek,
@@ -86,6 +88,44 @@ function getEventDateStr(dateValue: string | Date): string {
     return dateValue.slice(0, 10)
   }
   return format(dateValue, 'yyyy-MM-dd')
+}
+
+function buildMaintenanceEvents(
+  venues: Venue[],
+  dateRange: { startDate: string; endDate: string },
+) {
+  const events: any[] = []
+  for (const venue of venues) {
+    if (venue.status !== 'MAINTENANCE') continue
+    if (!venue.maintenanceStartDate || !venue.maintenanceEndDate || !venue.maintenanceStartTime || !venue.maintenanceEndTime) continue
+
+    const maintenanceStartDate = venue.maintenanceStartDate.slice(0, 10)
+    const maintenanceEndDate = venue.maintenanceEndDate.slice(0, 10)
+    const rangeStart = maintenanceStartDate > dateRange.startDate ? maintenanceStartDate : dateRange.startDate
+    const rangeEnd = maintenanceEndDate < dateRange.endDate ? maintenanceEndDate : dateRange.endDate
+    if (rangeStart > rangeEnd) continue
+
+    let day = new Date(`${rangeStart}T00:00:00`)
+    const end = new Date(`${rangeEnd}T00:00:00`)
+    while (day <= end) {
+      const dateStr = format(day, 'yyyy-MM-dd')
+      events.push({
+        id: `maintenance-${venue.id}-${dateStr}`,
+        venueId: venue.id,
+        venue,
+        type: 'MAINTENANCE',
+        status: 'MAINTENANCE',
+        date: dateStr,
+        startTime: venue.maintenanceStartTime,
+        endTime: venue.maintenanceEndTime,
+        personName: '场地维护',
+        personCount: 0,
+        game: { title: '场地维护' },
+      })
+      day = addDays(day, 1)
+    }
+  }
+  return events
 }
 
 /* ─── Event type config ─── */
@@ -212,6 +252,8 @@ function computeEventLayout(events: any[]) {
 }
 
 export default function Booking() {
+  const currentUser = useAuthStore((s) => s.user)
+  const canManageBookings = hasPermission(currentUser, 'booking:manage')
   const [view, setView] = useState<ViewType>('day')
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedVenue, setSelectedVenue] = useState('all')
@@ -273,7 +315,15 @@ export default function Booking() {
       pageSize: 500,
     }),
   })
-  const allEvents = (bookingData?.data || []).filter((b: Booking) => b.status !== 'CANCELLED')
+  const bookingEvents = (bookingData?.data || []).filter((b: Booking) => b.status !== 'CANCELLED')
+  const maintenanceEvents = useMemo(
+    () => buildMaintenanceEvents(venues, dateRange),
+    [venues, dateRange],
+  )
+  const allEvents = useMemo(
+    () => [...bookingEvents, ...maintenanceEvents],
+    [bookingEvents, maintenanceEvents],
+  )
 
   /* ─── Fetch games ─── */
   const { data: gamesData } = useQuery({
@@ -589,7 +639,7 @@ export default function Booking() {
         </motion.div>
 
         {/* New booking button */}
-        {(() => {
+        {canManageBookings && (() => {
           const todayStr = format(new Date(), 'yyyy-MM-dd')
           const currentDateStr = format(currentDate, 'yyyy-MM-dd')
           const isPastDate = currentDateStr < todayStr
@@ -775,6 +825,7 @@ export default function Booking() {
                       return venueEvents.map((event, idx) => {
                         const cfg = eventTypeConfig[event.type]
                         const EventIcon = cfg.icon
+                        const isMaintenanceEvent = event.type === 'MAINTENANCE' || event.type === 'maintenance'
                         const lo = layout.get(event.id)
                         const col = lo?.col ?? 0
                         const total = lo?.total ?? 1
@@ -824,7 +875,9 @@ export default function Booking() {
                               {event.startTime}-{event.endTime}
                             </div>
                             <div className={cn("text-vr-caption mt-0.5 truncate", event.status === 'NO_SHOW' ? 'text-gray-400' : 'text-white/70')}>
-                              {event.game?.title || 'VR体验'} · {event.personCount || 1}人
+                              {isMaintenanceEvent
+                                ? '场地维护'
+                                : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
                             </div>
                             {/* Hover tooltip */}
                             <div className="hidden group-hover:flex absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[40] flex-col px-5 py-4 rounded-2xl bg-slate-800/95 backdrop-blur-sm border border-slate-500 shadow-2xl min-w-[180px]">
@@ -839,7 +892,9 @@ export default function Booking() {
                                 <div className="text-vr-caption text-slate-400 mt-1">{event.personName}</div>
                               )}
                               <div className="text-vr-caption text-slate-400 mt-1">
-                                {event.game?.title || 'VR体验'} · {event.personCount || 1}人
+                                {isMaintenanceEvent
+                                  ? '场地维护中，不可新建预约'
+                                  : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
                               </div>
                               <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-800/95 border-r border-b border-slate-500 rotate-45" />
                             </div>
@@ -853,7 +908,7 @@ export default function Booking() {
                       const todayStr = format(new Date(), 'yyyy-MM-dd')
                       const currentDateStr = format(currentDate, 'yyyy-MM-dd')
                       const isPastDate = currentDateStr < todayStr
-                      if (isPastDate) return null
+                      if (isPastDate || !canManageBookings) return null
                       return (
                         <div
                           className="absolute inset-0 z-10 opacity-0 hover:opacity-100 transition-opacity bg-white/5 cursor-pointer flex items-center justify-center"
@@ -951,6 +1006,7 @@ export default function Booking() {
                         .map((event, idx) => {
                           const cfg = eventTypeConfig[event.type]
                           const EventIcon = cfg.icon
+                          const isMaintenanceEvent = event.type === 'MAINTENANCE' || event.type === 'maintenance'
                           const lo = layout.get(event.id)
                           const subCol = lo?.col ?? 0
                           const subTotal = lo?.total ?? 1
@@ -992,7 +1048,9 @@ export default function Booking() {
                                 {event.startTime}-{event.endTime}
                               </div>
                               <div className={cn("text-vr-caption truncate", event.status === 'NO_SHOW' ? 'text-gray-400' : 'text-white/70')}>
-                                {event.game?.title || 'VR体验'} · {event.personCount || 1}人
+                                {isMaintenanceEvent
+                                  ? '场地维护'
+                                  : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
                               </div>
                               {/* Hover tooltip */}
                               <div className="hidden group-hover:flex absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[40] flex-col px-5 py-4 rounded-2xl bg-slate-800/95 backdrop-blur-sm border border-slate-500 shadow-2xl min-w-[180px]">
@@ -1007,7 +1065,9 @@ export default function Booking() {
                                   <div className="text-vr-caption text-slate-400 mt-1">{event.personName}</div>
                                 )}
                                 <div className="text-vr-caption text-slate-400 mt-1">
-                                  {event.game?.title || 'VR体验'} · {event.personCount || 1}人
+                                  {isMaintenanceEvent
+                                    ? '场地维护中，不可新建预约'
+                                    : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
                                 </div>
                                 <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-800/95 border-r border-b border-slate-500 rotate-45" />
                               </div>
@@ -1031,6 +1091,7 @@ export default function Booking() {
                     return dayEvents.map((event, idx) => {
                       const cfg = eventTypeConfig[event.type]
                       const EventIcon = cfg.icon
+                      const isMaintenanceEvent = event.type === 'MAINTENANCE' || event.type === 'maintenance'
                       const venueIdx = venues.findIndex((v) => v.id === event.venueId)
                       const baseColWidth = 100 / 4
                       const baseLeft = venueIdx * baseColWidth
@@ -1075,7 +1136,9 @@ export default function Booking() {
                             {event.startTime}-{event.endTime}
                           </div>
                           <div className={cn("text-vr-caption truncate", event.status === 'NO_SHOW' ? 'text-gray-400' : 'text-white/70')}>
-                            {event.game?.title || 'VR体验'} · {event.personCount || 1}人
+                            {isMaintenanceEvent
+                              ? '场地维护'
+                              : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
                           </div>
                           {/* Hover tooltip */}
                           <div className="hidden group-hover:flex absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[40] flex-col px-5 py-4 rounded-2xl bg-slate-800/95 backdrop-blur-sm border border-slate-500 shadow-2xl min-w-[180px]">
@@ -1090,7 +1153,9 @@ export default function Booking() {
                               <div className="text-vr-caption text-slate-400 mt-1">{event.personName}</div>
                             )}
                             <div className="text-vr-caption text-slate-400 mt-1">
-                              {event.game?.title || 'VR体验'} · {event.personCount || 1}人
+                              {isMaintenanceEvent
+                                ? '场地维护中，不可新建预约'
+                                : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
                             </div>
                             <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-800/95 border-r border-b border-slate-500 rotate-45" />
                           </div>
@@ -1173,6 +1238,7 @@ export default function Booking() {
                     {/* Events for today */}
                     {dayEvents.slice(0, 3).map((event) => {
                       const cfg = eventTypeConfig[event.type]
+                      const isMaintenanceEvent = event.type === 'MAINTENANCE' || event.type === 'maintenance'
                       return (
                         <div
                           key={event.id}
@@ -1198,7 +1264,9 @@ export default function Booking() {
                           {/* Hover tooltip */}
                           <div className="hidden group-hover:flex absolute bottom-full left-0 mb-3 z-[40] flex-col px-4 py-3 rounded-xl bg-slate-800/95 backdrop-blur-sm border border-slate-500 shadow-2xl min-w-max">
                             <span className="text-vr-body-sm text-slate-200 whitespace-nowrap">
-                              {event.startTime} {cfg.label} {event.personName ? `- ${event.personName}` : ''} · {event.game?.title || 'VR体验'} · {event.personCount || 1}人
+                              {isMaintenanceEvent
+                                ? `${event.startTime}-${event.endTime} ${cfg.label} · 场地维护`
+                                : `${event.startTime} ${cfg.label} ${event.personName ? `- ${event.personName}` : ''} · ${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
                             </span>
                             <div className="absolute -bottom-2 left-3 w-4 h-4 bg-slate-800/95 border-r border-b border-slate-500 rotate-45" />
                           </div>

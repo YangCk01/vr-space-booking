@@ -7,6 +7,8 @@ export const createValidators = [
   body('title').notEmpty().withMessage('标题不能为空'),
   body('price').optional().isInt({ min: 0 }).withMessage('价格必须为非负整数'),
   body('duration').optional().isInt({ min: 1 }).withMessage('时长必须为正整数'),
+  body('minPlayers').optional().isInt({ min: 1 }).withMessage('最少人数必须为正整数'),
+  body('maxPlayers').optional().isInt({ min: 1 }).withMessage('最多人数必须为正整数'),
   body('sortOrder').optional().isInt().withMessage('排序必须为整数'),
 ]
 
@@ -35,7 +37,16 @@ export async function getById(req: Request, res: Response) {
     if (!game) {
       return error(res, '游戏内容不存在', 404)
     }
-    return success(res, game)
+    // 统计该游戏历史实际预约人数（不含已取消）
+    const bookingAggregate = await prisma.booking.aggregate({
+      where: {
+        gameId: id,
+        status: { not: 'CANCELLED' },
+      },
+      _sum: { personCount: true },
+    })
+    const bookedPeopleCount = bookingAggregate._sum.personCount || 0
+    return success(res, { ...game, bookedPeopleCount })
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -48,7 +59,7 @@ export async function create(req: Request, res: Response) {
   }
 
   try {
-    const { title, subtitle, description, notice, coverImage, videoUrl, price, duration, tags, detailImages, status, sortOrder } = req.body
+    const { title, subtitle, description, notice, coverImage, videoUrl, price, duration, minPlayers, maxPlayers, tags, detailImages, status, sortOrder } = req.body
     const game = await prisma.game.create({
       data: {
         title,
@@ -59,6 +70,8 @@ export async function create(req: Request, res: Response) {
         videoUrl: videoUrl || null,
         price: price !== undefined ? parseInt(price) : 0,
         duration: duration !== undefined ? parseInt(duration) : 30,
+        minPlayers: minPlayers !== undefined ? parseInt(minPlayers) : 1,
+        maxPlayers: maxPlayers !== undefined ? parseInt(maxPlayers) : 4,
         tags: tags || [],
         detailImages: detailImages || [],
         status: status || 'ACTIVE',
@@ -79,7 +92,7 @@ export async function update(req: Request, res: Response) {
 
   try {
     const id = req.params.id as string
-    const { title, subtitle, description, notice, coverImage, videoUrl, price, duration, tags, detailImages, status, sortOrder } = req.body
+    const { title, subtitle, description, notice, coverImage, videoUrl, price, duration, minPlayers, maxPlayers, tags, detailImages, status, sortOrder } = req.body
 
     const existing = await prisma.game.findUnique({ where: { id } })
     if (!existing) {
@@ -97,6 +110,8 @@ export async function update(req: Request, res: Response) {
         videoUrl: videoUrl !== undefined ? videoUrl : existing.videoUrl,
         price: price !== undefined ? parseInt(price) : existing.price,
         duration: duration !== undefined ? parseInt(duration) : existing.duration,
+        minPlayers: minPlayers !== undefined ? parseInt(minPlayers) : existing.minPlayers,
+        maxPlayers: maxPlayers !== undefined ? parseInt(maxPlayers) : existing.maxPlayers,
         tags: tags !== undefined ? tags : existing.tags,
         detailImages: detailImages !== undefined ? detailImages : existing.detailImages,
         status: status !== undefined ? status : existing.status,

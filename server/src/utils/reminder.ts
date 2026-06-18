@@ -1,16 +1,22 @@
 import { prisma } from './prisma'
 import { pushNotification } from '../controllers/notificationController'
 
-const REMIND_MINUTES_BEFORE = 15
 const INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+
+async function getVerifyAdvanceMinutes() {
+  const setting = await prisma.systemSetting.findUnique({ where: { key: 'verify_advance_minutes' } })
+  const raw = setting?.value as any
+  return Number((typeof raw === 'object' && raw !== null && 'value' in raw ? raw.value : raw) ?? 15)
+}
 
 async function sendBookingReminders() {
   try {
     const now = new Date()
-    const windowStart = new Date(now.getTime() + REMIND_MINUTES_BEFORE * 60 * 1000)
+    const verifyAdvanceMinutes = await getVerifyAdvanceMinutes()
+    const windowStart = new Date(now.getTime() + verifyAdvanceMinutes * 60 * 1000)
     const windowEnd = new Date(windowStart.getTime() + INTERVAL_MS)
 
-    // Find bookings starting within [now+15min, now+20min] that haven't been reminded yet
+    // Find bookings starting within the configured verify-advance window that haven't been reminded yet
     const bookings = await prisma.booking.findMany({
       where: {
         remindSent: false,

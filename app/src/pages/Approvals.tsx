@@ -12,6 +12,7 @@ import {
 } from '@/api/approvals'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
+import { hasPermission } from '@/lib/permissions'
 
 const scopeTabs = [
   { key: 'todo', label: '待我审批' },
@@ -85,7 +86,7 @@ export default function Approvals() {
   const [selected, setSelected] = useState<ApprovalRequest | null>(null)
   const [comment, setComment] = useState('')
 
-  const canApprove = ['SUPER_ADMIN', 'ADMIN', 'FINANCE', 'MANAGER'].includes(currentUser?.role || '')
+  const canApprove = hasPermission(currentUser, 'approval:approve')
 
   const { data, isFetching } = useQuery({
     queryKey: ['approvals', scope, status],

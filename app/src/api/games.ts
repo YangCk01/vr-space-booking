@@ -11,6 +11,8 @@ export interface Game {
   detailImages: string[]
   price: number
   duration: number
+  minPlayers: number
+  maxPlayers: number
   tags: string[]
   status: string
   sortOrder: number
@@ -28,6 +30,8 @@ export interface GameInput {
   detailImages?: string[]
   price?: number
   duration?: number
+  minPlayers?: number
+  maxPlayers?: number
   tags?: string[]
   status?: string
   sortOrder?: number

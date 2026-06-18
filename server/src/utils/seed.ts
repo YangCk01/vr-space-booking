@@ -4,16 +4,16 @@ import { prisma } from './prisma'
 async function seed() {
   console.log('🌱 开始初始化种子数据...')
 
-  // 清空现有数据（开发环境用）
-  await prisma.payment.deleteMany()
-  await prisma.order.deleteMany()
-  await prisma.booking.deleteMany()
-  await prisma.maintenanceRecord.deleteMany()
-  await prisma.equipment.deleteMany()
-  await prisma.venue.deleteMany()
-  await prisma.operationLog.deleteMany()
-  await prisma.systemSetting.deleteMany()
-  await prisma.user.deleteMany()
+  // 清空现有数据（开发环境用）：使用 CASCADE 处理外键依赖
+  await prisma.$executeRawUnsafe(`
+    DO $$ DECLARE
+      r RECORD;
+    BEGIN
+      FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
+        EXECUTE 'TRUNCATE TABLE public.' || quote_ident(r.tablename) || ' CASCADE';
+      END LOOP;
+    END $$;
+  `)
 
   // 创建管理员账户
   const adminPassword = await bcrypt.hash('admin123', 12)

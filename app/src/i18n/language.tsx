@@ -1040,24 +1040,38 @@ function translateValue(value: string, language: Language) {
 
 const textSourceMap = new WeakMap<Text, string>()
 
+function isSkipped(node: Node): boolean {
+  if (node instanceof Element) return node.closest('[data-i18n-skip]') !== null
+  return node.parentElement?.closest('[data-i18n-skip]') !== null
+}
+
 function translateNode(root: Node, language: Language) {
+  if (isSkipped(root)) return
+
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
   const textNodes: Text[] = []
   while (walker.nextNode()) textNodes.push(walker.currentNode as Text)
 
   textNodes.forEach((node) => {
+    if (isSkipped(node)) return
     const raw = node.nodeValue || ''
-    if (!raw.trim()) return
-    const source = textSourceMap.get(node) || raw.trim()
-    textSourceMap.set(node, source)
+    const trimmed = raw.trim()
+    if (!trimmed) return
+    const storedSource = textSourceMap.get(node)
+    let source = storedSource
+    if (!source || trimmed !== translateValue(source, language)) {
+      source = trimmed
+      textSourceMap.set(node, source)
+    }
     const translated = translateValue(source, language)
-    const next = raw.replace(raw.trim(), translated)
+    const next = raw.replace(trimmed, translated)
     if (node.nodeValue !== next) node.nodeValue = next
   })
 
   if (root instanceof Element || root instanceof Document || root instanceof DocumentFragment) {
     const elements = root instanceof Element ? [root, ...Array.from(root.querySelectorAll('*'))] : Array.from(root.querySelectorAll('*'))
     elements.forEach((el) => {
+      if (el.closest('[data-i18n-skip]')) return
       ;(['placeholder', 'title', 'aria-label'] as const).forEach((attr) => {
         const current = el.getAttribute(attr)
         if (!current) return

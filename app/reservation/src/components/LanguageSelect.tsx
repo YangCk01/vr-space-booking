@@ -9,13 +9,13 @@ export default function LanguageSelect() {
   const [open, setOpen] = useState(false)
 
   return (
-    <div className="relative">
+    <div className="relative" data-i18n-skip>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="w-9 h-9 rounded-full bg-[var(--bg-elevated)] text-[var(--accent-primary)] flex items-center justify-center gap-0.5 active:scale-95 transition-all"
-        title="语言"
-        aria-label="语言"
+        title={label.label}
+        aria-label={label.label}
       >
         <Globe2 className="w-4 h-4" />
         <span className="text-[10px] font-bold">{label.short}</span>

@@ -15,6 +15,17 @@ export interface Order {
   cancelledAt: string | null
   refundAmount: number | null
   bookingTime: string
+  verifyCode?: string | null
+  quantity?: number
+  groupBuyPackageId?: string | null
+  groupBuyPackage?: {
+    id: string
+    title: string
+    label?: string
+    coverImage?: string | null
+    maxPeople?: number
+    venues?: { id: string; name: string }[]
+  }
   booking?: {
     game?: { title: string }
     personCount?: number
@@ -46,6 +57,11 @@ export async function getOrders(params?: {
   startDate?: string
   endDate?: string
   source?: string
+  orderType?: string
+  orderKind?: string
+  feeType?: string
+  refundStatus?: string
+  parentOrderNo?: string
 }) {
   const res = await apiClient.get('/orders', { params })
   return res.data
@@ -117,4 +133,26 @@ export async function markNoShow(id: string, reason?: string) {
 export async function activateOrder(id: string, reason?: string) {
   const res = await apiClient.post(`/orders/${id}/activate`, { reason })
   return res.data
+}
+
+export interface RedeemInput {
+  verifyCode?: string
+  id?: string
+  venueId: string
+  date: string
+  startTime: string
+  endTime: string
+  personName: string
+  personPhone: string
+  personCount: number
+  note?: string
+  title?: string
+  gameId?: string
+  type?: 'TEAM' | 'INDIVIDUAL' | 'CORPORATE'
+  completed?: boolean
+}
+
+export async function redeemOrder(input: RedeemInput) {
+  const res = await apiClient.post('/orders/redeem', input)
+  return res.data.data
 }

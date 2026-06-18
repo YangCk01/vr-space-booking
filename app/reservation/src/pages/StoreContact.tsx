@@ -2,9 +2,10 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ChevronLeft, MapPin, Phone, Clock, ExternalLink, QrCode } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { getVenues } from '@/api/venues'
+import { getPublicVenue, getPublicVenues } from '@/api/venues'
 import { getImageUrl } from '@/lib/imageUrl'
 import type { Venue } from '@/api/venues'
+import { useSelectedVenue } from '@/hooks/useSelectedVenue'
 
 function VenueCard({ venue }: { venue: Venue }) {
   const mapLinks = (venue.mapLinks as { label: string; url: string }[] | undefined) || []
@@ -93,14 +94,26 @@ function VenueCard({ venue }: { venue: Venue }) {
 
 export default function StoreContact() {
   const navigate = useNavigate()
+  const [selectedVenue] = useSelectedVenue()
+  const selectedVenueId = selectedVenue?.id
 
   const { data: venueData } = useQuery({
-    queryKey: ['venues'],
-    queryFn: () => getVenues({ status: 'all' }),
-    staleTime: 60000,
+    queryKey: ['venues', 'contact', 'all'],
+    queryFn: () => getPublicVenues({ pageSize: 100 }),
+    enabled: !selectedVenueId,
+    staleTime: 0,
   })
 
-  const venues = (venueData?.data || []) as Venue[]
+  const { data: currentVenue, isLoading: currentVenueLoading } = useQuery({
+    queryKey: ['venues', 'contact-detail', selectedVenueId],
+    queryFn: () => getPublicVenue(selectedVenueId!),
+    enabled: !!selectedVenueId,
+    staleTime: 0,
+  })
+
+  const displayVenues = selectedVenueId
+    ? (currentVenue ? [currentVenue] : [])
+    : ((venueData?.data || []) as Venue[])
 
   return (
     <motion.div
@@ -120,13 +133,17 @@ export default function StoreContact() {
       </div>
 
       <div className="max-w-lg mx-auto px-4 pt-4 space-y-4">
-        {venues.length === 0 ? (
+        {selectedVenueId && currentVenueLoading ? (
+          <div className="flex justify-center py-12">
+            <div className="w-6 h-6 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : displayVenues.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-[var(--text-muted)]">
             <MapPin className="w-12 h-12 mb-3 opacity-30" />
             <p className="text-sm">暂无门店信息</p>
           </div>
         ) : (
-          venues.map((venue) => (
+          displayVenues.map((venue) => (
             <VenueCard key={venue.id} venue={venue} />
           ))
         )}

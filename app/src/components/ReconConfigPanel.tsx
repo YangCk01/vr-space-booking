@@ -38,7 +38,7 @@ const presetKeys = [
   { key: 'WEBHOOK_TYPE', label: 'Webhook 类型', example: 'wecom / dingtalk / lark / generic' },
 ]
 
-export default function ReconConfigPanel() {
+export default function ReconConfigPanel({ canAdjust = false }: { canAdjust?: boolean }) {
   const queryClient = useQueryClient()
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [newKey, setNewKey] = useState('')
@@ -145,7 +145,7 @@ export default function ReconConfigPanel() {
           <Settings className="w-4 h-4 text-vraccent-primary" />
           对账配置
         </h3>
-        {!isEditing && (
+        {canAdjust && !isEditing && (
           <button
             onClick={startNew}
             className="flex items-center gap-1 px-2 py-1 rounded-lg text-vr-caption text-vraccent-primary hover:bg-vraccent-primary/10 transition-colors"
@@ -157,7 +157,7 @@ export default function ReconConfigPanel() {
       </div>
 
       {/* Edit / New Form */}
-      {isEditing && (
+      {canAdjust && isEditing && (
         <div className="bg-vrbg-surface rounded-lg p-4 border border-vrborder-subtle space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-vrtext-primary">
@@ -248,7 +248,7 @@ export default function ReconConfigPanel() {
         </div>
       ) : !configs || configs.length === 0 ? (
         <div className="text-center py-6 text-vrtext-muted text-sm">
-          暂无配置项，点击「新增配置」添加
+          暂无配置项
         </div>
       ) : (
         <div className="space-y-2">
@@ -277,23 +277,27 @@ export default function ReconConfigPanel() {
                     测试
                   </button>
                 )}
-                <button
-                  onClick={() => startEdit(config)}
-                  className="px-2 py-1 rounded text-xs text-vrtext-secondary hover:text-vrtext-primary hover:bg-vrbg-card transition-colors"
-                >
-                  编辑
-                </button>
-                <button
-                  onClick={() => {
-                    if (window.confirm(`确定删除配置「${config.key}」吗？`)) {
-                      deleteMut.mutate(config.key)
-                    }
-                  }}
-                  disabled={deleteMut.isPending}
-                  className="px-2 py-1 rounded text-xs text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {canAdjust && (
+                  <>
+                    <button
+                      onClick={() => startEdit(config)}
+                      className="px-2 py-1 rounded text-xs text-vrtext-secondary hover:text-vrtext-primary hover:bg-vrbg-card transition-colors"
+                    >
+                      编辑
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`确定删除配置「${config.key}」吗？`)) {
+                          deleteMut.mutate(config.key)
+                        }
+                      }}
+                      disabled={deleteMut.isPending}
+                      className="px-2 py-1 rounded text-xs text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           ))}

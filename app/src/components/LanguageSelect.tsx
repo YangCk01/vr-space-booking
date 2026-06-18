@@ -9,7 +9,7 @@ export default function LanguageSelect({ compact = false }: { compact?: boolean 
   const [open, setOpen] = useState(false)
 
   return (
-    <div className="relative">
+    <div className="relative" data-i18n-skip>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -17,8 +17,8 @@ export default function LanguageSelect({ compact = false }: { compact?: boolean 
           'h-9 rounded-lg border border-vrborder-subtle bg-vrbg-surface text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors flex items-center justify-center gap-1.5',
           compact ? 'w-9 px-0' : 'px-2.5'
         )}
-        title="语言"
-        aria-label="语言"
+        title={label.label}
+        aria-label={label.label}
       >
         <Globe2 className="w-4 h-4" />
         {!compact && <span className="text-xs font-semibold">{label.short}</span>}

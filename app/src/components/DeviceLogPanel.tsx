@@ -79,7 +79,15 @@ const TEMPLATE_EXAMPLE = [
   ['PICO001', 'com.vrspace.starexpedition', '2026-05-28 16:00:00', '', '0', '否', '1'],
 ]
 
-export default function DeviceLogPanel({ venues }: { venues: any[] }) {
+export default function DeviceLogPanel({
+  venues,
+  canManage = false,
+  canDelete = false,
+}: {
+  venues: any[]
+  canManage?: boolean
+  canDelete?: boolean
+}) {
   const queryClient = useQueryClient()
   const [selectedVenue, setSelectedVenue] = useState('')
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'))
@@ -323,22 +331,26 @@ export default function DeviceLogPanel({ venues }: { venues: any[] }) {
 
         <div className="h-5 w-[1px] bg-vrborder-subtle" />
 
-        {/* 导入表格 */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".xlsx,.xls,.csv"
-          onChange={handleFileUpload}
-          className="hidden"
-        />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={batchMut.isPending}
-          className="h-9 px-3 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center gap-1.5"
-        >
-          {batchMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-          导入表格
-        </button>
+        {canManage && (
+          <>
+            {/* 导入表格 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={batchMut.isPending}
+              className="h-9 px-3 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {batchMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              导入表格
+            </button>
+          </>
+        )}
 
         <button
           onClick={downloadTemplate}
@@ -348,13 +360,15 @@ export default function DeviceLogPanel({ venues }: { venues: any[] }) {
           下载模板
         </button>
 
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="h-9 px-3 rounded-lg bg-vraccent-primary text-white text-sm font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5"
-        >
-          {showForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-          {showForm ? '取消' : '单条添加'}
-        </button>
+        {canManage && (
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="h-9 px-3 rounded-lg bg-vraccent-primary text-white text-sm font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5"
+          >
+            {showForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            {showForm ? '取消' : '单条添加'}
+          </button>
+        )}
       </div>
 
       {/* Stats Card */}
@@ -397,7 +411,7 @@ export default function DeviceLogPanel({ venues }: { venues: any[] }) {
       )}
 
       {/* Single Add Form */}
-      {showForm && (
+      {canManage && showForm && (
         <div className="bg-vrbg-card border border-vrborder-subtle rounded-xl p-4 space-y-3">
           <h4 className="text-sm font-medium text-vrtext-primary">手动添加单条设备日志</h4>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -540,15 +554,19 @@ export default function DeviceLogPanel({ venues }: { venues: any[] }) {
                       )}
                     </td>
                     <td className="py-2.5 px-3 text-right">
-                      <button
-                        onClick={() => {
-                          if (window.confirm('确定删除这条日志吗？')) deleteMut.mutate(log.id)
-                        }}
-                        disabled={deleteMut.isPending}
-                        className="text-red-400 hover:bg-red-500/10 p-1 rounded transition-colors disabled:opacity-50"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {canDelete ? (
+                        <button
+                          onClick={() => {
+                            if (window.confirm('确定删除这条日志吗？')) deleteMut.mutate(log.id)
+                          }}
+                          disabled={deleteMut.isPending}
+                          className="text-red-400 hover:bg-red-500/10 p-1 rounded transition-colors disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <span className="text-vr-caption text-vrtext-muted">-</span>
+                      )}
                     </td>
                   </tr>
                 ))}

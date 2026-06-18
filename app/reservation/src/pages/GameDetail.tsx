@@ -130,7 +130,7 @@ export default function GameDetail() {
               </p>
               <p className="text-xs text-[var(--text-muted)]">
                 <Users className="w-3 h-3 inline mr-0.5 -mt-0.5" />
-                10人订过
+                {game.bookedPeopleCount ?? 0}人订过
               </p>
             </div>
           </div>
@@ -144,7 +144,7 @@ export default function GameDetail() {
           </span>
           <span className="flex items-center gap-1">
             <Users className="w-3.5 h-3.5" />
-            1-4人
+            {game.minPlayers}-{game.maxPlayers}人
           </span>
           <span className="flex items-center gap-1">
             <MapPin className="w-3.5 h-3.5" />
@@ -155,7 +155,7 @@ export default function GameDetail() {
         {/* Action Row */}
         <div className="flex items-center justify-between mt-4 px-5">
           <button
-            onClick={() => navigate(getBookingTargetPath(game.id))}
+            onClick={() => navigate('/group-booking-rules')}
             className="flex items-center gap-1 text-xs text-[var(--accent-primary)]"
           >
             <span className="text-[var(--text-secondary)]">可拼场</span>

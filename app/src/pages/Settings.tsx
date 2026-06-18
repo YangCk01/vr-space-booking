@@ -102,6 +102,7 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
     enableAutoNoShow: s.enable_auto_no_show?.value ?? true,
     rescheduleAllowAfterStart: s.reschedule_allow_after_start?.value ?? true,
     rescheduleAfterStartMinutes: s.reschedule_after_start_minutes?.value ?? 15,
+    rescheduleMaxCount: s.reschedule_max_count?.value ?? 1,
   })
   const defaultTiers: RefundTier[] = [
     { hours: 24, rate: 100, label: '开场24小时前' },
@@ -129,6 +130,7 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       enableAutoNoShow: s.enable_auto_no_show?.value ?? true,
       rescheduleAllowAfterStart: s.reschedule_allow_after_start?.value ?? true,
       rescheduleAfterStartMinutes: s.reschedule_after_start_minutes?.value ?? 15,
+      rescheduleMaxCount: s.reschedule_max_count?.value ?? 1,
     })
     const raw = s.booking_refund_tiers?.value
     setTiers(raw && Array.isArray(raw) && raw.length > 0 ? raw : defaultTiers)
@@ -184,6 +186,10 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       setError('开场后可改签分钟数不能为负数')
       return
     }
+    if (values.rescheduleMaxCount < 0) {
+      setError('最大改签次数不能为负数')
+      return
+    }
     // 校验阶梯规则
     for (const t of tiers) {
       if (t.hours < 0) { setError('距开场时间不能为负数'); return }
@@ -210,6 +216,7 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
       { key: 'enable_auto_no_show', value: values.enableAutoNoShow, category: 'booking' },
       { key: 'reschedule_allow_after_start', value: values.rescheduleAllowAfterStart, category: 'booking' },
       { key: 'reschedule_after_start_minutes', value: values.rescheduleAfterStartMinutes, category: 'booking' },
+      { key: 'reschedule_max_count', value: values.rescheduleMaxCount, category: 'booking' },
     ])
   }
 
@@ -395,6 +402,17 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
                 <p className="mt-1 text-vr-caption text-vrtext-tertiary">开场后多少分钟内仍可改签，超过后不可改签</p>
               </motion.div>
             )}
+            <div>
+              <label className="block text-vr-caption text-vrtext-secondary mb-1">最大改签次数</label>
+              <input
+                type="number"
+                min={0}
+                value={values.rescheduleMaxCount}
+                onChange={(e) => update('rescheduleMaxCount', Number(e.target.value))}
+                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              />
+              <p className="mt-1 text-vr-caption text-vrtext-tertiary">每个订单最多允许改签次数，0 表示不限制</p>
+            </div>
           </div>
         </motion.div>
         {error && (

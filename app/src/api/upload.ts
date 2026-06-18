@@ -1,6 +1,6 @@
 import { API_BASE_URL } from '@/lib/apiBase'
 
-export async function uploadFile(type: 'venues' | 'logos' | 'avatars' | 'games' | 'products' | 'pages', file: File) {
+export async function uploadFile(type: 'venues' | 'logos' | 'avatars' | 'games' | 'products' | 'pages' | 'group-buys', file: File) {
   const formData = new FormData()
   formData.append('file', file)
 
