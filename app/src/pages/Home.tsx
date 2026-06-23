@@ -123,6 +123,14 @@ function StatCard({ stat, index }: { stat: any; index: number }) {
       variants={itemVariants}
       className="soft-panel group relative min-h-[116px] p-5 transition-all duration-200 hover:-translate-y-0.5"
     >
+      {stat.trend != null && (
+        <span className={cn(
+          'absolute right-4 top-4 rounded-full px-2.5 py-1 text-vr-caption font-semibold',
+          stat.trend >= 0 ? 'bg-vrsuccess/15 text-vrsuccess' : 'bg-vrerror/12 text-vrerror'
+        )}>
+          {stat.trend >= 0 ? '+' : ''}{stat.trend}%
+        </span>
+      )}
       <div className="flex h-full items-center gap-5">
         <span className={cn('soft-icon h-14 w-14 shrink-0 bg-gradient-to-br shadow-[0_18px_35px_rgba(59,130,246,0.16)]', stat.iconTone)}>
           {Icon && <Icon className={cn('h-7 w-7', stat.iconColor)} />}
@@ -138,14 +146,6 @@ function StatCard({ stat, index }: { stat: any; index: number }) {
             >
               {stat.prefix}{stat.value}{stat.suffix}
             </motion.p>
-            {stat.trend != null && (
-              <span className={cn(
-                'rounded-full px-2.5 py-1 text-vr-caption font-semibold',
-                stat.trend >= 0 ? 'bg-vrsuccess/15 text-vrsuccess' : 'bg-vrerror/12 text-vrerror'
-              )}>
-                {stat.trend >= 0 ? '+' : ''}{stat.trend}%
-              </span>
-            )}
           </div>
           <p className="mt-1 text-vr-caption text-vrtext-tertiary">{stat.helper}</p>
         </div>
@@ -387,14 +387,14 @@ function ScheduleTimeline({
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.25, delay: rowIndex * 0.06 + bookingIndex * 0.04 }}
                           className={cn(
-                            'absolute top-1/2 z-10 min-h-[56px] -translate-y-1/2 rounded-lg border px-3 py-2 shadow-[0_12px_25px_rgba(15,23,42,0.08)] transition-transform hover:-translate-y-[calc(50%+2px)]',
+                            'absolute top-1/2 z-10 min-h-[72px] -translate-y-1/2 rounded-lg border px-3 py-2 shadow-[0_12px_25px_rgba(15,23,42,0.08)] transition-transform hover:-translate-y-[calc(50%+2px)]',
                             getEventTone(booking)
                           )}
                           style={metrics}
                         >
                           <p className="truncate text-vr-body-sm font-semibold">{getTypeLabel(booking)}</p>
                           <p className="mt-0.5 text-vr-caption">{booking.startTime} - {booking.endTime}</p>
-                          <p className="text-vr-caption">{booking.personCount || 1}-{booking.personCount || 1}人</p>
+                          <p className="text-vr-caption">{booking.personCount || 1}人</p>
                         </motion.div>
                       )
                     })}
@@ -836,7 +836,7 @@ export default function Home() {
       numericValue: stats.todayRevenue / 100,
       prefix: '¥',
       trend: stats.revenueTrend,
-      helper: stats.revenueTrend != null ? (stats.revenueTrend >= 0 ? '较昨日增长' : '较昨日下降') : '较昨日 —',
+      helper: stats.revenueTrend != null ? (stats.revenueTrend > 0 ? '较昨日增长' : stats.revenueTrend < 0 ? '较昨日下降' : '较昨日持平') : '较昨日 —',
       iconTone: 'from-blue-50 to-blue-100 dark:from-blue-500/20 dark:to-blue-500/10',
       iconColor: 'text-vraccent-primary',
       icon: Wallet,
@@ -848,7 +848,7 @@ export default function Home() {
       prefix: '',
       suffix: '',
       trend: stats.bookingTrend,
-      helper: stats.bookingTrend != null ? `较昨日 ${stats.bookingTrend >= 0 ? '+' : ''}${stats.bookingTrend}` : '较昨日 —',
+      helper: stats.bookingTrend != null ? (stats.bookingTrend > 0 ? '较昨日增长' : stats.bookingTrend < 0 ? '较昨日下降' : '较昨日持平') : '较昨日 —',
       iconTone: 'from-emerald-50 to-emerald-100 dark:from-emerald-500/20 dark:to-emerald-500/10',
       iconColor: 'text-vrsuccess',
       icon: ClipboardList,
@@ -867,8 +867,8 @@ export default function Home() {
     },
     {
       label: '场地在线',
-      value: `${stats.todayActiveVenues || venues.filter((venue) => venue.status === 'open').length || 0} / ${stats.totalVenues || venues.length || 0}`,
-      numericValue: stats.todayActiveVenues || 0,
+      value: `${venues.filter((venue) => venue.status === 'open').length || 0} / ${venues.length || 0}`,
+      numericValue: venues.filter((venue) => venue.status === 'open').length || 0,
       prefix: '',
       suffix: '',
       trend: null,
