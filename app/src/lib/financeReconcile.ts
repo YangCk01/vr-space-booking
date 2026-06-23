@@ -9,6 +9,7 @@ export const reconcileTypeMap: Record<string, string> = {
   '在线支付金额': 'DIRECT_PAY',
   '消费本金': 'CONSUME_PRINCIPAL',
   '消费赠送': 'CONSUME_BONUS',
+  '取消退费总额': 'CANCEL_REFUND',
   '退款总额': 'REFUND',
   '消费赠送积分': 'POINTS_EARN',
   '管理员赠送积分': 'POINTS_GIFT',

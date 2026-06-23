@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -55,6 +55,7 @@ export default function Pay() {
   const [paymentMethod, setPaymentMethod] = useState<'wechat' | 'alipay' | 'balance'>('wechat')
   const [errorMsg, setErrorMsg] = useState('')
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const paymentInitRef = useRef(false)
 
   const { data: order, isLoading } = useQuery({
     queryKey: ['order', id],
@@ -75,7 +76,26 @@ export default function Pay() {
 
   const amountYuan = ((order?.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const balance = (user?.principalBalance || 0) + (user?.bonusBalance || 0)
-  const balanceDisabled = balance < (order?.amount || 0)
+  const balanceDisabled = !isLoggedIn || balance < (order?.amount || 0)
+
+  // 切换订单时重置默认支付方式
+  useEffect(() => {
+    paymentInitRef.current = false
+  }, [id])
+
+  // 默认优先余额支付；余额不足时默认微信支付并提示充值
+  useEffect(() => {
+    if (!order || paymentInitRef.current) return
+    paymentInitRef.current = true
+    if (isLoggedIn && user && balance >= (order.amount || 0)) {
+      setPaymentMethod('balance')
+    } else {
+      setPaymentMethod('wechat')
+      if (isLoggedIn && user && (order.amount || 0) > 0) {
+        setErrorMsg('余额不足，请先充值')
+      }
+    }
+  }, [order, user, isLoggedIn, balance])
 
   const payMutation = useMutation({
     mutationFn: () => payOrder(id!, payMethodMap[paymentMethod].method),

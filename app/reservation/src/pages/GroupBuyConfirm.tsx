@@ -7,12 +7,14 @@ import { getPublicGroupBuy } from '@/api/groupBuys'
 import { createOrder } from '@/api/orders'
 import { getImageUrl } from '@/lib/imageUrl'
 import { useAuth } from '@/providers/AuthProvider'
+import { useSelectedVenue } from '@/hooks/useSelectedVenue'
 import { cn } from '@/lib/utils'
 
 export default function GroupBuyConfirm() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { user, isLoggedIn } = useAuth()
+  const [selectedVenue] = useSelectedVenue()
   const [quantity, setQuantity] = useState(1)
   const [submitting, setSubmitting] = useState(false)
 
@@ -61,6 +63,7 @@ export default function GroupBuyConfirm() {
         quantity,
         amount: totalGroup,
         source: 'ONLINE',
+        venueId: selectedVenue?.id,
       })
       navigate(`/pay/${order.id}`)
     } catch (err: any) {

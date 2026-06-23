@@ -32,7 +32,7 @@ export default function Layout({ children, breadcrumb }: LayoutProps) {
       </button>
 
       <aside className={cn(
-        'fixed left-0 top-0 z-50 h-full w-[220px] bg-vrbg-sidebar border-r border-vrborder-subtle flex flex-col overflow-hidden',
+        'fixed left-3 top-3 bottom-3 z-50 w-[220px] bg-vrbg-sidebar border border-vrborder-subtle flex flex-col overflow-hidden rounded-2xl shadow-[0_20px_45px_rgba(15,23,42,0.08)]',
         'transition-transform duration-300 ease-in-out',
         'lg:translate-x-0',
         sidebarOpen ? 'translate-x-0' : '-translate-x-full'
@@ -41,7 +41,7 @@ export default function Layout({ children, breadcrumb }: LayoutProps) {
       </aside>
 
       <TopBar breadcrumb={breadcrumb} />
-      <main className="pt-[56px] pl-0 lg:pl-[220px] min-h-[100dvh]">
+      <main className="pt-[68px] pl-0 lg:pl-[244px] min-h-[100dvh]">
         <div className="p-4 md:p-6">
           {children}
         </div>

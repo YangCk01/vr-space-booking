@@ -345,10 +345,11 @@ function RevenueTooltip({ active, payload, label }: {
     <TooltipCard>
       <TooltipLabel>{label}</TooltipLabel>
       {payload.map((p, i) => {
-        const isAmount = p.dataKey?.includes('Amount')
+        const isAmount = p.dataKey?.includes('Amount') || p.dataKey === 'otherIncome'
         const labelText =
           p.dataKey === 'onlineAmount' ? '线上营收' :
           p.dataKey === 'offlineAmount' ? '线下营收' :
+          p.dataKey === 'otherIncome' ? '营业外收入' :
           p.dataKey === 'onlineCount' ? '线上订单' :
           p.dataKey === 'offlineCount' ? '线下订单' : p.dataKey
         return (
@@ -629,11 +630,11 @@ export default function Analytics() {
         {
           icon: <TrendingUp className="w-6 h-6 text-vraccent-primary" />,
           iconBg: 'rgba(59,130,246,0.1)',
-          label: '营收金额',
+          label: '总收入',
           value: `¥${((stats.todayRevenue || 0) / 100).toLocaleString()}`,
           trend: `${trendLabel} ${stats.revenueTrend >= 0 ? '+' : ''}${stats.revenueTrend}%`,
           trendUp: stats.revenueTrend >= 0,
-          subLabel: `${subLabelPrefix}成交 ${stats.todayUsed} 单 · 客均¥${stats.todayUsed > 0 ? ((stats.todayRevenue || 0) / stats.todayUsed / 100).toFixed(0) : 0}`,
+          subLabel: `营业额¥${((stats.todayOperatingRevenue || 0) / 100).toLocaleString()} · 营业外¥${((stats.todayOtherIncome || 0) / 100).toLocaleString()}`,
         },
         {
           icon: <CalendarCheck className="w-6 h-6 text-vrsuccess" />,
@@ -899,6 +900,10 @@ export default function Analytics() {
                     <span className="w-3 h-0.5 bg-[#10B981] rounded-full" />
                     线下营收
                   </span>
+                  <span className="flex items-center gap-1.5 text-vr-caption text-vrtext-secondary">
+                    <span className="w-3 h-0.5 bg-[#8B5CF6] rounded-full" />
+                    营业外收入
+                  </span>
                 </div>
               </div>
               <div className="h-[320px]">
@@ -912,6 +917,10 @@ export default function Analytics() {
                       <linearGradient id="offlineAmountGrad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#10B981" stopOpacity={0.2} />
                         <stop offset="100%" stopColor="#10B981" stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="otherIncomeGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#8B5CF6" stopOpacity={0.18} />
+                        <stop offset="100%" stopColor="#8B5CF6" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
@@ -952,6 +961,16 @@ export default function Analytics() {
                       dot={{ fill: '#10B981', r: 3, strokeWidth: 0 }}
                       activeDot={{ fill: '#10B981', r: 5, strokeWidth: 2, stroke: chartDotStroke }}
                     />
+                    <Area
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="otherIncome"
+                      stroke="#8B5CF6"
+                      strokeWidth={2}
+                      fill="url(#otherIncomeGrad)"
+                      dot={{ fill: '#8B5CF6', r: 3, strokeWidth: 0 }}
+                      activeDot={{ fill: '#8B5CF6', r: 5, strokeWidth: 2, stroke: chartDotStroke }}
+                    />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -987,7 +1006,12 @@ export default function Analytics() {
                             <span className="text-vr-body text-vrtext-primary font-semibold">
                               ¥{(v.revenue / 100).toLocaleString()}
                             </span>
-                            <span className="text-vr-caption text-vrtext-tertiary ml-2">{v.orderCount}单</span>
+                            <span className="text-vr-caption text-vrtext-tertiary ml-2">{v.orderCount + (v.otherIncomeCount || 0)}笔</span>
+                            {(v.otherIncome || 0) > 0 && (
+                              <div className="text-vr-caption text-vrtext-tertiary">
+                                营业额 ¥{((v.operatingRevenue || 0) / 100).toLocaleString()} · 营业外 ¥{((v.otherIncome || 0) / 100).toLocaleString()}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="h-1.5 bg-vrbg-elevated rounded-full overflow-hidden">

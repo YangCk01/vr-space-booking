@@ -10,6 +10,12 @@ import {
   X,
   AlertTriangle,
   Upload,
+  Clock,
+  Monitor,
+  PauseCircle,
+  Ruler,
+  Users,
+  Wrench,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
 import { getVenues, createVenue, updateVenue, deleteVenue, batchDeleteVenues, batchUpdateVenueStatus } from '@/api/venues'
@@ -350,86 +356,98 @@ export default function Venues() {
     setFormData((prev) => ({ ...prev, [field]: value }))
   }
 
+  const venueStats = useMemo(() => {
+    const open = venueList.filter((venue) => getEffectiveStatus(venue) === 'open').length
+    const maintenance = venueList.filter((venue) => getEffectiveStatus(venue) === 'maintenance').length
+    const closed = venueList.filter((venue) => getEffectiveStatus(venue) === 'closed').length
+    const devices = venueList.reduce((sum, venue) => sum + (venue.deviceCount || 1), 0)
+    return { open, maintenance, closed, devices }
+  }, [venueList])
+
   return (
     <Layout breadcrumb={['场地管理']}>
-      {/* ─── Top action bar ─── */}
       <motion.div
-        initial={{ opacity: 0, y: -10 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, ease: easeOut }}
-        className="flex items-center justify-between mb-4"
+        transition={{ duration: 0.35, ease: easeOut }}
+        className="space-y-4"
       >
-        {/* Title */}
-        <div>
-          <div className="flex items-center gap-2 text-vrtext-secondary mb-1">
-            <Home className="w-4 h-4" />
-            <span className="text-vr-body-sm">场地管理</span>
+        <section className="rounded-xl border border-vrborder-subtle bg-vrbg-card overflow-hidden">
+          <div className="flex items-start justify-between gap-6 p-5 border-b border-vrborder-subtle bg-gradient-to-r from-white to-slate-50 dark:from-vrbg-card dark:to-vrbg-elevated/60">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-vrtext-secondary mb-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-vraccent-primary/10 text-vraccent-primary">
+                  <Home className="w-4 h-4" />
+                </span>
+                <span className="text-vr-body-sm font-medium">门店与内容 / 场地</span>
+              </div>
+              <h1 className="text-vr-h1 text-vrtext-primary font-semibold">场地管理</h1>
+              <p className="text-vr-body-sm text-vrtext-tertiary mt-1">
+                管理场地资料、设备规模、营业状态和维护安排
+              </p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-vrtext-muted" />
+                <input
+                  type="text"
+                  placeholder="搜索场地名称..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-[280px] h-10 pl-9 pr-4 bg-vrbg-card border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                />
+              </div>
+              {canManageVenues && (
+                <button
+                  onClick={openAdd}
+                  className="flex items-center gap-2 h-10 px-4 bg-vraccent-primary text-white text-vr-body-sm font-medium rounded-lg hover:bg-vraccent-primary-hover transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  新增场地
+                </button>
+              )}
+            </div>
           </div>
-          <h1 className="text-vr-h1 text-vrtext-primary font-semibold">场地管理</h1>
-          <p className="text-vr-body-sm text-vrtext-tertiary mt-0.5">
-            场地信息、设备状态、可视化管理
-          </p>
+
+          <div className="grid grid-cols-4 divide-x divide-vrborder-subtle">
+            {[
+              { label: '营业中', value: venueStats.open, icon: Home, color: 'text-vrsuccess', bg: 'bg-vrsuccess/10' },
+              { label: '维护中', value: venueStats.maintenance, icon: Wrench, color: 'text-vrwarning', bg: 'bg-vrwarning/10' },
+              { label: '暂停营业', value: venueStats.closed, icon: PauseCircle, color: 'text-vrtext-secondary', bg: 'bg-vrbg-elevated' },
+              { label: '设备总数', value: venueStats.devices, icon: Monitor, color: 'text-vraccent-primary', bg: 'bg-vraccent-primary/10' },
+            ].map((item) => (
+              <div key={item.label} className="flex items-center gap-3 px-5 py-4">
+                <span className={cn('flex h-9 w-9 items-center justify-center rounded-lg', item.bg, item.color)}>
+                  <item.icon className="w-4 h-4" />
+                </span>
+                <div>
+                  <p className="text-vr-caption text-vrtext-tertiary">{item.label}</p>
+                  <p className="text-vr-h3 text-vrtext-primary font-semibold">{item.value}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {filterTabs.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveFilter(tab.key)}
+                className={cn(
+                  'h-9 px-4 rounded-lg text-vr-body-sm font-medium border transition-all duration-200',
+                  activeFilter === tab.key
+                    ? 'bg-vraccent-primary text-white border-vraccent-primary shadow-xs'
+                    : 'bg-vrbg-card text-vrtext-secondary border-vrborder-subtle hover:bg-vrbg-hover hover:text-vrtext-primary'
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-vr-caption text-vrtext-tertiary">当前显示 {venueList.length} 个场地</p>
         </div>
-
-        {/* Search */}
-        <motion.div
-          initial={{ opacity: 0, x: -10 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.3, delay: 0.1, ease: easeOut }}
-          className="relative"
-        >
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-vrtext-muted" />
-          <input
-            type="text"
-            placeholder="搜索场地名称..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-[280px] h-10 pl-9 pr-4 bg-vrbg-elevated border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all"
-          />
-        </motion.div>
-
-        {canManageVenues && (
-          <motion.button
-            initial={{ opacity: 0, x: 10 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.3, delay: 0.15, ease: easeOut }}
-            whileHover={{ y: -1, boxShadow: '0 4px 12px rgba(0,0,0,0.4)' }}
-            whileTap={{ scale: 0.97 }}
-            onClick={openAdd}
-            className="flex items-center gap-2 h-10 px-5 bg-vraccent-primary text-white text-vr-body-sm font-medium rounded-lg hover:bg-vraccent-primary-hover transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            新增场地
-          </motion.button>
-        )}
-      </motion.div>
-
-      {/* ─── Filter tabs ─── */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.3, delay: 0.1 }}
-        className="flex items-center gap-2 mb-4"
-      >
-        {filterTabs.map((tab, index) => (
-          <motion.button
-            key={tab.key}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.25, delay: index * 0.05 }}
-            whileTap={{ scale: 1.02 }}
-            onClick={() => setActiveFilter(tab.key)}
-            className={cn(
-              'px-4 py-1.5 rounded-full text-vr-body-sm font-medium border transition-all duration-200',
-              activeFilter === tab.key
-                ? 'bg-vraccent-primary/15 text-vr-blue border-[rgba(59,130,246,0.3)]'
-                : 'bg-transparent text-vrtext-secondary border-vrborder-DEFAULT hover:bg-vrbg-hover hover:text-vrtext-primary'
-            )}
-          >
-            {tab.label}
-          </motion.button>
-        ))}
-      </motion.div>
 
       {/* ─── Batch action bar ─── */}
       <AnimatePresence>
@@ -438,7 +456,7 @@ export default function Venues() {
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="flex items-center justify-between bg-vrbg-elevated rounded-xl border border-vraccent-primary/20 px-4 py-3 mb-4"
+            className="flex items-center justify-between bg-vraccent-primary/10 rounded-xl border border-vraccent-primary/20 px-4 py-3"
           >
             <div className="flex items-center gap-4">
               <span className="text-vr-body-sm text-vrtext-primary font-medium">
@@ -473,40 +491,35 @@ export default function Venues() {
         )}
       </AnimatePresence>
 
-      {/* ─── Venue table ─── */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.3, delay: 0.2 }}
-        className="bg-vrbg-card rounded-xl border border-vrborder-DEFAULT overflow-hidden"
-      >
-        {/* Table header */}
-        <div className="grid grid-cols-[40px_1fr_80px_80px_80px_100px_100px_120px] items-center h-11 px-4 bg-vrbg-elevated border-b border-vrborder-DEFAULT">
-          <span className="text-vr-caption text-vrtext-secondary font-medium text-center">
-            <input
-              type="checkbox"
-              checked={venueList.length > 0 && venueList.every(v => selectedIds.includes(v.id))}
-              onChange={() => {
-                const allSelected = venueList.every(v => selectedIds.includes(v.id))
-                if (allSelected) {
-                  setSelectedIds(prev => prev.filter(id => !venueList.some(v => v.id === id)))
-                } else {
-                  setSelectedIds(prev => [...new Set([...prev, ...venueList.map(v => v.id)])])
-                }
-              }}
-              className="w-4 h-4 rounded cursor-pointer"
-            />
-          </span>
-          <span className="text-vr-caption text-vrtext-secondary font-medium">场地</span>
-          <span className="text-vr-caption text-vrtext-secondary font-medium text-center">面积</span>
-          <span className="text-vr-caption text-vrtext-secondary font-medium text-center">容量</span>
-          <span className="text-vr-caption text-vrtext-secondary font-medium text-center">设备数</span>
-          <span className="text-vr-caption text-vrtext-secondary font-medium text-center">营业时间</span>
-          <span className="text-vr-caption text-vrtext-secondary font-medium text-center">状态</span>
-          <span className="text-vr-caption text-vrtext-secondary font-medium text-right">操作</span>
-        </div>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3, delay: 0.15 }}
+          className="rounded-xl border border-vrborder-subtle bg-vrbg-card overflow-hidden"
+        >
+          <div className="grid grid-cols-[40px_1.5fr_1fr_1fr_1fr_120px] items-center h-11 px-5 bg-vrbg-elevated/70 border-b border-vrborder-subtle">
+            <span className="text-center">
+              <input
+                type="checkbox"
+                checked={venueList.length > 0 && venueList.every(v => selectedIds.includes(v.id))}
+                onChange={() => {
+                  const allSelected = venueList.every(v => selectedIds.includes(v.id))
+                  if (allSelected) {
+                    setSelectedIds(prev => prev.filter(id => !venueList.some(v => v.id === id)))
+                  } else {
+                    setSelectedIds(prev => [...new Set([...prev, ...venueList.map(v => v.id)])])
+                  }
+                }}
+                className="w-4 h-4 rounded cursor-pointer"
+              />
+            </span>
+            <span className="text-vr-caption text-vrtext-secondary font-medium">场地信息</span>
+            <span className="text-vr-caption text-vrtext-secondary font-medium">规模</span>
+            <span className="text-vr-caption text-vrtext-secondary font-medium">营业时间</span>
+            <span className="text-vr-caption text-vrtext-secondary font-medium">状态</span>
+            <span className="text-vr-caption text-vrtext-secondary font-medium text-right">操作</span>
+          </div>
 
-        {/* Table body */}
         <motion.div
           variants={containerVariants}
           initial="hidden"
@@ -530,9 +543,8 @@ export default function Venues() {
                   key={venue.id}
                   variants={itemVariants}
                   layout
-                  className="grid grid-cols-[40px_1fr_80px_80px_80px_100px_100px_120px] items-center h-16 px-4 border-b border-vrborder-DEFAULT/50 hover:bg-vrbg-hover transition-colors duration-150 group"
+                  className="grid grid-cols-[40px_1.5fr_1fr_1fr_1fr_120px] items-center min-h-[82px] px-5 border-b border-vrborder-subtle/80 hover:bg-vrbg-hover/70 transition-colors duration-150 group"
                 >
-                  {/* Checkbox */}
                   <div className="flex items-center justify-center">
                     <input
                       type="checkbox"
@@ -548,38 +560,42 @@ export default function Venues() {
                     />
                   </div>
 
-                  {/* Venue info */}
                   <div className="flex items-center gap-3">
                     <img
                       src={venue.image ? getImageUrl(venue.image) : '/venue-a.jpg'}
                       alt={venue.name}
-                      className="w-12 h-9 rounded-md object-cover"
+                      className="w-16 h-12 rounded-lg object-cover border border-vrborder-subtle"
                     />
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-vr-body text-vrtext-primary font-medium">{venue.name}</p>
+                      <p className="text-vr-caption text-vrtext-tertiary mt-0.5 truncate">{venue.theme || venue.address || '未设置主题'}</p>
                     </div>
                   </div>
 
-                  {/* Area */}
-                  <span className="text-vr-body-sm text-vrtext-primary text-center">{venue.area}㎡</span>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-md bg-vrbg-elevated px-2 py-1 text-vr-caption text-vrtext-secondary">
+                      <Ruler className="w-3.5 h-3.5" />
+                      {venue.area}㎡
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 rounded-md bg-vrbg-elevated px-2 py-1 text-vr-caption text-vrtext-secondary">
+                      <Users className="w-3.5 h-3.5" />
+                      {venue.capacity}人
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 rounded-md bg-vrbg-elevated px-2 py-1 text-vr-caption text-vrtext-secondary">
+                      <Monitor className="w-3.5 h-3.5" />
+                      {venue.deviceCount || 1}台
+                    </span>
+                  </div>
 
-                  {/* Capacity */}
-                  <span className="text-vr-body-sm text-vrtext-primary text-center">{venue.capacity}人</span>
-
-                  {/* Device Count */}
-                  <span className="text-vr-body-sm text-vrtext-primary text-center">{venue.deviceCount || 1}台</span>
-
-                  {/* Business Hours */}
-                  <span className="text-vr-body-sm text-vrtext-primary text-center">
+                  <span className="inline-flex items-center gap-1.5 text-vr-body-sm text-vrtext-secondary">
+                    <Clock className="w-4 h-4 text-vrtext-tertiary" />
                     {venue.openTime || '09:00'} - {venue.closeTime || '22:00'}
                   </span>
 
-                  {/* Status */}
-                  <div className="flex justify-center">
+                  <div>
                     <StatusBadge venue={venue} />
                   </div>
 
-                  {/* Actions */}
                   <div className="flex items-center justify-end gap-2">
                     {canMaintainVenues && (
                       <button
@@ -611,6 +627,7 @@ export default function Venues() {
             )}
           </AnimatePresence>
         </motion.div>
+      </motion.div>
       </motion.div>
 
       {/* ─── Add/Edit Modal ─── */}

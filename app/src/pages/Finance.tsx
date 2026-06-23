@@ -93,7 +93,7 @@ type ReconSubTab = 'daily' | 'exceptions'
 const tabs = [
   { key: 'overview' as TabKey, label: '收支概览' },
   { key: 'flow' as TabKey, label: '收支明细' },
-  { key: 'refunds' as TabKey, label: '退款记录' },
+  { key: 'refunds' as TabKey, label: '退款处置记录' },
   { key: 'recon' as TabKey, label: '对账中心' },
   { key: 'deviceLogs' as TabKey, label: '设备日志' },
 ]
@@ -374,20 +374,26 @@ export default function Finance() {
         {
           icon: <TrendingDown className="w-6 h-6 text-vrerror" />,
           iconBg: 'rgba(239,68,68,0.1)',
-          label: `${periodLabel}退款`,
+          label: `${periodLabel}退款处置`,
           value: `¥${((overviewData.periodRefund || 0) / 100).toLocaleString()}`,
+        },
+        {
+          icon: <TrendingDown className="w-6 h-6 text-orange-500" />,
+          iconBg: 'rgba(249,115,22,0.1)',
+          label: `${periodLabel}取消退费`,
+          value: `¥${((overviewData.periodCancelRefund || 0) / 100).toLocaleString()}`,
         },
         {
           icon: <AlertTriangle className="w-6 h-6 text-amber-500" />,
           iconBg: 'rgba(249,115,22,0.1)',
-          label: `${periodLabel}改签费`,
-          value: `¥${((overviewData.periodRescheduleFee || 0) / 100).toLocaleString()}`,
+          label: `${periodLabel}营业外收入`,
+          value: `¥${((overviewData.periodOtherIncome || 0) / 100).toLocaleString()}`,
         },
         {
           icon: <Coins className="w-6 h-6 text-vrsuccess" />,
           iconBg: 'rgba(16,185,129,0.1)',
           label: `${periodLabel}净收入`,
-          value: `¥${(((overviewData.periodRevenue || 0) - (overviewData.periodRefund || 0) + (overviewData.periodOtherIncome || 0)) / 100).toLocaleString()}`,
+          value: `¥${(((overviewData.periodRevenue || 0) - (overviewData.periodRefund || 0) - (overviewData.periodCancelRefund || 0) + (overviewData.periodOtherIncome || 0)) / 100).toLocaleString()}`,
         },
       ]
     : []
@@ -397,6 +403,7 @@ export default function Finance() {
     date: d.date.slice(5), // MM-dd
     revenue: d.revenue / 100,
     refund: d.refund / 100,
+    cancelRefund: d.cancelRefund / 100,
     recharge: d.recharge / 100,
     otherIncome: d.otherIncome / 100,
     rescheduleFee: d.rescheduleFee / 100,
@@ -408,9 +415,10 @@ export default function Finance() {
   const pieData = overviewData
     ? [
         { name: '营收', value: overviewData.periodRevenue || 0, color: '#10B981' },
-        { name: '退款', value: overviewData.periodRefund || 0, color: '#EF4444' },
+        { name: '退款处置', value: overviewData.periodRefund || 0, color: '#EF4444' },
+        { name: '取消退费', value: overviewData.periodCancelRefund || 0, color: '#F97316' },
         { name: '改签费', value: overviewData.periodRescheduleFee || 0, color: '#F97316' },
-        { name: '历史爽约违约金', value: overviewData.periodNoShowPenalty || 0, color: '#8B5CF6' },
+        { name: '作废未退收入', value: overviewData.periodNoShowPenalty || 0, color: '#8B5CF6' },
         { name: '取消费', value: overviewData.periodCancelFee || 0, color: '#F59E0B' },
       ].filter((d) => d.value > 0)
     : []
@@ -426,7 +434,7 @@ export default function Finance() {
         >
           <div>
             <h1 className="text-vr-h1 text-vrtext-primary font-semibold">财务管理</h1>
-            <p className="text-vr-body-sm text-vrtext-tertiary mt-1">收支概览、流水明细、退款记录</p>
+            <p className="text-vr-body-sm text-vrtext-tertiary mt-1">收支概览、流水明细、退款处置记录</p>
           </div>
           <Wallet className="w-8 h-8 text-vraccent-primary" />
         </motion.div>
@@ -608,10 +616,11 @@ export default function Finance() {
                           itemStyle={{ color: '#94A3B8', fontSize: 12 }}
                         />
                         <Area type="monotone" dataKey="revenue" name="营收" stroke="#10B981" fill="url(#revGrad)" strokeWidth={2} dot={false} />
-                        <Area type="monotone" dataKey="refund" name="退款" stroke="#EF4444" fill="url(#refGrad)" strokeWidth={2} dot={false} />
+                        <Area type="monotone" dataKey="refund" name="退款处置" stroke="#EF4444" fill="url(#refGrad)" strokeWidth={2} dot={false} />
+                        <Area type="monotone" dataKey="cancelRefund" name="取消退费" stroke="#F97316" fill="url(#refGrad)" strokeWidth={2} dot={false} />
                         <Area type="monotone" dataKey="recharge" name="充值" stroke="#3B82F6" fill="url(#recGrad)" strokeWidth={2} dot={false} />
                         <Area type="monotone" dataKey="rescheduleFee" name="改签费" stroke="#F97316" fill="url(#rescheduleGrad)" strokeWidth={2} dot={false} />
-                        <Area type="monotone" dataKey="noShowPenalty" name="历史爽约违约金" stroke="#8B5CF6" fill="url(#penaltyGrad)" strokeWidth={2} dot={false} />
+                        <Area type="monotone" dataKey="noShowPenalty" name="作废未退收入" stroke="#8B5CF6" fill="url(#penaltyGrad)" strokeWidth={2} dot={false} />
                         <Area type="monotone" dataKey="cancelFee" name="取消费" stroke="#F59E0B" fill="url(#cancelGrad)" strokeWidth={2} dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -823,7 +832,7 @@ export default function Finance() {
                             </span>
                           </td>
                           <td className="px-4 py-3 text-vr-body-sm font-mono">
-                            {(item.type === 'ORDER' || item.type === 'REFUND' || item.type === 'RESCHEDULE_FEE') && item.orderNo ? (
+                            {(item.type === 'ORDER' || item.type === 'REFUND' || item.type === 'CANCEL_REFUND' || item.type === 'RESCHEDULE_FEE' || item.type === 'NO_SHOW_RETAINED') && item.orderNo ? (
                               <button
                                 onClick={() => handleOpenDetail(item.orderNo)}
                                 className="text-vraccent-primary hover:text-vraccent-primary/80 hover:underline transition-colors"
@@ -907,7 +916,7 @@ export default function Finance() {
             </motion.div>
           )}
 
-          {/* ─── Refunds Tab ─── */}
+          {/* ─── Refund Dispositions Tab ─── */}
           {activeTab === 'refunds' && (
             <motion.div
               key="refunds"
@@ -967,8 +976,8 @@ export default function Finance() {
                         <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">用户</th>
                         <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">场地</th>
                         <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">原金额</th>
-                        <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">退款金额</th>
-                        <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">退款时间</th>
+                        <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">处置金额</th>
+                        <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">处置时间</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -989,7 +998,7 @@ export default function Finance() {
                           <td className="px-4 py-3 text-right text-vr-body-sm text-vrtext-primary">¥{(item.amount / 100).toLocaleString()}</td>
                           <td className="px-4 py-3 text-right text-vr-body-sm text-vrerror font-semibold">¥{((item.refundAmount || 0) / 100).toLocaleString()}</td>
                           <td className="px-4 py-3 text-vr-body-sm text-vrtext-primary">
-                            {item.createdAt ? format(new Date(item.createdAt), 'yyyy-MM-dd HH:mm') : '-'}
+                            {item.updatedAt ? format(new Date(item.updatedAt), 'yyyy-MM-dd HH:mm') : '-'}
                           </td>
                         </motion.tr>
                       ))}
@@ -1320,7 +1329,7 @@ export default function Finance() {
                           <p className="text-vr-body font-semibold text-vrtext-primary">¥{(dailyReport.directPayIn / 100).toLocaleString()}</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
-                          <p className="text-vr-caption text-vrtext-tertiary">退款金额</p>
+                          <p className="text-vr-caption text-vrtext-tertiary">退款/取消退费支出</p>
                           <p className="text-vr-body font-semibold text-vrerror">¥{(dailyReport.refundOut / 100).toLocaleString()}</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
@@ -1371,7 +1380,7 @@ export default function Finance() {
                           <p className="text-vr-body font-semibold text-vrtext-secondary">¥{((dailyReport.cancelFeeIncome || 0) / 100).toLocaleString()}</p>
                         </div>
                         <div className="bg-vrbg-surface rounded-lg p-3">
-                          <p className="text-vr-caption text-vrtext-tertiary">历史爽约违约金</p>
+                          <p className="text-vr-caption text-vrtext-tertiary">作废未退收入</p>
                           <p className="text-vr-body font-semibold text-vrtext-secondary">¥{((dailyReport.noShowPenalty || 0) / 100).toLocaleString()}</p>
                         </div>
                       </div>
@@ -1451,12 +1460,20 @@ export default function Finance() {
                         <p className="text-vr-body font-semibold text-vrtext-primary">¥{(totalSummary.totalDirectPayIn / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
-                        <p className="text-vr-caption text-vrtext-tertiary">累计现金退款</p>
+                        <p className="text-vr-caption text-vrtext-tertiary">累计现金退费/退款</p>
                         <p className="text-vr-body font-semibold text-vrerror">¥{((totalSummary.totalCashRefundOut ?? totalSummary.totalRefundOut) / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
                         <p className="text-vr-caption text-vrtext-tertiary">累计余额退回</p>
                         <p className="text-vr-body font-semibold text-vrtext-primary">¥{((totalSummary.totalBalanceRefundOut || 0) / 100).toLocaleString()}</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">累计取消退费</p>
+                        <p className="text-vr-body font-semibold text-vrwarning">¥{((totalSummary.totalCancelRefundOut || 0) / 100).toLocaleString()}</p>
+                      </div>
+                      <div className="bg-vrbg-surface rounded-lg p-3">
+                        <p className="text-vr-caption text-vrtext-tertiary">累计退款处置</p>
+                        <p className="text-vr-body font-semibold text-vrerror">¥{((totalSummary.totalRefundDispositionOut || 0) / 100).toLocaleString()}</p>
                       </div>
                       <div className="bg-vrbg-surface rounded-lg p-3">
                         <p className="text-vr-caption text-vrtext-tertiary">累计净现金流入</p>

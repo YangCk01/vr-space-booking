@@ -1052,7 +1052,7 @@ function LogSettings() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: idx * 0.03 }}
-                    className="border-b border-vrborder-DEFAULT last:border-b-0 hover:bg-white/[0.02] transition-colors"
+                    className="border-b border-vrborder-DEFAULT last:border-b-0 hover:bg-vrbg-hover/60 transition-colors"
                   >
                     <td className="px-5 py-3.5">
                       <TypeBadge type={log.type} />

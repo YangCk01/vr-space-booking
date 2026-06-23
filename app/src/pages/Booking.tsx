@@ -11,6 +11,7 @@ import {
   Building2,
   Wrench,
   CalendarDays,
+  Clock,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
 import { cn } from '@/lib/utils'
@@ -62,6 +63,18 @@ function buildHourSlots(openH: number, closeH: number): string[] {
   return slots
 }
 
+function buildTimeSlots(openH: number, closeH: number, stepMinutes = 20): string[] {
+  const slots: string[] = []
+  const start = openH * 60
+  const end = closeH * 60
+  for (let minutes = start; minutes + stepMinutes <= end; minutes += stepMinutes) {
+    const h = Math.floor(minutes / 60)
+    const m = minutes % 60
+    slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+  }
+  return slots
+}
+
 /* ─── Helper: check if a time slot is in the past ─── */
 function getCurrentTimeString(): string {
   const now = new Date()
@@ -71,7 +84,6 @@ function isSlotPast(slot: string, dateStr: string): boolean {
   if (!isToday(new Date(dateStr))) return false
   const slotMinutes = timeToMinutes(slot)
   const nowMinutes = timeToMinutes(getCurrentTimeString())
-  console.log('isSlotPast debug:', { slot, slotMinutes, now: getCurrentTimeString(), nowMinutes, result: slotMinutes <= nowMinutes })
   return slotMinutes <= nowMinutes
 }
 
@@ -149,6 +161,10 @@ function timeToMinutes(t: string): number {
 function eventHeightMinutes(start: string, end: string): number {
   const diff = timeToMinutes(end) - timeToMinutes(start)
   return Math.max(diff, 30)
+}
+
+function isTimeOverlap(startA: string, endA: string, startB: string, endB: string): boolean {
+  return timeToMinutes(startA) < timeToMinutes(endB) && timeToMinutes(endA) > timeToMinutes(startB)
 }
 
 function eventTopOffset(start: string, dayStartHour: number = 9): number {
@@ -331,6 +347,18 @@ export default function Booking() {
     queryFn: () => getGames({ status: 'ACTIVE' }),
   })
   const games = gamesData || []
+  const [dayGameId, setDayGameId] = useState('')
+  const dayGame = useMemo(
+    () => games.find((g: Game) => g.id === dayGameId) || games[0],
+    [games, dayGameId],
+  )
+  const daySlotStep = Math.max(dayGame?.duration || 30, 5)
+
+  useEffect(() => {
+    if (!dayGameId && games[0]?.id) {
+      setDayGameId(games[0].id)
+    }
+  }, [dayGameId, games])
 
   /* Modal states */
   const queryClient = useQueryClient()
@@ -504,6 +532,26 @@ export default function Booking() {
     return allEvents.filter((e) => e.venueId === selectedVenue)
   }, [selectedVenue, allEvents])
 
+  const visibleVenues = useMemo(
+    () => venues.filter((v) => selectedVenue === 'all' || v.id === selectedVenue),
+    [venues, selectedVenue],
+  )
+
+  const daySlotTimes = useMemo(
+    () => buildTimeSlots(dayStartHour, dayEndHour, daySlotStep),
+    [dayStartHour, dayEndHour, daySlotStep],
+  )
+
+  const visibleDaySlotTimes = useMemo(() => {
+    const currentDateStr = format(currentDate, 'yyyy-MM-dd')
+    const todayStr = format(new Date(), 'yyyy-MM-dd')
+    if (currentDateStr < todayStr) return []
+    if (currentDateStr === todayStr) {
+      return daySlotTimes.filter((slot) => !isSlotPast(slot, currentDateStr))
+    }
+    return daySlotTimes
+  }, [currentDate, daySlotTimes])
+
   /* ─── Check if a time is within venue maintenance window ─── */
   function isInMaintenanceWindow(venue: Venue | undefined, dateStr: string, timeStr: string, duration = 30): boolean {
     if (!venue || venue.status !== 'MAINTENANCE') return false
@@ -519,9 +567,11 @@ export default function Booking() {
   }
 
   /* ─── Modal handlers ─── */
-  const openNewBooking = (venueId?: string, time?: string) => {
+  const openNewBooking = (venueId?: string, time?: string, gameId?: string) => {
     const defaultVenueId = venueId || venues[0]?.id || ''
     const venue = venues.find((v) => v.id === defaultVenueId)
+    const presetGame = games.find((g: Game) => g.id === gameId)
+    const presetDuration = presetGame?.duration || 30
     const status = (venue?.status || '').toLowerCase()
 
     if (status === 'disabled') {
@@ -536,7 +586,7 @@ export default function Booking() {
     }
 
     const targetTime = time || '09:00'
-    if (isInMaintenanceWindow(venue, currentDateStr, targetTime)) {
+    if (isInMaintenanceWindow(venue, currentDateStr, targetTime, presetDuration)) {
       alert(`该场地 ${venue?.maintenanceStartTime} - ${venue?.maintenanceEndTime} 正在维护中，该时段不可预约`)
       return
     }
@@ -552,7 +602,7 @@ export default function Booking() {
     setBookingForm({
       type: 'team',
       venue: defaultVenueId,
-      gameId: '',
+      gameId: gameId || '',
       person: '',
       phone: '',
       count: 1,
@@ -597,6 +647,131 @@ export default function Booking() {
       maintenance: todayEvents.filter((e) => e.type === 'MAINTENANCE' || e.type === 'maintenance').length,
     }
   }, [allEvents])
+
+  const currentDayStats = useMemo(() => {
+    const currentDateStr = format(currentDate, 'yyyy-MM-dd')
+    const dayEvents = filteredEvents.filter((e) => getEventDateStr(e.date) === currentDateStr && e.status !== 'NO_SHOW')
+    const bookingOnly = dayEvents.filter((e) => e.type !== 'MAINTENANCE' && e.type !== 'maintenance')
+    const totalPeople = bookingOnly.reduce((sum, e) => sum + (Number(e.personCount) || 0), 0)
+    const venueCapacity = visibleVenues.reduce((sum, v) => sum + (Number(v.capacity) || 0), 0)
+    const occupiedSlots = new Set<string>()
+    for (const event of bookingOnly) {
+      for (const slot of daySlotTimes) {
+        const slotEnd = addMinutes(slot, daySlotStep)
+        if (isTimeOverlap(event.startTime, event.endTime, slot, slotEnd)) {
+          occupiedSlots.add(`${event.venueId}-${slot}`)
+        }
+      }
+    }
+    const totalSlots = Math.max(visibleVenues.length * daySlotTimes.length, 1)
+    const freeRate = Math.max(0, Math.round((1 - occupiedSlots.size / totalSlots) * 100))
+    return {
+      total: bookingOnly.length,
+      people: totalPeople,
+      maintenance: dayEvents.filter((e) => e.type === 'MAINTENANCE' || e.type === 'maintenance').length,
+      capacity: venueCapacity,
+      freeRate,
+    }
+  }, [currentDate, filteredEvents, visibleVenues, daySlotTimes])
+
+  const getDateOverview = useCallback((date: Date) => {
+    const dateStr = format(date, 'yyyy-MM-dd')
+    const dayEvents = filteredEvents.filter((e) => getEventDateStr(e.date) === dateStr && e.status !== 'NO_SHOW')
+    const bookingOnly = dayEvents.filter((e) => e.type !== 'MAINTENANCE' && e.type !== 'maintenance')
+    const maintenanceOnly = dayEvents.filter((e) => e.type === 'MAINTENANCE' || e.type === 'maintenance')
+    const people = bookingOnly.reduce((sum, e) => sum + (Number(e.personCount) || 0), 0)
+    const checkedIn = bookingOnly.filter((e) => e.status === 'CHECKED_IN').length
+    const playing = bookingOnly.filter((e) => e.status === 'PLAYING').length
+    const noShow = bookingOnly.filter((e) => e.status === 'NO_SHOW').length
+    const active = bookingOnly.filter((e) => e.status !== 'CANCELLED' && e.status !== 'NO_SHOW')
+    const utilization = Math.min(100, Math.round((active.length / Math.max(visibleVenues.length * 8, 1)) * 100))
+    return {
+      events: dayEvents,
+      bookings: bookingOnly,
+      maintenance: maintenanceOnly,
+      people,
+      checkedIn,
+      playing,
+      noShow,
+      utilization,
+    }
+  }, [filteredEvents, visibleVenues.length])
+
+  const getDaySlotState = useCallback((venue: Venue, slot: string) => {
+    const currentDateStr = format(currentDate, 'yyyy-MM-dd')
+    const slotEnd = addMinutes(slot, daySlotStep)
+    const dayEvents = filteredEvents.filter((e) => getEventDateStr(e.date) === currentDateStr && e.venueId === venue.id)
+    const maintenanceEvent = dayEvents.find((e) =>
+      (e.type === 'MAINTENANCE' || e.type === 'maintenance') &&
+      isTimeOverlap(e.startTime, e.endTime, slot, slotEnd)
+    )
+    if (maintenanceEvent || isInMaintenanceWindow(venue, currentDateStr, slot, daySlotStep)) {
+      return {
+        kind: 'maintenance' as const,
+        label: '维护中',
+        event: maintenanceEvent,
+        clickable: false,
+        used: 0,
+        remaining: 0,
+      }
+    }
+
+    if (isSlotPast(slot, currentDateStr)) {
+      return {
+        kind: 'past' as const,
+        label: '已过时',
+        event: null,
+        clickable: false,
+        used: 0,
+        remaining: 0,
+      }
+    }
+
+    const bookings = dayEvents.filter((e) =>
+      e.type !== 'MAINTENANCE' &&
+      e.type !== 'maintenance' &&
+      e.status !== 'CANCELLED' &&
+      isTimeOverlap(e.startTime, e.endTime, slot, slotEnd)
+    )
+    if (bookings.length === 0) {
+      return {
+        kind: 'available' as const,
+        label: '可预约',
+        event: null,
+        clickable: canManageBookings,
+        used: 0,
+        remaining: Math.max(Number(venue.capacity) || 0, 0),
+      }
+    }
+
+    const used = bookings.reduce((sum, e) => sum + (Number(e.personCount) || 0), 0)
+    const capacity = Number(venue.capacity) || used
+    const remaining = Math.max(capacity - used, 0)
+    const first = bookings[0]
+    const currentGameId = dayGame?.id || ''
+    const sameGame = currentGameId
+      ? bookings.every((e) => (e.gameId || e.game?.id || '') === currentGameId)
+      : bookings.every((e) => (e.gameId || e.game?.id || '') === (first.gameId || first.game?.id || ''))
+    if (remaining > 0 && sameGame) {
+      return {
+        kind: 'joinable' as const,
+        label: `可拼 ${remaining}人`,
+        event: first,
+        clickable: canManageBookings,
+        used,
+        remaining,
+      }
+    }
+
+    return {
+      kind: 'full' as const,
+      label: remaining <= 0 ? '已约满' : '已占用',
+      event: first,
+      clickable: false,
+      used,
+      remaining,
+    }
+  }, [currentDate, filteredEvents, canManageBookings, daySlotStep, dayGame])
 
   return (
     <Layout breadcrumb={['预约排场']}>
@@ -772,158 +947,167 @@ export default function Booking() {
             transition={{ duration: 0.3 }}
             className="bg-vrbg-card rounded-b-xl border border-t-0 border-vrborder-DEFAULT overflow-hidden"
           >
-            <div className="flex overflow-x-auto">
-              {/* Time axis */}
-              <div className="w-[60px] shrink-0 border-r border-vrborder-DEFAULT" style={{ height: totalHeight }}>
-                {hourSlots.map((slot) => (
-                  <div
-                    key={slot}
-                    className={cn(
-                      'flex items-start justify-end pr-2 text-vr-caption',
-                      slot.endsWith(':00') || slot.endsWith(':30')
-                        ? 'text-vrtext-tertiary'
-                        : 'text-vrtext-tertiary/30'
-                    )}
-                    style={{ height: slotHeight }}
-                  >
-                    {slot.endsWith(':00') || slot.endsWith(':30') ? slot : ''}
+            <div className="border-b border-vrborder-subtle bg-vrbg-elevated/30 px-4 py-3">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                {[
+                  { label: '当日预约', value: `${currentDayStats.total} 场`, tone: 'text-vraccent-primary' },
+                  { label: '预约人次', value: `${currentDayStats.people} 人`, tone: 'text-vrtext-primary' },
+                  { label: '场地容量', value: `${currentDayStats.capacity} 人`, tone: 'text-vrtext-primary' },
+                  { label: '空闲率', value: `${currentDayStats.freeRate}%`, tone: 'text-emerald-500' },
+                  { label: '维护时段', value: `${currentDayStats.maintenance} 段`, tone: 'text-orange-500' },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-lg border border-vrborder-subtle bg-vrbg-card px-3 py-2">
+                    <p className="text-vr-caption text-vrtext-tertiary">{item.label}</p>
+                    <p className={cn('mt-1 text-vr-body font-semibold', item.tone)}>{item.value}</p>
                   </div>
                 ))}
               </div>
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-vr-caption text-vrtext-secondary">
+                {[
+                  ['bg-vrbg-card border-vrborder-subtle', '可预约'],
+                  ['bg-blue-50 border-blue-200', '可拼场'],
+                  ['bg-indigo-50 border-indigo-200', '已预约'],
+                  ['bg-red-50 border-red-200', '已约满/冲突'],
+                  ['bg-orange-50 border-orange-200', '维护中'],
+                  ['bg-slate-100 border-slate-200', '已过时'],
+                ].map(([cls, label]) => (
+                  <span key={label} className="inline-flex items-center gap-1.5">
+                    <span className={cn('h-3 w-3 rounded border', cls)} />
+                    {label}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-vrborder-subtle bg-vrbg-card px-3 py-2">
+                <div>
+                  <p className="text-vr-caption text-vrtext-tertiary">按游戏时长展示场次</p>
+                  <p className="mt-0.5 text-vr-body-sm text-vrtext-secondary">
+                    当前每个时段为 {daySlotStep} 分钟，完整校验维护和占用冲突
+                  </p>
+                </div>
+                <select
+                  value={dayGame?.id || ''}
+                  onChange={(e) => setDayGameId(e.target.value)}
+                  className="h-9 min-w-[220px] rounded-lg border border-vrborder-DEFAULT bg-vrbg-card px-3 text-vr-body-sm text-vrtext-primary focus:border-vraccent-primary focus:outline-none"
+                >
+                  {games.map((game: Game) => (
+                    <option key={game.id} value={game.id}>
+                      {game.title} · {game.duration || 30}分钟
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
 
-              {/* Venue columns */}
-              {venues
-                .filter((v) => selectedVenue === 'all' || v.id === selectedVenue)
-                .map((venue) => (
-                  <div
+            <div className="space-y-3 p-4">
+              {visibleDaySlotTimes.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-vrborder-subtle px-6 py-12 text-center text-vr-body-sm text-vrtext-secondary">
+                  当前日期没有可展示的后续时段
+                </div>
+              ) : visibleVenues.map((venue, venueIndex) => {
+                const dateStr = format(currentDate, 'yyyy-MM-dd')
+                const venueEvents = filteredEvents.filter((e) => getEventDateStr(e.date) === dateStr && e.venueId === venue.id && e.type !== 'MAINTENANCE' && e.type !== 'maintenance')
+                const venuePeople = venueEvents.reduce((sum, e) => sum + (Number(e.personCount) || 0), 0)
+                return (
+                  <motion.div
                     key={venue.id}
-                    className="flex-1 min-w-[200px] border-r border-vrborder-DEFAULT relative"
-                    style={{ height: totalHeight }}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.22, delay: venueIndex * 0.03 }}
+                    className="rounded-xl border border-vrborder-subtle bg-vrbg-card p-3"
                   >
-                    {/* Column header */}
-                    <div className="sticky top-0 z-10 bg-vrbg-card border-b border-vrborder-DEFAULT py-2 text-center">
-                      <p className="text-vr-body-sm text-vrtext-primary font-medium">{venue.name}</p>
-                    </div>
-
-                    {/* Time grid lines with quarter-hour ticks */}
-                    {hourSlots.map((slot) => (
-                      <div key={slot} className="relative" style={{ height: slotHeight }}>
-                        <div className={cn(
-                          'absolute bottom-0 left-0 right-0',
-                          slot.endsWith(':00') || slot.endsWith(':30')
-                            ? 'border-b border-vrborder-DEFAULT/40'
-                            : 'border-b border-vrborder-DEFAULT/15'
-                        )} />
-                      </div>
-                    ))}
-
-                    {/* Event blocks */}
-                    {(() => {
-                      const venueEvents = filteredEvents.filter((e) => e.venueId === venue.id)
-                      const layout = computeEventLayout(venueEvents)
-                      const stackTops = computeStackTops(venueEvents, slotHeight, slotHeight, dayStartHour)
-                      return venueEvents.map((event, idx) => {
-                        const cfg = eventTypeConfig[event.type]
-                        const EventIcon = cfg.icon
-                        const isMaintenanceEvent = event.type === 'MAINTENANCE' || event.type === 'maintenance'
-                        const lo = layout.get(event.id)
-                        const col = lo?.col ?? 0
-                        const total = lo?.total ?? 1
-                        const gapPx = 2
-                        const marginPx = 4
-                        const leftStyle =
-                          total === 1
-                            ? `${marginPx}px`
-                            : `calc(${marginPx}px + ${col} * ((100% - ${marginPx * 2 - gapPx}px) / ${total}))`
-                        const widthStyle =
-                          total === 1
-                            ? `calc(100% - ${marginPx * 2}px)`
-                            : `calc((100% - ${marginPx * 2 - gapPx}px) / ${total} - ${gapPx}px)`
-                        return (
-                          <motion.div
-                            key={event.id}
-                            initial={{ opacity: 0, scaleY: 0 }}
-                            animate={{ opacity: 1, scaleY: 1 }}
-                            transition={{ duration: 0.35, delay: idx * 0.08, ease: easeOut }}
-                            style={{
-                              top: stackTops.get(event.id) ?? 0,
-                              height: 72,
-                              left: leftStyle,
-                              width: widthStyle,
-                            }}
-                            className={cn(
-                              'group absolute rounded-md px-1.5 py-1 cursor-pointer overflow-hidden',
-                              event.status === 'NO_SHOW'
-                                ? 'bg-gray-500/10 border border-gray-400/40 border-dashed'
-                                : cn(
-                                    'border-l-[3px]',
-                                    event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
-                                    event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
-                                    cfg.bg,
-                                    event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
-                                  ),
-                              'hover:overflow-visible hover:z-[30] hover:shadow-vr-xl hover:ring-2 hover:ring-white/20 transition-all duration-150 z-20'
-                            )}
-                          >
-                            <div className={cn("flex items-center gap-1", event.status === 'NO_SHOW' ? 'text-gray-600' : 'text-white')}>
-                              <EventIcon className="w-3 h-3 shrink-0" />
-                              <span className="text-vr-caption font-medium truncate">
-                                {cfg.label}
-                              </span>
-                            </div>
-                            <div className={cn("text-vr-caption mt-0.5 truncate", event.status === 'NO_SHOW' ? 'text-gray-500' : 'text-white/80')}>
-                              {event.startTime}-{event.endTime}
-                            </div>
-                            <div className={cn("text-vr-caption mt-0.5 truncate", event.status === 'NO_SHOW' ? 'text-gray-400' : 'text-white/70')}>
-                              {isMaintenanceEvent
-                                ? '场地维护'
-                                : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
-                            </div>
-                            {/* Hover tooltip */}
-                            <div className="hidden group-hover:flex absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[40] flex-col px-5 py-4 rounded-2xl bg-slate-800/95 backdrop-blur-sm border border-slate-500 shadow-2xl min-w-[180px]">
-                              <div className="flex items-center gap-2 text-white">
-                                <EventIcon className="w-5 h-5 shrink-0" />
-                                <span className="text-vr-body font-semibold">{cfg.label}</span>
-                              </div>
-                              <div className="text-vr-body-sm text-slate-300 mt-2">
-                                {event.startTime} - {event.endTime}
-                              </div>
-                              {event.personName && (
-                                <div className="text-vr-caption text-slate-400 mt-1">{event.personName}</div>
-                              )}
-                              <div className="text-vr-caption text-slate-400 mt-1">
-                                {isMaintenanceEvent
-                                  ? '场地维护中，不可新建预约'
-                                  : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
-                              </div>
-                              <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-800/95 border-r border-b border-slate-500 rotate-45" />
-                            </div>
-                          </motion.div>
-                        )
-                      })
-                    })()}
-
-                    {/* Click to add overlay on empty areas */}
-                    {(() => {
-                      const todayStr = format(new Date(), 'yyyy-MM-dd')
-                      const currentDateStr = format(currentDate, 'yyyy-MM-dd')
-                      const isPastDate = currentDateStr < todayStr
-                      if (isPastDate || !canManageBookings) return null
-                      return (
-                        <div
-                          className="absolute inset-0 z-10 opacity-0 hover:opacity-100 transition-opacity bg-white/5 cursor-pointer flex items-center justify-center"
-                          onClick={() => openNewBooking(venue.id, '09:00')}
-                          style={{ top: slotHeight }}
-                        >
-                          <span className="text-vr-caption text-vrtext-secondary flex items-center gap-1">
-                            <Plus className="w-3 h-3" />
-                            点击新建
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-vr-body font-semibold text-vrtext-primary">{venue.name}</p>
+                          <span className={cn(
+                            'rounded-full px-2 py-0.5 text-[11px]',
+                            venue.status === 'MAINTENANCE'
+                              ? 'bg-orange-50 text-orange-600'
+                              : venue.status === 'DISABLED'
+                                ? 'bg-slate-100 text-slate-500'
+                                : 'bg-emerald-50 text-emerald-600'
+                          )}>
+                            {venue.status === 'MAINTENANCE' ? '维护中' : venue.status === 'DISABLED' ? '暂停营业' : '营业中'}
                           </span>
                         </div>
-                      )
-                    })()}
-                  </div>
-                ))}
+                        <div className="mt-1 flex flex-wrap items-center gap-3 text-vr-caption text-vrtext-tertiary">
+                          <span className="inline-flex items-center gap-1">
+                            <Clock className="h-3.5 w-3.5" />
+                            {venue.openTime?.slice(0, 5) || `${String(dayStartHour).padStart(2, '0')}:00`} - {venue.closeTime?.slice(0, 5) || `${String(dayEndHour).padStart(2, '0')}:00`}
+                          </span>
+                          <span>已排 {venueEvents.length} 场</span>
+                          <span>人数 {venuePeople}/{venue.capacity}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-2">
+                      {visibleDaySlotTimes.map((slot) => {
+                        const state = getDaySlotState(venue, slot)
+                        const event = state.event
+                        const isClickable = state.clickable && venue.status !== 'DISABLED'
+                        const cellClass =
+                          state.kind === 'available'
+                            ? 'bg-vrbg-card hover:border-vraccent-primary hover:bg-vrbg-hover'
+                            : state.kind === 'joinable'
+                              ? 'bg-blue-50 border-blue-200 hover:border-blue-400'
+                              : state.kind === 'maintenance'
+                                ? 'bg-orange-50 border-orange-200 text-orange-700'
+                                : state.kind === 'past'
+                                  ? 'bg-slate-100 border-slate-200 text-slate-400'
+                                  : 'bg-red-50 border-red-200 text-red-600'
+
+                        return (
+                          <button
+                            key={`${venue.id}-${slot}`}
+                            type="button"
+                            disabled={!isClickable}
+                            onClick={() => isClickable && openNewBooking(venue.id, slot, dayGame?.id)}
+                            className={cn(
+                              'group min-h-[72px] rounded-lg border p-2 text-left transition-colors',
+                              cellClass,
+                              isClickable ? 'cursor-pointer' : 'cursor-default'
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-1">
+                              <div>
+                                <p className="text-vr-body-sm font-semibold text-vrtext-primary">{slot}</p>
+                                <p className="text-[11px] text-vrtext-tertiary">{addMinutes(slot, daySlotStep)}</p>
+                              </div>
+                              <span className={cn(
+                                'rounded-full px-1.5 py-0.5 text-[11px] font-medium',
+                                state.kind === 'available' ? 'bg-slate-100 text-vrtext-secondary' :
+                                state.kind === 'joinable' ? 'bg-blue-100 text-blue-700' :
+                                state.kind === 'full' ? 'bg-red-100 text-red-600' :
+                                state.kind === 'maintenance' ? 'bg-orange-100 text-orange-700' :
+                                'bg-slate-200 text-slate-500'
+                              )}>
+                                {state.label}
+                              </span>
+                            </div>
+
+                            {event ? (
+                              <div className="mt-1.5">
+                                <p className="truncate text-[11px] font-medium text-vrtext-primary">
+                                  {event.game?.title || event.title || 'VR体验'}
+                                </p>
+                                <p className="mt-0.5 truncate text-[11px] text-vrtext-secondary">
+                                  {event.personCount || state.used || 1}人{event.personName ? ` · ${event.personName}` : ''}
+                                </p>
+                              </div>
+                            ) : state.kind === 'available' ? (
+                              <div className="mt-2 flex items-center gap-1 text-[11px] text-vrtext-tertiary">
+                                {isClickable && <Plus className="h-3 w-3" />}
+                                {isClickable ? '点击排场' : '空闲'}
+                              </div>
+                            ) : null}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </motion.div>
+                )
+              })}
             </div>
           </motion.div>
         )}
@@ -936,235 +1120,89 @@ export default function Booking() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.3 }}
-            className="bg-vrbg-card rounded-b-xl border border-t-0 border-vrborder-DEFAULT overflow-hidden"
+            className="bg-vrbg-card rounded-b-xl border border-t-0 border-vrborder-DEFAULT overflow-hidden p-4"
           >
-            <div className="flex overflow-x-auto">
-              {/* Time axis */}
-              <div className="w-[60px] shrink-0 border-r border-vrborder-DEFAULT" style={{ height: totalHeight }}>
-                {hourSlots.map((slot) => (
-                  <div
-                    key={slot}
-                    className={cn(
-                      'flex items-start justify-end pr-2 text-vr-caption',
-                      slot.endsWith(':00') || slot.endsWith(':30')
-                        ? 'text-vrtext-tertiary'
-                        : 'text-vrtext-tertiary/30'
-                    )}
-                    style={{ height: slotHeight }}
-                  >
-                    {slot.endsWith(':00') || slot.endsWith(':30') ? slot : ''}
-                  </div>
-                ))}
-              </div>
-
-              {/* Day columns */}
-              {weekDays.map((day) => (
-                <div
+            <div className="grid grid-cols-7 gap-3">
+              {weekDays.map((day) => {
+                const overview = getDateOverview(day)
+                const isPastDay = format(day, 'yyyy-MM-dd') < format(new Date(), 'yyyy-MM-dd')
+                const topEvents = overview.bookings
+                  .filter((e) => !isPastDay || e.status !== 'CANCELLED')
+                  .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime))
+                  .slice(0, 4)
+                return (
+                  <button
                   key={day.toISOString()}
-                  className={cn(
-                    'flex-1 min-w-[160px] border-r border-vrborder-DEFAULT relative',
-                    isToday(day) && 'bg-[rgba(59,130,246,0.04)]'
-                  )}
-                  style={{ height: totalHeight }}
-                >
-                  {/* Column header */}
-                  <div
-                    className="sticky top-0 z-10 bg-vrbg-card border-b border-vrborder-DEFAULT py-2 text-center cursor-pointer hover:bg-vrbg-hover transition-colors"
+                    type="button"
                     onClick={() => { setCurrentDate(day); setView('day') }}
-                  >
-                    <p className={cn(
-                      'text-vr-body-sm font-medium',
-                      isToday(day) ? 'text-vr-blue' : 'text-vrtext-primary'
-                    )}>
-                      {format(day, 'EEE M/d', { locale: zhCN })}
-                    </p>
-                  </div>
-
-                  {/* Grid lines with quarter-hour ticks */}
-                  {hourSlots.map((slot) => (
-                    <div key={slot} className="relative" style={{ height: slotHeight }}>
-                      <div className={cn(
-                        'absolute bottom-0 left-0 right-0',
-                        slot.endsWith(':00') || slot.endsWith(':30')
-                          ? 'border-b border-vrborder-DEFAULT/40'
-                          : 'border-b border-vrborder-DEFAULT/15'
-                      )} />
+                  className={cn(
+                      'min-h-[260px] rounded-xl border p-3 text-left transition-all hover:border-vraccent-primary hover:shadow-vr-md',
+                      isToday(day)
+                        ? 'border-vraccent-primary bg-blue-50/40'
+                        : 'border-vrborder-subtle bg-vrbg-card',
+                      isPastDay && 'bg-slate-50/70'
+                  )}
+                >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className={cn('text-vr-body-sm font-semibold', isToday(day) ? 'text-vraccent-primary' : 'text-vrtext-primary')}>
+                          {format(day, 'EEE', { locale: zhCN })}
+                        </p>
+                        <p className="mt-1 text-vr-caption text-vrtext-tertiary">{format(day, 'M月d日', { locale: zhCN })}</p>
+                      </div>
+                      <span className={cn(
+                        'rounded-full px-2 py-0.5 text-[11px]',
+                        overview.maintenance.length > 0
+                          ? 'bg-orange-50 text-orange-600'
+                          : overview.bookings.length > 0
+                            ? 'bg-blue-50 text-blue-600'
+                            : 'bg-slate-100 text-slate-500'
+                      )}>
+                        {overview.maintenance.length > 0 ? '有维护' : overview.bookings.length > 0 ? '有排场' : '空闲'}
+                      </span>
                     </div>
-                  ))}
 
-                  {/* Events for the week view */}
-                  {(() => {
-                    const dayEvents = filteredEvents.filter(
-                      (e) => getEventDateStr(e.date) === format(day, 'yyyy-MM-dd')
-                    )
-                    if (selectedVenue !== 'all') {
-                      const venueEvents = dayEvents.filter((e) => e.venueId === selectedVenue)
-                      const layout = computeEventLayout(venueEvents)
-                      const stackTops = computeStackTops(venueEvents, slotHeight, slotHeight, dayStartHour)
-                      return dayEvents
-                        .filter((e) => e.venueId === selectedVenue)
-                        .map((event, idx) => {
-                          const cfg = eventTypeConfig[event.type]
-                          const EventIcon = cfg.icon
-                          const isMaintenanceEvent = event.type === 'MAINTENANCE' || event.type === 'maintenance'
-                          const lo = layout.get(event.id)
-                          const subCol = lo?.col ?? 0
-                          const subTotal = lo?.total ?? 1
-                          const colWidth = 100 / subTotal
-                          const left = subCol * colWidth
-                          return (
-                            <motion.div
-                              key={event.id}
-                              initial={{ opacity: 0, scaleY: 0 }}
-                              animate={{ opacity: 1, scaleY: 1 }}
-                              transition={{ duration: 0.35, delay: idx * 0.04 }}
-                              style={{
-                                top: stackTops.get(event.id) ?? 0,
-                                height: 72,
-                                left: `${left}%`,
-                                width: `${colWidth}%`,
-                              }}
-                              className={cn(
-                                'group absolute rounded-md px-1.5 py-1 cursor-pointer overflow-hidden',
-                                event.status === 'NO_SHOW'
-                                  ? 'bg-gray-500/10 border border-gray-400/40 border-dashed'
-                                  : cn(
-                                      'border-l-[3px]',
-                                      event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
-                                      event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
-                                      cfg.bg,
-                                      event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
-                                    ),
-                                'hover:overflow-visible hover:z-[30] hover:shadow-vr-xl hover:ring-2 hover:ring-white/20 transition-all duration-150 z-20'
-                              )}
-                            >
-                              <div className={cn("flex items-center gap-1", event.status === 'NO_SHOW' ? 'text-gray-600' : 'text-white')}>
-                                <EventIcon className="w-3 h-3 shrink-0" />
-                                <span className="text-vr-caption font-medium truncate">
-                                  {cfg.label}
-                                </span>
-                              </div>
-                              <div className={cn("text-vr-caption truncate", event.status === 'NO_SHOW' ? 'text-gray-500' : 'text-white/70')}>
-                                {event.startTime}-{event.endTime}
-                              </div>
-                              <div className={cn("text-vr-caption truncate", event.status === 'NO_SHOW' ? 'text-gray-400' : 'text-white/70')}>
-                                {isMaintenanceEvent
-                                  ? '场地维护'
-                                  : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
-                              </div>
-                              {/* Hover tooltip */}
-                              <div className="hidden group-hover:flex absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[40] flex-col px-5 py-4 rounded-2xl bg-slate-800/95 backdrop-blur-sm border border-slate-500 shadow-2xl min-w-[180px]">
-                                <div className="flex items-center gap-2 text-white">
-                                  <EventIcon className="w-5 h-5 shrink-0" />
-                                  <span className="text-vr-body font-semibold">{cfg.label}</span>
-                                </div>
-                                <div className="text-vr-body-sm text-slate-300 mt-2">
-                                  {event.startTime} - {event.endTime}
-                                </div>
-                                {event.personName && (
-                                  <div className="text-vr-caption text-slate-400 mt-1">{event.personName}</div>
-                                )}
-                                <div className="text-vr-caption text-slate-400 mt-1">
-                                  {isMaintenanceEvent
-                                    ? '场地维护中，不可新建预约'
-                                    : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
-                                </div>
-                                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-800/95 border-r border-b border-slate-500 rotate-45" />
-                              </div>
-                            </motion.div>
-                          )
-                        })
-                    }
-                    // all venues: group by venue and compute layout per venue
-                    const venueGroups = new Map<string, any[]>()
-                    for (const e of dayEvents) {
-                      const list = venueGroups.get(e.venueId) || []
-                      list.push(e)
-                      venueGroups.set(e.venueId, list)
-                    }
-                    const layouts = new Map<string, ReturnType<typeof computeEventLayout>>()
-                    const stackTopsMap = new Map<string, ReturnType<typeof computeStackTops>>()
-                    for (const [vid, list] of venueGroups) {
-                      layouts.set(vid, computeEventLayout(list))
-                      stackTopsMap.set(vid, computeStackTops(list, slotHeight, slotHeight, dayStartHour))
-                    }
-                    return dayEvents.map((event, idx) => {
-                      const cfg = eventTypeConfig[event.type]
-                      const EventIcon = cfg.icon
-                      const isMaintenanceEvent = event.type === 'MAINTENANCE' || event.type === 'maintenance'
-                      const venueIdx = venues.findIndex((v) => v.id === event.venueId)
-                      const baseColWidth = 100 / 4
-                      const baseLeft = venueIdx * baseColWidth
-                      const lo = layouts.get(event.venueId)?.get(event.id)
-                      const subCol = lo?.col ?? 0
-                      const subTotal = lo?.total ?? 1
-                      const subWidth = baseColWidth / subTotal
-                      const left = baseLeft + subCol * subWidth
-                      return (
-                        <motion.div
-                          key={event.id}
-                          initial={{ opacity: 0, scaleY: 0 }}
-                          animate={{ opacity: 1, scaleY: 1 }}
-                          transition={{ duration: 0.35, delay: idx * 0.04 }}
-                          style={{
-                            top: stackTopsMap.get(event.venueId)?.get(event.id) ?? 0,
-                            height: 72,
-                            left: `${left}%`,
-                            width: `${subWidth}%`,
-                          }}
-                          className={cn(
-                            'group absolute rounded-md px-1.5 py-1 cursor-pointer overflow-hidden',
-                            event.status === 'NO_SHOW'
-                              ? 'bg-gray-500/10 border border-gray-400/40 border-dashed'
-                              : cn(
-                                  'border-l-[3px]',
-                                  event.status === 'PLAYING' ? 'bg-emerald-500/20 border-l-emerald-500' :
-                                  event.status === 'CHECKED_IN' ? 'bg-amber-500/20 border-l-amber-500' :
-                                  cfg.bg,
-                                  event.status === 'PLAYING' || event.status === 'CHECKED_IN' ? '' : cfg.border,
-                                ),
-                            'hover:overflow-visible hover:z-[30] hover:shadow-vr-xl hover:ring-2 hover:ring-white/20 transition-all duration-150 z-20'
-                          )}
-                        >
-                          <div className={cn("flex items-center gap-1", event.status === 'NO_SHOW' ? 'text-gray-600' : 'text-white')}>
-                            <EventIcon className="w-3 h-3 shrink-0" />
-                            <span className="text-vr-caption font-medium truncate">
-                              {cfg.label}
-                            </span>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <div className="rounded-lg bg-vrbg-elevated px-2 py-2">
+                        <p className="text-[11px] text-vrtext-tertiary">预约</p>
+                        <p className="text-vr-body-sm font-semibold text-vrtext-primary">{overview.bookings.length} 场</p>
+                      </div>
+                      <div className="rounded-lg bg-vrbg-elevated px-2 py-2">
+                        <p className="text-[11px] text-vrtext-tertiary">人次</p>
+                        <p className="text-vr-body-sm font-semibold text-vrtext-primary">{overview.people} 人</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-vrbg-elevated">
+                      <div
+                        className={cn('h-full rounded-full', overview.utilization >= 70 ? 'bg-red-400' : overview.utilization >= 35 ? 'bg-blue-400' : 'bg-emerald-400')}
+                        style={{ width: `${overview.utilization}%` }}
+                      />
+                    </div>
+
+                    <div className="mt-3 space-y-2">
+                      {topEvents.length === 0 ? (
+                        <p className="rounded-lg border border-dashed border-vrborder-subtle px-2 py-5 text-center text-vr-caption text-vrtext-tertiary">
+                          暂无预约
+                        </p>
+                      ) : topEvents.map((event) => (
+                        <div key={event.id} className="rounded-lg border border-vrborder-subtle bg-vrbg-card px-2 py-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-vr-caption font-medium text-vrtext-primary">{event.startTime}-{event.endTime}</span>
+                            <span className="text-[11px] text-vrtext-tertiary">{event.personCount || 1}人</span>
                           </div>
-                          <div className={cn("text-vr-caption truncate", event.status === 'NO_SHOW' ? 'text-gray-500' : 'text-white/70')}>
-                            {event.startTime}-{event.endTime}
-                          </div>
-                          <div className={cn("text-vr-caption truncate", event.status === 'NO_SHOW' ? 'text-gray-400' : 'text-white/70')}>
-                            {isMaintenanceEvent
-                              ? '场地维护'
-                              : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
-                          </div>
-                          {/* Hover tooltip */}
-                          <div className="hidden group-hover:flex absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[40] flex-col px-5 py-4 rounded-2xl bg-slate-800/95 backdrop-blur-sm border border-slate-500 shadow-2xl min-w-[180px]">
-                            <div className="flex items-center gap-2 text-white">
-                              <EventIcon className="w-5 h-5 shrink-0" />
-                              <span className="text-vr-body font-semibold">{cfg.label}</span>
-                            </div>
-                            <div className="text-vr-body-sm text-slate-300 mt-2">
-                              {event.startTime} - {event.endTime}
-                            </div>
-                            {event.personName && (
-                              <div className="text-vr-caption text-slate-400 mt-1">{event.personName}</div>
-                            )}
-                            <div className="text-vr-caption text-slate-400 mt-1">
-                              {isMaintenanceEvent
-                                ? '场地维护中，不可新建预约'
-                                : `${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
-                            </div>
-                            <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-800/95 border-r border-b border-slate-500 rotate-45" />
-                          </div>
-                        </motion.div>
-                      )
-                    })
-                  })()}
-                </div>
-              ))}
+                          <p className="mt-0.5 truncate text-[11px] text-vrtext-secondary">
+                            {event.venueName || venues.find((v) => v.id === event.venueId)?.name || '场地'} · {event.game?.title || event.title || 'VR体验'}
+                          </p>
+                        </div>
+                      ))}
+                      {overview.bookings.length > topEvents.length && (
+                        <p className="text-center text-vr-caption text-vraccent-primary">+{overview.bookings.length - topEvents.length} 更多</p>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </motion.div>
         )}
@@ -1203,8 +1241,9 @@ export default function Booking() {
             >
               {monthDays.map((day) => {
                 const isCurrentMonth = day.getMonth() === currentDate.getMonth()
-                const dayStr = format(day, 'yyyy-MM-dd')
-                const dayEvents = filteredEvents.filter((e) => getEventDateStr(e.date) === dayStr)
+                const overview = getDateOverview(day)
+                const hasMaintenance = overview.maintenance.length > 0
+                const hasBooking = overview.bookings.length > 0
                 return (
                   <motion.div
                     key={day.toISOString()}
@@ -1213,14 +1252,15 @@ export default function Booking() {
                       visible: { opacity: 1, transition: { duration: 0.2 } },
                     }}
                     className={cn(
-                      'min-h-[100px] border border-vrborder-DEFAULT/40 p-1.5 cursor-pointer hover:bg-vrbg-hover/30 transition-colors',
+                      'min-h-[132px] border border-vrborder-DEFAULT/40 p-2 cursor-pointer hover:bg-vrbg-hover/30 transition-colors',
                       !isCurrentMonth && 'opacity-50 bg-vrbg-base/30',
-                      isToday(day) && 'bg-[rgba(59,130,246,0.06)]'
+                      isToday(day) && 'bg-[rgba(59,130,246,0.06)]',
+                      hasMaintenance && 'bg-orange-50/40',
                     )}
                     onClick={() => { setCurrentDate(day); setView('day') }}
                   >
                     {/* Date number */}
-                    <div className="flex justify-center mb-1">
+                    <div className="flex items-center justify-between mb-2">
                       <span
                         className={cn(
                           'w-6 h-6 flex items-center justify-center rounded-full text-vr-caption',
@@ -1233,49 +1273,46 @@ export default function Booking() {
                       >
                         {format(day, 'd')}
                       </span>
+                      <span className={cn(
+                        'rounded-full px-2 py-0.5 text-[11px]',
+                        hasMaintenance
+                          ? 'bg-orange-100 text-orange-600'
+                          : hasBooking
+                            ? 'bg-blue-50 text-blue-600'
+                            : 'bg-slate-100 text-slate-500'
+                      )}>
+                        {hasMaintenance ? '维护' : hasBooking ? '有排场' : '空闲'}
+                      </span>
                     </div>
 
-                    {/* Events for today */}
-                    {dayEvents.slice(0, 3).map((event) => {
-                      const cfg = eventTypeConfig[event.type]
-                      const isMaintenanceEvent = event.type === 'MAINTENANCE' || event.type === 'maintenance'
-                      return (
-                        <div
-                          key={event.id}
-                          className={cn(
-                            'group relative flex items-center gap-1 px-1.5 py-0.5 rounded-sm mb-0.5 cursor-pointer hover:opacity-80 transition-opacity',
-                            event.status === 'NO_SHOW' ? 'bg-gray-500/10 border border-gray-400/30 border-dashed' :
-                            event.status === 'PLAYING' ? 'bg-emerald-500/20' :
-                            event.status === 'CHECKED_IN' ? 'bg-amber-500/20' :
-                            cfg.bg
-                          )}
-                        >
-                          <div
-                            className="w-1.5 h-1.5 rounded-full shrink-0"
-                            style={{ backgroundColor:
-                              event.status === 'PLAYING' ? '#10B981' :
-                              event.status === 'CHECKED_IN' ? '#F59E0B' :
-                              cfg.border.replace('border-l-', '')
-                            }}
-                          />
-                          <span className="text-vr-caption text-white truncate">
-                            {event.startTime} {cfg.label.slice(0, 2)}
-                          </span>
-                          {/* Hover tooltip */}
-                          <div className="hidden group-hover:flex absolute bottom-full left-0 mb-3 z-[40] flex-col px-4 py-3 rounded-xl bg-slate-800/95 backdrop-blur-sm border border-slate-500 shadow-2xl min-w-max">
-                            <span className="text-vr-body-sm text-slate-200 whitespace-nowrap">
-                              {isMaintenanceEvent
-                                ? `${event.startTime}-${event.endTime} ${cfg.label} · 场地维护`
-                                : `${event.startTime} ${cfg.label} ${event.personName ? `- ${event.personName}` : ''} · ${event.game?.title || 'VR体验'} · ${event.personCount || 1}人`}
-                            </span>
-                            <div className="absolute -bottom-2 left-3 w-4 h-4 bg-slate-800/95 border-r border-b border-slate-500 rotate-45" />
-                          </div>
-                        </div>
-                      )
-                    })}
-                    {dayEvents.length > 3 && (
-                      <div className="text-vr-caption text-vr-blue pl-1 cursor-pointer">
-                        +{dayEvents.length - 3} 更多
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <div className="rounded-md bg-vrbg-card px-2 py-1.5">
+                        <p className="text-[11px] text-vrtext-tertiary">预约</p>
+                        <p className="text-vr-caption font-semibold text-vrtext-primary">{overview.bookings.length} 场</p>
+                      </div>
+                      <div className="rounded-md bg-vrbg-card px-2 py-1.5">
+                        <p className="text-[11px] text-vrtext-tertiary">人次</p>
+                        <p className="text-vr-caption font-semibold text-vrtext-primary">{overview.people} 人</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-vrbg-card">
+                      <div
+                        className={cn('h-full rounded-full', hasMaintenance ? 'bg-orange-400' : overview.utilization >= 70 ? 'bg-red-400' : overview.utilization >= 35 ? 'bg-blue-400' : 'bg-emerald-400')}
+                        style={{ width: `${hasBooking || hasMaintenance ? Math.max(overview.utilization, 8) : 0}%` }}
+                      />
+                    </div>
+
+                    {overview.bookings.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {overview.bookings
+                          .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime))
+                          .slice(0, 2)
+                          .map((event) => (
+                            <p key={event.id} className="truncate rounded bg-vrbg-card px-1.5 py-0.5 text-[11px] text-vrtext-secondary">
+                              {event.startTime} {event.venueName || venues.find((v) => v.id === event.venueId)?.name || '场地'}
+                            </p>
+                          ))}
                       </div>
                     )}
                   </motion.div>
@@ -1731,7 +1768,6 @@ export default function Booking() {
                 </button>
                 <button
                   onClick={async () => {
-                    console.log('点击确定预约', { venue: bookingForm.venue, modalTime, bookingDate, person: bookingForm.person, phone: bookingForm.phone })
                     if (!bookingForm.venue) {
                       setCreateError('请选择场地')
                       return

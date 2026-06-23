@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -13,6 +13,10 @@ import {
   Film,
   Eye,
   EyeOff,
+  BadgeDollarSign,
+  Clock,
+  Tags,
+  Users,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
 import { getGames, createGame, updateGame, deleteGame, batchDeleteGames, batchUpdateGameStatus } from '@/api/games'
@@ -262,43 +266,79 @@ export default function Games() {
   const isPending = createMutation.isPending || updateMutation.isPending || uploadingImage || uploadingDetailImage || uploadingVideo
 
   const allVisibleSelected = filteredGames && filteredGames.length > 0 && filteredGames.every(g => selectedIds.includes(g.id))
+  const visibleGames = filteredGames || []
+  const gameStats = useMemo(() => {
+    const source = games || []
+    const active = source.filter((game) => game.status === 'ACTIVE').length
+    const inactive = source.filter((game) => game.status !== 'ACTIVE').length
+    const avgDuration = source.length
+      ? Math.round(source.reduce((sum, game) => sum + (game.duration || 0), 0) / source.length)
+      : 0
+    return { total: source.length, active, inactive, avgDuration }
+  }, [games])
 
   return (
     <Layout breadcrumb={['内容管理']}>
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="space-y-6"
+        transition={{ duration: 0.35, ease: easeOut }}
+        className="space-y-4"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-vr-h1 text-vrtext-primary font-semibold">内容管理</h1>
-            <p className="text-vr-body-sm text-vrtext-tertiary mt-1">游戏内容的增删改查，同步到C端首页</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-vrtext-muted" />
-              <input
-                type="text"
-                placeholder="搜索游戏标题、标签..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-[280px] h-9 pl-9 pr-4 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
-              />
+        <section className="rounded-xl border border-vrborder-subtle bg-vrbg-card overflow-hidden">
+          <div className="flex items-start justify-between gap-6 p-5 border-b border-vrborder-subtle bg-gradient-to-r from-white to-slate-50 dark:from-vrbg-card dark:to-vrbg-elevated/60">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-vrtext-secondary mb-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-vraccent-primary/10 text-vraccent-primary">
+                  <Gamepad2 className="w-4 h-4" />
+                </span>
+                <span className="text-vr-body-sm font-medium">门店与内容 / 游戏</span>
+              </div>
+              <h1 className="text-vr-h1 text-vrtext-primary font-semibold">内容管理</h1>
+              <p className="text-vr-body-sm text-vrtext-tertiary mt-1">管理 C 端展示的游戏内容、价格、标签和上下架状态</p>
             </div>
-            {canManageContent && (
-              <button
-                onClick={openAdd}
-                className="h-9 px-4 bg-vraccent-primary text-white text-vr-body-sm font-medium rounded-lg hover:bg-vraccent-primary/90 transition-colors flex items-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                新增游戏
-              </button>
-            )}
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-vrtext-muted" />
+                <input
+                  type="text"
+                  placeholder="搜索游戏标题、标签..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-[280px] h-10 pl-9 pr-4 bg-vrbg-card border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                />
+              </div>
+              {canManageContent && (
+                <button
+                  onClick={openAdd}
+                  className="h-10 px-4 bg-vraccent-primary text-white text-vr-body-sm font-medium rounded-lg hover:bg-vraccent-primary/90 transition-colors flex items-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  新增游戏
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+
+          <div className="grid grid-cols-4 divide-x divide-vrborder-subtle">
+            {[
+              { label: '全部内容', value: gameStats.total, icon: Gamepad2, color: 'text-vraccent-primary', bg: 'bg-vraccent-primary/10' },
+              { label: '已上架', value: gameStats.active, icon: Eye, color: 'text-vrsuccess', bg: 'bg-vrsuccess/10' },
+              { label: '已下架', value: gameStats.inactive, icon: EyeOff, color: 'text-vrtext-secondary', bg: 'bg-vrbg-elevated' },
+              { label: '平均时长', value: `${gameStats.avgDuration}分`, icon: Clock, color: 'text-vrwarning', bg: 'bg-vrwarning/10' },
+            ].map((item) => (
+              <div key={item.label} className="flex items-center gap-3 px-5 py-4">
+                <span className={cn('flex h-9 w-9 items-center justify-center rounded-lg', item.bg, item.color)}>
+                  <item.icon className="w-4 h-4" />
+                </span>
+                <div>
+                  <p className="text-vr-caption text-vrtext-tertiary">{item.label}</p>
+                  <p className="text-vr-h3 text-vrtext-primary font-semibold">{item.value}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
 
         {/* Batch Action Bar */}
         <AnimatePresence>
@@ -307,7 +347,7 @@ export default function Games() {
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="flex items-center justify-between bg-vrbg-elevated rounded-xl border border-vraccent-primary/20 px-4 py-3"
+              className="flex items-center justify-between bg-vraccent-primary/10 rounded-xl border border-vraccent-primary/20 px-4 py-3"
             >
               <div className="flex items-center gap-4">
                 <span className="text-vr-body-sm text-vrtext-primary font-medium">
@@ -344,65 +384,54 @@ export default function Games() {
           )}
         </AnimatePresence>
 
-        {/* Table */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.3, delay: 0.2 }}
-          className="bg-vrbg-card rounded-xl border border-vrborder-subtle overflow-hidden"
+          transition={{ duration: 0.3, delay: 0.15 }}
+          className="rounded-xl border border-vrborder-subtle bg-vrbg-card overflow-hidden"
         >
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-vrbg-elevated">
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[48px]">
-                    <input
-                      type="checkbox"
-                      checked={allVisibleSelected}
-                      onChange={() => {
-                        if (allVisibleSelected) {
-                          setSelectedIds(prev => prev.filter(id => !filteredGames?.some(g => g.id === id)))
-                        } else {
-                          setSelectedIds(prev => [...new Set([...prev, ...(filteredGames?.map(g => g.id) || [])])])
-                        }
-                      }}
-                      className="w-4 h-4 rounded cursor-pointer"
-                    />
-                  </th>
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">封面</th>
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">标题</th>
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">价格</th>
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">时长</th>
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[80px]">人数</th>
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">标签</th>
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[110px]">状态</th>
-                  <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <AnimatePresence mode="wait">
-                  {isLoading ? (
-                    <tr>
-                      <td colSpan={8} className="text-center py-12 text-vrtext-muted">加载中...</td>
-                    </tr>
-                  ) : filteredGames?.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="text-center py-16">
-                        <Gamepad2 className="w-12 h-12 text-vrtext-muted mx-auto mb-3" />
-                        <p className="text-vr-body text-vrtext-secondary">暂无游戏内容</p>
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredGames?.map((game, idx) => (
-                      <motion.tr
+          <div className="grid grid-cols-[44px_1.8fr_1fr_1fr_1.1fr_110px_120px] items-center h-11 px-5 bg-vrbg-elevated/70 border-b border-vrborder-subtle">
+            <span className="text-center">
+              <input
+                type="checkbox"
+                checked={allVisibleSelected}
+                onChange={() => {
+                  if (allVisibleSelected) {
+                    setSelectedIds(prev => prev.filter(id => !visibleGames.some(g => g.id === id)))
+                  } else {
+                    setSelectedIds(prev => [...new Set([...prev, ...visibleGames.map(g => g.id)])])
+                  }
+                }}
+                className="w-4 h-4 rounded cursor-pointer"
+              />
+            </span>
+            <span className="text-vr-caption text-vrtext-secondary font-medium">内容</span>
+            <span className="text-vr-caption text-vrtext-secondary font-medium">价格与时长</span>
+            <span className="text-vr-caption text-vrtext-secondary font-medium">人数</span>
+            <span className="text-vr-caption text-vrtext-secondary font-medium">标签</span>
+            <span className="text-vr-caption text-vrtext-secondary font-medium">状态</span>
+            <span className="text-vr-caption text-vrtext-secondary font-medium text-right">操作</span>
+          </div>
+
+          <AnimatePresence mode="wait">
+            {isLoading ? (
+              <div className="flex items-center justify-center h-32 text-vrtext-muted text-vr-body-sm">加载中...</div>
+            ) : visibleGames.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 text-center">
+                <Gamepad2 className="w-10 h-10 text-vrtext-muted mb-3" />
+                <p className="text-vr-body text-vrtext-secondary">暂无游戏内容</p>
+              </div>
+            ) : (
+              visibleGames.map((game, idx) => (
+                <motion.div
                         key={game.id}
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0 }}
                         transition={{ duration: 0.3, delay: idx * 0.05 }}
-                        className="h-14 border-t border-vrborder-subtle hover:bg-vrbg-elevated/60 transition-colors"
+                  className="grid grid-cols-[44px_1.8fr_1fr_1fr_1.1fr_110px_120px] items-center min-h-[86px] px-5 border-b border-vrborder-subtle/80 hover:bg-vrbg-hover/70 transition-colors"
                       >
-                        <td className="px-4 py-3 text-center">
+                  <div className="flex items-center justify-center">
                           <input
                             type="checkbox"
                             checked={selectedIds.includes(game.id)}
@@ -415,44 +444,47 @@ export default function Games() {
                             }}
                             className="w-4 h-4 rounded cursor-pointer"
                           />
-                        </td>
-                        <td className="px-4 py-3">
+                  </div>
+                  <div className="flex items-center gap-3 min-w-0">
                           {game.coverImage ? (
                             <img
                               src={getImageUrl(game.coverImage)}
                               alt={game.title}
-                              className="w-12 h-12 rounded-lg object-cover"
+                        className="w-16 h-16 rounded-lg object-cover border border-vrborder-subtle"
                             />
                           ) : (
-                            <div className="w-12 h-12 rounded-lg bg-vrbg-elevated flex items-center justify-center">
+                      <div className="w-16 h-16 rounded-lg bg-vrbg-elevated flex items-center justify-center border border-vrborder-subtle">
                               <Gamepad2 className="w-5 h-5 text-vrtext-muted" />
                             </div>
                           )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div>
-                            <span className="text-vr-body-sm text-vrtext-primary font-medium">{game.title}</span>
+                    <div className="min-w-0">
+                      <p className="text-vr-body text-vrtext-primary font-medium truncate">{game.title}</p>
                             {game.subtitle && (
-                              <p className="text-vr-caption text-vrtext-tertiary mt-0.5">{game.subtitle}</p>
+                        <p className="text-vr-caption text-vrtext-tertiary mt-0.5 truncate">{game.subtitle}</p>
                             )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="text-vr-body-sm text-vrtext-primary">¥{(game.price / 100).toFixed(0)}</span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="text-vr-body-sm text-vrtext-primary">{game.duration}分钟</span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="text-vr-body-sm text-vrtext-primary">{game.minPlayers}-{game.maxPlayers}人</span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap gap-1">
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="inline-flex items-center gap-1.5 text-vr-body-sm text-vrtext-primary">
+                      <BadgeDollarSign className="w-4 h-4 text-vrtext-tertiary" />
+                      ¥{(game.price / 100).toFixed(0)}
+                    </span>
+                    <p className="inline-flex items-center gap-1.5 text-vr-caption text-vrtext-tertiary">
+                      <Clock className="w-3.5 h-3.5" />
+                      {game.duration}分钟
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center gap-1.5 text-vr-body-sm text-vrtext-secondary">
+                    <Users className="w-4 h-4 text-vrtext-tertiary" />
+                    {game.minPlayers}-{game.maxPlayers}人
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
                             {game.tags.slice(0, 3).map((tag, i) => (
                               <span
                                 key={i}
-                                className="px-2 py-0.5 rounded-md bg-vrbg-elevated text-vr-caption text-vrtext-secondary"
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-vrbg-elevated text-vr-caption text-vrtext-secondary"
                               >
+                        <Tags className="w-3 h-3" />
                                 {tag}
                               </span>
                             ))}
@@ -461,9 +493,8 @@ export default function Games() {
                                 +{game.tags.length - 3}
                               </span>
                             )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-center">
+                  </div>
+                  <div>
                           <span
                             className={cn(
                               'inline-flex items-center gap-1 px-3 py-1 rounded-full text-vr-caption font-medium',
@@ -475,8 +506,8 @@ export default function Games() {
                             {game.status === 'ACTIVE' ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
                             {game.status === 'ACTIVE' ? '上架' : '下架'}
                           </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
+                  </div>
+                  <div className="flex items-center justify-end">
                           {canManageContent && (
                             <div className="flex items-center justify-end gap-2">
                               <button
@@ -493,14 +524,11 @@ export default function Games() {
                               </button>
                             </div>
                           )}
-                        </td>
-                      </motion.tr>
-                    ))
-                  )}
-                </AnimatePresence>
-              </tbody>
-            </table>
-          </div>
+                  </div>
+                </motion.div>
+              ))
+            )}
+          </AnimatePresence>
         </motion.div>
       </motion.div>
 

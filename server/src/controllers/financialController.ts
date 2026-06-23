@@ -36,6 +36,12 @@ function cryptoRandomId() {
   })
 }
 
+function noShowRetainedIncome(order: { amount: number; refundAmount?: number | null; penaltyAmount?: number | null }): number {
+  if (order.penaltyAmount != null) return Math.max(0, order.penaltyAmount)
+  const refunded = order.refundAmount || 0
+  return Math.max(0, order.amount - refunded)
+}
+
 async function countPendingReconExceptions(date: string) {
   return prisma.reconException.count({
     where: {
@@ -446,7 +452,16 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
       _sum: { totalAmount: true, principalAmount: true, bonusAmount: true },
     })
 
+    const txCancelRefundSum = await prisma.balanceTransaction.aggregate({
+      where: {
+        type: 'CANCEL_RESTORE',
+        ...(dateStr ? { createdAt: dateRange } : {}),
+      },
+      _sum: { totalAmount: true, principalAmount: true, bonusAmount: true },
+    })
+
     let orderRefundTotal = 0
+    let orderCancelRefundTotal = 0
     if (dateStr && dateRange) {
       const refundTxOrders = await prisma.balanceTransaction.findMany({
         where: {
@@ -461,7 +476,7 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
         .filter(Boolean) as string[]
       const refundOrders = await prisma.order.findMany({
         where: {
-          status: { in: ['REFUNDED', 'CANCELLED'] },
+          status: 'REFUNDED',
           OR: [
             { updatedAt: dateRange },
             ...(orderIdsFromRefundTx.length ? [{ id: { in: orderIdsFromRefundTx } }] : []),
@@ -471,14 +486,46 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
       })
       const uniqueRefundOrders = new Map(refundOrders.map((order) => [order.id, order.refundAmount || 0]))
       orderRefundTotal = Array.from(uniqueRefundOrders.values()).reduce((sum, amount) => sum + amount, 0)
+
+      const cancelRefundTxOrders = await prisma.balanceTransaction.findMany({
+        where: {
+          type: 'CANCEL_RESTORE',
+          createdAt: dateRange,
+          orderId: { not: null },
+        },
+        select: { orderId: true },
+      })
+      const orderIdsFromCancelRefundTx = cancelRefundTxOrders
+        .map((tx) => tx.orderId)
+        .filter(Boolean) as string[]
+      const cancelRefundOrders = await prisma.order.findMany({
+        where: {
+          status: 'CANCELLED',
+          OR: [
+            { cancelledAt: dateRange },
+            ...(orderIdsFromCancelRefundTx.length ? [{ id: { in: orderIdsFromCancelRefundTx } }] : []),
+          ],
+        },
+        select: { id: true, refundAmount: true },
+      })
+      const uniqueCancelRefundOrders = new Map(cancelRefundOrders.map((order) => [order.id, order.refundAmount || 0]))
+      orderCancelRefundTotal = Array.from(uniqueCancelRefundOrders.values()).reduce((sum, amount) => sum + amount, 0)
     } else {
       const orderRefundSum = await prisma.order.aggregate({
         where: {
-          status: { in: ['REFUNDED', 'CANCELLED'] },
+          status: 'REFUNDED',
         },
         _sum: { refundAmount: true },
       })
       orderRefundTotal = orderRefundSum._sum?.refundAmount || 0
+
+      const orderCancelRefundSum = await prisma.order.aggregate({
+        where: {
+          status: 'CANCELLED',
+        },
+        _sum: { refundAmount: true },
+      })
+      orderCancelRefundTotal = orderCancelRefundSum._sum?.refundAmount || 0
     }
 
     // ==================== 5. 积分对账 ====================
@@ -651,6 +698,16 @@ export async function reconcile(req: AuthenticatedRequest, res: Response) {
           (orderConsumeSum._sum?.bonusDeduction || 0) -
           Math.abs(txDeductSum._sum?.bonusAmount || 0),
         unit: '元',
+      },
+      {
+        name: '取消退费总额',
+        actual: txCancelRefundSum._sum?.totalAmount || 0,
+        expected: orderCancelRefundTotal,
+        diff:
+          (txCancelRefundSum._sum?.totalAmount || 0) -
+          orderCancelRefundTotal,
+        unit: '元',
+        note: mode === 'daily' ? '顾客取消订单产生的退费，与退款处置分开对账' : '顾客取消订单产生的退费',
       },
       {
         name: '退款总额',
@@ -928,16 +985,20 @@ export async function runDailyReport(
   const pointsLiab = ptsLiability._sum.points || 0
 
   // 营业外收入拆分
-  // 1. 历史爽约违约金（兼容旧数据）
+  // 1. 作废未退收入（兼容历史违约金字段）
   const noShowOrders = await prisma.order.findMany({
     where: {
       status: 'NO_SHOW',
-      noShowAt: { gte: start, lte: end },
-      penaltyAmount: { gt: 0 },
+      OR: [
+        { noShowAt: { gte: start, lte: end } },
+        { noShowAt: null, updatedAt: { gte: start, lte: end } },
+      ],
     },
-    select: { penaltyAmount: true },
+    select: { amount: true, refundAmount: true, penaltyAmount: true },
   })
-  const noShowPenaltySum = noShowOrders.reduce((s, o) => s + (o.penaltyAmount || 0), 0)
+  const noShowPenaltySum = noShowOrders.reduce((s, o) => {
+    return s + noShowRetainedIncome(o)
+  }, 0)
 
   // 2. 取消费（已支付订单取消后未退部分）
   const cancelledOrders = await prisma.order.findMany({
@@ -1359,10 +1420,16 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
         break
       }
 
+      case 'CANCEL_REFUND':
       case 'REFUND': {
+        const isCancelRefund = type === 'CANCEL_REFUND'
+        const txType = isCancelRefund ? 'CANCEL_RESTORE' : 'REFUND'
+        const orderStatus = isCancelRefund ? 'CANCELLED' : 'REFUNDED'
+        const orderDateField = isCancelRefund ? 'cancelledAt' : 'updatedAt'
+        const label = isCancelRefund ? '取消退费' : '退款'
         const refundTxs = await prisma.balanceTransaction.findMany({
           where: {
-            type: 'REFUND',
+            type: txType,
             ...(dateStr ? { createdAt: dateRange } : {}),
           },
           select: {
@@ -1384,8 +1451,8 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
             OR: [
               { id: { in: orderIds } },
               {
-                status: { in: ['REFUNDED', 'CANCELLED'] },
-                ...(dateStr ? { updatedAt: dateRange } : {}),
+                status: orderStatus,
+                ...(dateStr ? { [orderDateField]: dateRange } : {}),
               },
             ],
           },
@@ -1395,6 +1462,7 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
             refundAmount: true,
             amount: true,
             userId: true,
+            cancelledAt: true,
             updatedAt: true,
           },
         })
@@ -1414,20 +1482,20 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
             items.push({
               id: order.id,
               title: order.orderNo,
-              subtitle: `订单金额 ¥${(order.amount / 100).toLocaleString()} · ${format(new Date(order.updatedAt), 'yyyy-MM-dd HH:mm')}`,
+              subtitle: `订单金额 ¥${(order.amount / 100).toLocaleString()} · ${format(new Date(isCancelRefund ? (order.cancelledAt || order.updatedAt) : order.updatedAt), 'yyyy-MM-dd HH:mm')}`,
               actual: txVal,
               expected: orderVal,
               diff: txVal - orderVal,
               unit: '元',
               reason:
                 txVal === 0
-                  ? '订单已记录退款金额，但缺少对应退款流水'
+                  ? `订单已记录${label}金额，但缺少对应${label}流水`
                   : txVal < orderVal
-                    ? '退款流水金额少于订单退款金额'
-                    : '退款流水金额多于订单退款金额',
+                    ? `${label}流水金额少于订单${label}金额`
+                    : `${label}流水金额多于订单${label}金额`,
               link: `/orders/${order.id}`,
               canAutoFix: true,
-              fixHint: '系统将按差额补一条退款流水，使退款流水与订单退款金额一致。',
+              fixHint: `系统将按差额补一条${label}流水，使${label}流水与订单${label}金额一致。`,
             })
             totalDiff += Math.abs(txVal - orderVal)
           }
@@ -1443,13 +1511,13 @@ export async function reconcileDetails(req: AuthenticatedRequest, res: Response)
           if (!order) {
             items.push({
               id: tx.id,
-              title: '退款流水',
+              title: `${label}流水`,
               subtitle: tx.remark || '',
               actual: txVal,
               expected: 0,
               diff: txVal,
               unit: '元',
-              reason: '退款流水关联的订单不存在',
+              reason: `${label}流水关联的订单不存在`,
             })
             totalDiff += txVal
           }
@@ -1736,7 +1804,10 @@ export async function fixReconcileDiff(req: AuthenticatedRequest, res: Response)
       case 'DIRECT_PAY': {
         return error(res, '在线支付差异不能通过余额调整单修复，请核对支付渠道流水和订单金额后修正原始记录', 400)
       }
+      case 'CANCEL_REFUND':
       case 'REFUND': {
+        const isCancelRefund = type === 'CANCEL_REFUND'
+        const txType = isCancelRefund ? 'CANCEL_RESTORE' : 'REFUND'
         const order = await prisma.order.findUnique({
           where: { id: targetId },
           select: { id: true, userId: true, refundAmount: true },
@@ -1763,7 +1834,7 @@ export async function fixReconcileDiff(req: AuthenticatedRequest, res: Response)
         })
         userId = userId || refundOrder?.userId || null
         const txSum = await prisma.balanceTransaction.aggregate({
-          where: { type: 'REFUND', orderId },
+          where: { type: txType, orderId },
           _sum: { totalAmount: true },
         })
         const currentTx = txSum._sum?.totalAmount || 0
@@ -1772,7 +1843,7 @@ export async function fixReconcileDiff(req: AuthenticatedRequest, res: Response)
         if (delta === 0) {
           return success(res, { alreadyBalanced: true, type, targetId: orderId }, '该差异已平衡，无需重复生成调整单')
         }
-        txData.type = 'REFUND'
+        txData.type = txType
         txData.orderId = orderId
         txData.amount = Math.abs(delta)
         txData.totalAmount = delta
@@ -1930,6 +2001,20 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
       _sum: { refundAmount: true },
     })
 
+    const cancelRefundSum = await prisma.order.aggregate({
+      where: {
+        status: 'CANCELLED',
+      },
+      _sum: { refundAmount: true },
+    })
+
+    const refundDispositionSum = await prisma.order.aggregate({
+      where: {
+        status: 'REFUNDED',
+      },
+      _sum: { refundAmount: true },
+    })
+
     const customerRefundSum = await prisma.order.aggregate({
       where: {
         status: { in: ['REFUNDED', 'CANCELLED'] },
@@ -1938,7 +2023,7 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
     })
 
     const balanceRefundSum = await prisma.balanceTransaction.aggregate({
-      where: { type: 'REFUND' },
+      where: { type: { in: ['REFUND', 'CANCEL_RESTORE'] } },
       _sum: { totalAmount: true },
     })
 
@@ -1975,10 +2060,10 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
       _sum: { principalDeduction: true },
     })
 
-    // No-Show 违约金累计
-    const noShowPenaltySum = await prisma.order.aggregate({
+    // 作废未退收入累计（兼容历史违约金字段）
+    const noShowOrders = await prisma.order.findMany({
       where: { status: 'NO_SHOW' },
-      _sum: { penaltyAmount: true },
+      select: { amount: true, refundAmount: true, penaltyAmount: true },
     })
 
     const pointsExchangeCostSum = await prisma.pointsExchange.aggregate({
@@ -2050,13 +2135,15 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
     const rpi = rechargeSum._sum?.amount || 0
     const dpi = directPaySum._sum?.amount || 0
     const cashRefundOut = cashRefundSum._sum?.refundAmount || 0
+    const cancelRefundOut = cancelRefundSum._sum?.refundAmount || 0
+    const refundDispositionOut = refundDispositionSum._sum?.refundAmount || 0
     const customerRefundOut = customerRefundSum._sum?.refundAmount || 0
     const balanceRefundOut = balanceRefundSum._sum?.totalAmount || 0
     const pdr = prepaidDirectRevenueSum._sum?.amount || 0
     const cdr = confirmedDirectRevenueSum._sum?.amount || 0
     const pmr = prepaidMemberRevenueSum._sum?.principalDeduction || 0
     const cmr = confirmedMemberRevenueSum._sum?.principalDeduction || 0
-    const nsp = noShowPenaltySum._sum?.penaltyAmount || 0
+    const nsp = noShowOrders.reduce((sum, order) => sum + noShowRetainedIncome(order), 0)
     const pec = (pointsExchangeCostSum._sum?.pointsCost || 0) + (pointsOrderCostSum._sum?.pointsCost || 0)
     const pgc = pointsGiftCostSum._sum?.pointsAmount || 0
     const cdc = couponDiscountCostSum._sum?.couponDiscount || 0
@@ -2075,6 +2162,8 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
       totalCashRefundOut: cashRefundOut,
       totalBalanceRefundOut: balanceRefundOut,
       totalCustomerRefundOut: customerRefundOut,
+      totalCancelRefundOut: cancelRefundOut,
+      totalRefundDispositionOut: refundDispositionOut,
       totalNetCashFlow: rpi + dpi - cashRefundOut,
 
       // 确权营收累计

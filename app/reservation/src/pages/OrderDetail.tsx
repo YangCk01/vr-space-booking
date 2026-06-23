@@ -180,7 +180,7 @@ export default function OrderDetail() {
               </div>
               {order.refundAmount && order.refundAmount > 0 && (
                 <div className="flex justify-between text-[var(--error)]">
-                  <span>已退款</span>
+                  <span>{order.status === 'CANCELLED' ? '已退费' : '已退款'}</span>
                   <span>-{formatAmount(order.refundAmount)}</span>
                 </div>
               )}
@@ -285,7 +285,8 @@ export default function OrderDetail() {
               <span className="text-sm font-bold text-[var(--text-primary)]">适用门店</span>
             </div>
             {(() => {
-              const v = pkg.venues[0]
+              const primaryVenue = pkg.venues.find((v: any) => v.id === order?.venueId) || pkg.venues[0]
+              const v = primaryVenue
               const now = new Date()
               const cur = now.getHours() * 60 + now.getMinutes()
               const [oh, om] = (v.openTime || '10:00').split(':').map(Number)
@@ -405,7 +406,7 @@ export default function OrderDetail() {
                   onClick={() => navigate(`/refund/${order.id}`)}
                   className="px-5 py-2.5 rounded-full text-sm font-bold text-[var(--error)] border border-[var(--error)]/25 hover:bg-[var(--error)]/10 transition-colors"
                 >
-                  申请退款
+                  {order.groupBuyPackage && !order.booking ? '申请退款' : '取消退费'}
                 </button>
               )}
               {canRebuy && pkg?.id && (
@@ -497,7 +498,7 @@ export default function OrderDetail() {
                 </button>
               </div>
               <div className="overflow-y-auto p-4 space-y-3">
-                {pkg.venues.map((v: any) => (
+                {[pkg.venues.find((v: any) => v.id === order?.venueId), ...pkg.venues.filter((v: any) => v.id !== order?.venueId)].filter(Boolean).map((v: any) => (
                   <button
                     key={v.id}
                     onClick={() => { setShowAllVenues(false); navigate(`/venue/${v.id}`) }}

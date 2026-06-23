@@ -13,6 +13,12 @@ function formatUtcDate(d: Date): string {
   return `${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
 }
 
+function retainedIncome(order: { amount: number; refundAmount?: number | null; penaltyAmount?: number | null }): number {
+  const refunded = order.refundAmount || 0
+  if (refunded > 0) return Math.max(0, order.amount - refunded)
+  return order.amount || order.penaltyAmount || 0
+}
+
 /* ─── 日期范围解析工具 ─── */
 function parseDateRange(req: AuthenticatedRequest | Request, defaultRange = '7days'): { start: Date; end: Date; prevStart: Date; prevEnd: Date } {
   const { range = defaultRange, startDate, endDate } = req.query
@@ -81,19 +87,29 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
       where: { date: { gte: start, lte: end }, status: 'COMPLETED', ...venueWhereBooking },
       _sum: { personCount: true },
     })
-    // 营业额：PAID/COMPLETED 订单全额 + CANCELLED 订单扣除的手续费（差额）
+    // 收入：正常营业额 + 营业外收入（取消费 / 作废未退）
     const currentPeriodOrders = await prisma.order.findMany({
-      where: { createdAt: { gte: start, lte: end }, status: { in: ['PAID', 'COMPLETED', 'CANCELLED'] }, ...venueWhere },
-      select: { status: true, amount: true, refundAmount: true },
+      where: {
+        OR: [
+          { createdAt: { gte: start, lte: end }, status: { in: ['PAID', 'COMPLETED', 'CANCELLED'] } },
+          { status: 'NO_SHOW', OR: [{ noShowAt: { gte: start, lte: end } }, { noShowAt: null, updatedAt: { gte: start, lte: end } }] },
+        ],
+        ...venueWhere,
+      },
+      select: { status: true, amount: true, refundAmount: true, penaltyAmount: true },
     })
-    let currentRevenue = 0
+    let currentOperatingRevenue = 0
+    let currentOtherIncome = 0
     for (const o of currentPeriodOrders) {
       if (o.status === 'PAID' || o.status === 'COMPLETED') {
-        currentRevenue += o.amount
+        currentOperatingRevenue += o.amount
       } else if (o.status === 'CANCELLED' && o.refundAmount != null) {
-        currentRevenue += o.amount - o.refundAmount
+        currentOtherIncome += Math.max(0, o.amount - o.refundAmount)
+      } else if (o.status === 'NO_SHOW') {
+        currentOtherIncome += retainedIncome(o)
       }
     }
+    const currentRevenue = currentOperatingRevenue + currentOtherIncome
 
     // 上一周期数据
     const prevBookings = await prisma.booking.count({
@@ -103,19 +119,29 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
       where: { date: { gte: prevStart, lte: prevEnd }, status: 'COMPLETED', ...venueWhereBooking },
       _sum: { personCount: true },
     })
-    // 上一周期营业额
+    // 上一周期收入
     const prevPeriodOrders = await prisma.order.findMany({
-      where: { createdAt: { gte: prevStart, lte: prevEnd }, status: { in: ['PAID', 'COMPLETED', 'CANCELLED'] }, ...venueWhere },
-      select: { status: true, amount: true, refundAmount: true },
+      where: {
+        OR: [
+          { createdAt: { gte: prevStart, lte: prevEnd }, status: { in: ['PAID', 'COMPLETED', 'CANCELLED'] } },
+          { status: 'NO_SHOW', OR: [{ noShowAt: { gte: prevStart, lte: prevEnd } }, { noShowAt: null, updatedAt: { gte: prevStart, lte: prevEnd } }] },
+        ],
+        ...venueWhere,
+      },
+      select: { status: true, amount: true, refundAmount: true, penaltyAmount: true },
     })
-    let prevRevenue = 0
+    let prevOperatingRevenue = 0
+    let prevOtherIncome = 0
     for (const o of prevPeriodOrders) {
       if (o.status === 'PAID' || o.status === 'COMPLETED') {
-        prevRevenue += o.amount
+        prevOperatingRevenue += o.amount
       } else if (o.status === 'CANCELLED' && o.refundAmount != null) {
-        prevRevenue += o.amount - o.refundAmount
+        prevOtherIncome += Math.max(0, o.amount - o.refundAmount)
+      } else if (o.status === 'NO_SHOW') {
+        prevOtherIncome += retainedIncome(o)
       }
     }
+    const prevRevenue = prevOperatingRevenue + prevOtherIncome
 
     // 场地使用率
     const totalVenues = await prisma.venue.count({ where: venueCountWhere })
@@ -195,7 +221,11 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
         bookingTrend,
         todayUsed: currentUsed,
         todayRevenue: currentRevenue || 0,
+        todayOperatingRevenue: currentOperatingRevenue || 0,
+        todayOtherIncome: currentOtherIncome || 0,
         yesterdayRevenue: prevRevenue || 0,
+        yesterdayOperatingRevenue: prevOperatingRevenue || 0,
+        yesterdayOtherIncome: prevOtherIncome || 0,
         revenueTrend,
         usageRate,
         totalVenues,
@@ -254,25 +284,32 @@ export async function revenue(req: AuthenticatedRequest, res: Response) {
 
     const orders = await prisma.order.findMany({
       where: {
-        createdAt: { gte: start, lte: end },
-        status: { not: 'CANCELLED' },
+        OR: [
+          { createdAt: { gte: start, lte: end }, status: { in: ['PAID', 'COMPLETED'] } },
+          { status: 'NO_SHOW', OR: [{ noShowAt: { gte: start, lte: end } }, { noShowAt: null, updatedAt: { gte: start, lte: end } }] },
+        ],
         ...venueWhere,
       },
-      select: { createdAt: true, source: true, amount: true },
+      select: { createdAt: true, updatedAt: true, noShowAt: true, source: true, amount: true, status: true, refundAmount: true, penaltyAmount: true },
       orderBy: { createdAt: 'asc' },
     })
 
-    const dataMap = new Map<string, { onlineAmount: number; offlineAmount: number; onlineCount: number; offlineCount: number }>()
+    const dataMap = new Map<string, { onlineAmount: number; offlineAmount: number; otherIncome: number; onlineCount: number; offlineCount: number; otherIncomeCount: number }>()
     for (let i = 0; i < days; i++) {
       const d = subDays(end, days - 1 - i)
       const key = formatUtcDate(d)
-      dataMap.set(key, { onlineAmount: 0, offlineAmount: 0, onlineCount: 0, offlineCount: 0 })
+      dataMap.set(key, { onlineAmount: 0, offlineAmount: 0, otherIncome: 0, onlineCount: 0, offlineCount: 0, otherIncomeCount: 0 })
     }
 
     for (const o of orders) {
-      const key = formatUtcDate(o.createdAt)
+      const key = formatUtcDate(o.status === 'NO_SHOW' ? (o.noShowAt || o.updatedAt || o.createdAt) : o.createdAt)
       const existing = dataMap.get(key)
       if (existing) {
+        if (o.status === 'NO_SHOW') {
+          existing.otherIncome += retainedIncome(o)
+          existing.otherIncomeCount += 1
+          continue
+        }
         if (o.source === 'ONLINE') {
           existing.onlineAmount += o.amount
           existing.onlineCount += 1
@@ -288,8 +325,10 @@ export async function revenue(req: AuthenticatedRequest, res: Response) {
       label: date,
       onlineAmount: val.onlineAmount,
       offlineAmount: val.offlineAmount,
+      otherIncome: val.otherIncome,
       onlineCount: val.onlineCount,
       offlineCount: val.offlineCount,
+      otherIncomeCount: val.otherIncomeCount,
     }))
 
     return success(res, data)
@@ -543,12 +582,28 @@ export async function venueRevenueRanking(req: AuthenticatedRequest, res: Respon
           _sum: { amount: true },
           _count: { id: true },
         })
+        const noShowOrders = await prisma.order.findMany({
+          where: {
+            venueId: v.id,
+            status: 'NO_SHOW',
+            OR: [
+              { noShowAt: { gte: start, lte: end } },
+              { noShowAt: null, updatedAt: { gte: start, lte: end } },
+            ],
+          },
+          select: { amount: true, refundAmount: true, penaltyAmount: true },
+        })
+        const otherIncome = noShowOrders.reduce((sum, order) => sum + retainedIncome(order), 0)
+        const operatingRevenue = agg._sum.amount || 0
         return {
           id: v.id,
           name: v.name,
           theme: v.theme,
-          revenue: agg._sum.amount || 0,
+          revenue: operatingRevenue + otherIncome,
+          operatingRevenue,
+          otherIncome,
           orderCount: agg._count.id,
+          otherIncomeCount: noShowOrders.filter((order) => retainedIncome(order) > 0).length,
         }
       })
     )
@@ -560,7 +615,10 @@ export async function venueRevenueRanking(req: AuthenticatedRequest, res: Respon
         name: v.name,
         theme: v.theme,
         revenue: v.revenue,
+        operatingRevenue: v.operatingRevenue,
+        otherIncome: v.otherIncome,
         orderCount: v.orderCount,
+        otherIncomeCount: v.otherIncomeCount,
       }))
 
     return success(res, sorted)

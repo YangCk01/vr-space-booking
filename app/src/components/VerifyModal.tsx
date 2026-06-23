@@ -166,42 +166,42 @@ export function VerifyScanModal({ open, onClose, order, onVerify, skipScan = fal
                           >
                             <CheckCircle2 className="w-6 h-6 text-emerald-500" />
                           </motion.div>
-                          <span className="text-sm font-medium text-slate-700">识别成功</span>
+                          <span className="text-sm font-medium text-vrtext-primary">识别成功</span>
                         </div>
 
                         {/* 订单信息卡片 */}
-                        <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-2.5">
+                        <div className="bg-vrbg-elevated rounded-xl p-4 border border-vrborder-subtle space-y-2.5">
                           <div className="flex items-center justify-between">
-                            <span className="text-xs text-slate-500">订单号</span>
-                            <span className="text-xs font-mono text-slate-700">{order.orderNo}</span>
+                            <span className="text-xs text-vrtext-tertiary">订单号</span>
+                            <span className="text-xs font-mono text-vrtext-secondary">{order.orderNo}</span>
                           </div>
                           {order.customer && (
                             <div className="flex items-center gap-2">
-                              <User className="w-3.5 h-3.5 text-slate-400" />
-                              <span className="text-sm text-slate-700">{order.customer}</span>
+                              <User className="w-3.5 h-3.5 text-vrtext-tertiary" />
+                              <span className="text-sm text-vrtext-secondary">{order.customer}</span>
                             </div>
                           )}
                           {order.venueName && (
                             <div className="flex items-center gap-2">
-                              <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                              <span className="text-sm text-slate-700">{order.venueName}</span>
+                              <MapPin className="w-3.5 h-3.5 text-vrtext-tertiary" />
+                              <span className="text-sm text-vrtext-secondary">{order.venueName}</span>
                             </div>
                           )}
                           {order.bookingTime && (
                             <div className="flex items-center gap-2">
-                              <Clock className="w-3.5 h-3.5 text-slate-400" />
-                              <span className="text-sm text-slate-700">{order.bookingTime}</span>
+                              <Clock className="w-3.5 h-3.5 text-vrtext-tertiary" />
+                              <span className="text-sm text-vrtext-secondary">{order.bookingTime}</span>
                             </div>
                           )}
                           {order.personCount && (
                             <div className="flex items-center gap-2">
-                              <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                              <span className="text-sm text-slate-700">{order.personCount}人</span>
+                              <Calendar className="w-3.5 h-3.5 text-vrtext-tertiary" />
+                              <span className="text-sm text-vrtext-secondary">{order.personCount}人</span>
                             </div>
                           )}
-                          <div className="border-t border-slate-200 pt-2 flex items-center justify-between">
-                            <span className="text-xs text-slate-500">实付金额</span>
-                            <span className="text-lg font-bold text-slate-900">
+                          <div className="border-t border-vrborder-subtle pt-2 flex items-center justify-between">
+                            <span className="text-xs text-vrtext-tertiary">实付金额</span>
+                            <span className="text-lg font-bold text-vrtext-primary">
                               ¥{((order.amount || 0) / 100).toFixed(2)}
                             </span>
                           </div>
@@ -216,7 +216,7 @@ export function VerifyScanModal({ open, onClose, order, onVerify, skipScan = fal
                         </button>
                         <button
                           onClick={handleClose}
-                          className="w-full h-10 rounded-xl border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-colors"
+                          className="w-full h-10 rounded-xl border border-vrborder-subtle text-vrtext-secondary text-sm hover:bg-vrbg-hover transition-colors"
                         >
                           取消
                         </button>
@@ -231,7 +231,7 @@ export function VerifyScanModal({ open, onClose, order, onVerify, skipScan = fal
                         className="flex flex-col items-center gap-3"
                       >
                         <Loader2 className="w-10 h-10 text-vraccent-primary animate-spin" />
-                        <span className="text-sm text-slate-600">正在核销...</span>
+                        <span className="text-sm text-vrtext-secondary">正在核销...</span>
                       </motion.div>
                     )}
 

@@ -203,7 +203,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
 
   return (
     <>
-      <header className="fixed top-0 right-0 left-0 lg:left-[220px] z-40 h-[56px] bg-vrbg-header border-b border-vrborder-subtle flex items-center justify-between px-6">
+      <header className="fixed top-3 right-4 left-4 lg:left-[248px] z-40 h-[50px] bg-vrbg-header/90 backdrop-blur-xl border border-vrborder-subtle rounded-2xl flex items-center justify-between px-5 shadow-[0_16px_35px_rgba(15,23,42,0.06)]">
         {/* Left: Breadcrumb + Date */}
         <div className="flex items-center gap-4 ml-8 lg:ml-0">
           <nav className="flex items-center gap-2 text-vr-body-sm text-vrtext-secondary">
@@ -230,7 +230,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
               onKeyDown={handleSearchKeyDown}
               onFocus={() => { if (totalResults > 0) setShowSearchResults(true) }}
               placeholder="搜索场地、订单、用户..."
-              className="w-72 h-9 pl-9 pr-4 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              className="soft-input w-72 h-9 pl-9 pr-4 text-vr-body-sm"
             />
             {searchQuery && (
               <button
@@ -252,7 +252,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -4, scale: 0.98 }}
                   transition={{ duration: 0.12 }}
-                  className="absolute left-0 top-full mt-2 w-96 bg-vrbg-elevated border border-vrborder-hover rounded-xl shadow-vr-lg z-40 overflow-hidden max-h-[70vh] overflow-y-auto"
+                  className="absolute left-0 top-full mt-2 w-96 bg-vrbg-card border border-vrborder-subtle rounded-2xl shadow-[0_24px_60px_rgba(15,23,42,0.18)] z-40 overflow-hidden max-h-[70vh] overflow-y-auto"
                 >
                   {searchLoading ? (
                     <div className="px-4 py-6 text-center text-vr-caption text-vrtext-muted">搜索中...</div>
@@ -269,7 +269,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                             <button
                               key={v.id}
                               onClick={() => handleSearchResultClick('venue', v.id)}
-                              className="w-full text-left px-4 py-2 hover:bg-vrborder-hover/50 transition-colors flex items-center gap-2"
+                              className="w-full text-left px-4 py-2 hover:bg-vrbg-hover transition-colors flex items-center gap-2"
                             >
                               <span className="text-vr-body-sm text-vrtext-primary truncate">{v.name}</span>
                               <span className="text-xs text-vrtext-muted shrink-0">{v.theme}</span>
@@ -287,7 +287,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                             <button
                               key={o.id}
                               onClick={() => handleSearchResultClick('order', o.id)}
-                              className="w-full text-left px-4 py-2 hover:bg-vrborder-hover/50 transition-colors flex items-center gap-2"
+                              className="w-full text-left px-4 py-2 hover:bg-vrbg-hover transition-colors flex items-center gap-2"
                             >
                               <span className="text-vr-body-sm text-vrtext-primary truncate">{o.orderNo}</span>
                               <span className="text-xs text-vrtext-muted truncate">{o.venueName}</span>
@@ -303,7 +303,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                             <button
                               key={u.id}
                               onClick={() => handleSearchResultClick('user', u.id)}
-                              className="w-full text-left px-4 py-2 hover:bg-vrborder-hover/50 transition-colors flex items-center gap-2"
+                              className="w-full text-left px-4 py-2 hover:bg-vrbg-hover transition-colors flex items-center gap-2"
                             >
                               <span className="text-vr-body-sm text-vrtext-primary truncate">{u.name}</span>
                               <span className="text-xs text-vrtext-muted shrink-0">{u.phone}</span>
@@ -328,7 +328,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
 
           <button
             onClick={handleRefresh}
-            className="relative p-2 rounded-lg text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
+            className="relative p-2 rounded-xl text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
             title="刷新数据"
           >
             <RefreshCw className="w-[18px] h-[18px]" />
@@ -336,7 +336,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
 
           <button
             onClick={toggleTheme}
-            className="relative p-2 rounded-lg text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
+            className="relative p-2 rounded-xl text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
             title={theme === 'dark' ? '切换亮色' : '切换暗色'}
           >
             {theme === 'dark' ? <Sun className="w-[18px] h-[18px]" /> : <Moon className="w-[18px] h-[18px]" />}
@@ -346,7 +346,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
           <div className="relative">
             <button
               onClick={() => setShowNotify(!showNotify)}
-              className="relative p-2 rounded-lg text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
+              className="relative p-2 rounded-xl text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
             >
               <Bell className="w-5 h-5" />
               {notifyCount > 0 && (
@@ -363,9 +363,9 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -4, scale: 0.95 }}
                     transition={{ duration: 0.15 }}
-                    className="absolute right-0 top-full mt-1 w-80 bg-vrbg-elevated border border-vrborder-hover rounded-xl shadow-vr-lg z-50 overflow-hidden"
+                    className="absolute right-0 top-full mt-2 w-80 bg-vrbg-card border border-vrborder-subtle rounded-2xl shadow-[0_24px_60px_rgba(15,23,42,0.18)] z-50 overflow-hidden"
                   >
-                    <div className="px-4 py-3 border-b border-vrborder-hover flex items-center justify-between">
+                    <div className="px-4 py-3 border-b border-vrborder-subtle flex items-center justify-between">
                       <p className="text-vr-body-sm text-vrtext-primary font-medium">系统动态</p>
                       <div className="flex items-center gap-3">
                         {notifyCount > 0 && (
@@ -393,7 +393,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                         </div>
                       ) : (
                         notifications.map((n: any) => (
-                          <div key={n.id} className={`px-4 py-3 border-b border-vrborder-hover last:border-0 hover:bg-vrborder-hover/50 cursor-pointer transition-colors ${n.read ? 'opacity-60' : ''}`}>
+                          <div key={n.id} className={`px-4 py-3 border-b border-vrborder-subtle last:border-0 hover:bg-vrbg-hover cursor-pointer transition-colors ${n.read ? 'opacity-60' : ''}`}>
                             <div className="flex items-center justify-between">
                               <p className="text-vr-body-sm text-vrtext-primary font-semibold">用户：{n.userName} {n.userPhone}</p>
                               <span className="text-xs text-vrtext-muted shrink-0 ml-2">{n.time}</span>
@@ -417,7 +417,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
           <div className="relative">
             <button
               onClick={() => setShowDropdown(!showDropdown)}
-              className="flex items-center gap-2 pl-2 pr-1 py-1 rounded-lg hover:bg-vrbg-elevated transition-colors"
+              className="flex items-center gap-2 pl-2 pr-1 py-1 rounded-xl hover:bg-vrbg-elevated transition-colors"
             >
               <div
                 className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium border border-vrborder-subtle"
@@ -438,28 +438,28 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -4, scale: 0.95 }}
                     transition={{ duration: 0.15 }}
-                    className="absolute right-0 top-full mt-1 w-48 bg-vrbg-elevated border border-vrborder-hover rounded-xl shadow-vr-lg z-50 overflow-hidden"
+                    className="absolute right-0 top-full mt-2 w-48 bg-vrbg-card border border-vrborder-subtle rounded-2xl shadow-[0_24px_60px_rgba(15,23,42,0.18)] z-50 overflow-hidden"
                   >
-                    <div className="px-4 py-3 border-b border-vrborder-hover">
+                    <div className="px-4 py-3 border-b border-vrborder-subtle">
                       <p className="text-vr-body-sm text-vrtext-primary font-medium">{user?.name || '系统管理员'}</p>
                       <p className="text-vr-caption text-vrtext-tertiary mt-0.5">{user?.phone || 'admin@vrspace.com'}</p>
                     </div>
                     <div className="p-1">
                       <button
                         onClick={() => { setShowDropdown(false); navigate('/settings') }}
-                        className="w-full text-left px-3 py-2 rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
+                        className="w-full text-left px-3 py-2 rounded-xl text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-hover hover:text-vrtext-primary transition-colors"
                       >
                         个人设置
                       </button>
                       <button
                         onClick={() => { setShowDropdown(false); setShowPwdDialog(true) }}
-                        className="w-full text-left px-3 py-2 rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
+                        className="w-full text-left px-3 py-2 rounded-xl text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-hover hover:text-vrtext-primary transition-colors"
                       >
                         修改密码
                       </button>
                       <button
                         onClick={handleLogout}
-                        className="w-full text-left px-3 py-2 rounded-lg text-vr-body-sm text-vrerror hover:bg-vrerror/10 transition-colors flex items-center gap-2"
+                        className="w-full text-left px-3 py-2 rounded-xl text-vr-body-sm text-vrerror hover:bg-vrerror/10 transition-colors flex items-center gap-2"
                       >
                         <LogOut className="w-4 h-4" />
                         退出登录
@@ -475,7 +475,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
 
       {/* Change Password Dialog */}
       <Dialog open={showPwdDialog} onOpenChange={setShowPwdDialog}>
-        <DialogContent className="bg-vrbg-elevated border-vrborder-hover text-vrtext-primary max-w-md">
+        <DialogContent className="bg-vrbg-card border-vrborder-subtle text-vrtext-primary max-w-md">
           <DialogHeader>
             <DialogTitle className="text-vr-h3 text-vrtext-primary">修改密码</DialogTitle>
             <DialogDescription className="text-vr-caption text-vrtext-tertiary">
@@ -491,7 +491,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                   value={oldPwd}
                   onChange={(e) => setOldPwd(e.target.value)}
                   placeholder="请输入原密码"
-                  className="w-full h-10 px-3 pr-10 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                  className="soft-input w-full h-10 px-3 pr-10 text-vr-body-sm"
                 />
                 <button
                   onClick={() => setShowOld(!showOld)}
@@ -509,7 +509,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                   value={newPwd}
                   onChange={(e) => setNewPwd(e.target.value)}
                   placeholder="至少6位"
-                  className="w-full h-10 px-3 pr-10 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                  className="soft-input w-full h-10 px-3 pr-10 text-vr-body-sm"
                 />
                 <button
                   onClick={() => setShowNew(!showNew)}
@@ -526,7 +526,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                 value={confirmPwd}
                 onChange={(e) => setConfirmPwd(e.target.value)}
                 placeholder="再次输入新密码"
-                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                className="soft-input w-full h-10 px-3 text-vr-body-sm"
               />
             </div>
             {pwdError && (
@@ -545,14 +545,14 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
                   setNewPwd('')
                   setConfirmPwd('')
                 }}
-                className="px-4 py-2 rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated transition-colors"
+                className="px-4 py-2 rounded-xl text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated transition-colors"
               >
                 取消
               </button>
               <button
                 onClick={handleChangePassword}
                 disabled={pwdMutation.isPending}
-                className="px-4 py-2 rounded-lg text-vr-body-sm bg-vraccent-primary text-white hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
+                className="px-4 py-2 rounded-xl text-vr-body-sm bg-vraccent-primary text-white hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
               >
                 {pwdMutation.isPending ? '修改中...' : '确认修改'}
               </button>

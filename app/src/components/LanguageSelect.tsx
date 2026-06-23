@@ -14,7 +14,7 @@ export default function LanguageSelect({ compact = false }: { compact?: boolean 
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          'h-9 rounded-lg border border-vrborder-subtle bg-vrbg-surface text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors flex items-center justify-center gap-1.5',
+          'h-9 rounded-xl border border-vrborder-subtle bg-vrbg-card text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors flex items-center justify-center gap-1.5 shadow-[0_8px_18px_rgba(15,23,42,0.04)]',
           compact ? 'w-9 px-0' : 'px-2.5'
         )}
         title={label.label}
@@ -33,7 +33,7 @@ export default function LanguageSelect({ compact = false }: { compact?: boolean 
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -4, scale: 0.96 }}
               transition={{ duration: 0.12 }}
-              className="absolute right-0 top-full mt-1 w-36 rounded-xl border border-vrborder-hover bg-vrbg-elevated p-1 shadow-vr-lg z-50"
+              className="absolute right-0 top-full mt-2 w-36 rounded-2xl border border-vrborder-subtle bg-vrbg-card p-1.5 shadow-[0_24px_60px_rgba(15,23,42,0.18)] z-50"
             >
               {options.map((option) => (
                 <button
@@ -44,7 +44,7 @@ export default function LanguageSelect({ compact = false }: { compact?: boolean 
                     setOpen(false)
                   }}
                   className={cn(
-                    'w-full rounded-lg px-3 py-2 text-left text-vr-body-sm transition-colors',
+                    'w-full rounded-xl px-3 py-2 text-left text-vr-body-sm transition-colors',
                     language === option.value
                       ? 'bg-vrbg-active text-vraccent-primary font-semibold'
                       : 'text-vrtext-secondary hover:bg-vrbg-surface hover:text-vrtext-primary'

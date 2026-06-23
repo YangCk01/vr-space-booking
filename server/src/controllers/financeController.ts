@@ -2,11 +2,29 @@ import { Response } from 'express'
 import { AuthenticatedRequest } from '../types'
 import { prisma } from '../utils/prisma'
 import { success, paginated } from '../utils/response'
-import { subDays, format } from 'date-fns'
+import { startOfDay, endOfDay, subDays, format } from 'date-fns'
 
-/* ─── UTC day boundaries ─── */
-function dayStart(dateStr: string): Date { return new Date(dateStr + 'T00:00:00.000Z') }
-function dayEnd(dateStr: string): Date { return new Date(dateStr + 'T23:59:59.999Z') }
+/* ─── Local business day boundaries ─── */
+function dayStart(dateStr: string): Date { return startOfDay(new Date(dateStr + 'T00:00:00')) }
+function dayEnd(dateStr: string): Date { return endOfDay(new Date(dateStr + 'T00:00:00')) }
+
+function noShowRetainedIncome(order: { amount: number; refundAmount?: number | null; penaltyAmount?: number | null }): number {
+  if (order.penaltyAmount != null) return Math.max(0, order.penaltyAmount)
+  const refunded = order.refundAmount || 0
+  return Math.max(0, order.amount - refunded)
+}
+
+function orderIncomeTime(order: { paidAt?: Date | null; createdAt: Date }): Date {
+  return order.paidAt || order.createdAt
+}
+
+function orderCancelTime(order: { cancelledAt?: Date | null; updatedAt: Date; createdAt: Date }): Date {
+  return order.cancelledAt || order.updatedAt || order.createdAt
+}
+
+function orderRefundTime(order: { cancelledAt?: Date | null; updatedAt: Date; createdAt: Date }): Date {
+  return order.cancelledAt || order.updatedAt || order.createdAt
+}
 
 /* ─── 1. 财务概览 ─── */
 export async function overview(req: AuthenticatedRequest, res: Response) {
@@ -36,6 +54,7 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
   const [
     todayRevenue,
     todayRefund,
+    todayCancelRefund,
     todayRecharge,
     totalUserBalance,
     dailyOrders,
@@ -45,18 +64,29 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
     prisma.order.aggregate({
       where: {
         orderKind: 'NORMAL',
-        createdAt: { gte: todayStart, lte: todayEnd },
+        paidAt: { gte: todayStart, lte: todayEnd },
         status: { in: ['PAID', 'COMPLETED'] },
         ...(venueId ? { venueId: venueId as string } : {}),
       },
       _sum: { amount: true },
     }),
-    // 今日退款（含已退款和已取消的退款金额）
+    // 今日退款处置（不含顾客取消订单退费）
     prisma.order.aggregate({
       where: {
         orderKind: 'NORMAL',
-        createdAt: { gte: todayStart, lte: todayEnd },
-        status: { in: ['REFUNDED', 'CANCELLED'] },
+        updatedAt: { gte: todayStart, lte: todayEnd },
+        status: 'REFUNDED',
+        refundAmount: { gt: 0 },
+        ...(venueId ? { venueId: venueId as string } : {}),
+      },
+      _sum: { refundAmount: true },
+    }),
+    // 今日取消退费（顾客取消订单产生的退回金额）
+    prisma.order.aggregate({
+      where: {
+        orderKind: 'NORMAL',
+        cancelledAt: { gte: todayStart, lte: todayEnd },
+        status: 'CANCELLED',
         refundAmount: { gt: 0 },
         ...(venueId ? { venueId: venueId as string } : {}),
       },
@@ -75,7 +105,19 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
     // 每日订单（趋势）
     prisma.order.findMany({
       where: {
-        createdAt: { gte: start, lte: end },
+        orderKind: { not: 'GROUP_PARENT' },
+        OR: [
+          { createdAt: { gte: start, lte: end } },
+          { paidAt: { gte: start, lte: end } },
+          { cancelledAt: { gte: start, lte: end } },
+          {
+            status: { in: ['NO_SHOW', 'REFUNDED'] },
+            OR: [
+              { noShowAt: { gte: start, lte: end } },
+              { updatedAt: { gte: start, lte: end } },
+            ],
+          },
+        ],
         ...(venueId ? { venueId: venueId as string } : {}),
       },
       select: {
@@ -88,6 +130,9 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
         orderKind: true,
         feeType: true,
         paidAt: true,
+        cancelledAt: true,
+        noShowAt: true,
+        updatedAt: true,
       },
       orderBy: { createdAt: 'asc' },
     }),
@@ -100,23 +145,22 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
   ])
 
   // Build daily trend map
-  const trendMap = new Map<string, { revenue: number; refund: number; recharge: number; otherIncome: number; rescheduleFee: number; noShowPenalty: number; cancelFee: number }>()
+  const trendMap = new Map<string, { revenue: number; refund: number; cancelRefund: number; recharge: number; otherIncome: number; rescheduleFee: number; noShowPenalty: number; cancelFee: number }>()
   const dateKeys: string[] = []
   let cursor = new Date(start)
   while (cursor <= end) {
     const key = format(cursor, 'yyyy-MM-dd')
     dateKeys.push(key)
-    trendMap.set(key, { revenue: 0, refund: 0, recharge: 0, otherIncome: 0, rescheduleFee: 0, noShowPenalty: 0, cancelFee: 0 })
+    trendMap.set(key, { revenue: 0, refund: 0, cancelRefund: 0, recharge: 0, otherIncome: 0, rescheduleFee: 0, noShowPenalty: 0, cancelFee: 0 })
     cursor = new Date(cursor.getTime() + 86400000)
   }
 
   for (const o of dailyOrders) {
-    const key = format(o.createdAt, 'yyyy-MM-dd')
-    const entry = trendMap.get(key)
-    if (!entry) continue
-
     // 改签费订单：按支付日期统计
     if (o.orderKind === 'FEE' && o.feeType === 'RESCHEDULE_FEE' && o.status === 'PAID' && o.paidAt) {
+      const key = format(o.paidAt, 'yyyy-MM-dd')
+      const entry = trendMap.get(key)
+      if (!entry) continue
       entry.rescheduleFee += o.amount
       entry.otherIncome += o.amount
       continue
@@ -125,28 +169,44 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
     // 消费订单营收 / 退款 / 营业外收入
     if (o.orderKind === 'NORMAL' || !o.orderKind) {
       if (o.status === 'PAID' || o.status === 'COMPLETED') {
+        const key = format(orderIncomeTime(o), 'yyyy-MM-dd')
+        const entry = trendMap.get(key)
+        if (!entry) continue
         entry.revenue += o.amount
       }
-      if ((o.status === 'REFUNDED' || o.status === 'CANCELLED') && o.refundAmount) {
+      if (o.status === 'REFUNDED' && o.refundAmount) {
+        const key = format(orderRefundTime(o), 'yyyy-MM-dd')
+        const entry = trendMap.get(key)
+        if (!entry) continue
         entry.refund += o.refundAmount
       }
-      // 取消订单：扣除的手续费作为营业外收入
+      if (o.status === 'CANCELLED' && o.refundAmount) {
+        const key = format(orderCancelTime(o), 'yyyy-MM-dd')
+        const entry = trendMap.get(key)
+        if (!entry) continue
+        entry.cancelRefund += o.refundAmount
+      }
+      // 取消订单：未退部分作为取消费收入
       if (o.status === 'CANCELLED' && o.refundAmount != null) {
+        const key = format(orderCancelTime(o), 'yyyy-MM-dd')
+        const entry = trendMap.get(key)
+        if (!entry) continue
         const cancelFee = o.amount - o.refundAmount
         if (cancelFee > 0) {
           entry.cancelFee += cancelFee
           entry.otherIncome += cancelFee
         }
       }
-      // No-Show 历史违约金作为营业外收入
-      if (o.status === 'NO_SHOW' && o.penaltyAmount) {
-        entry.noShowPenalty += o.penaltyAmount
-        entry.otherIncome += o.penaltyAmount
-      }
-      // 旧流程改签手续费（兼容）
-      if (o.rescheduleFeeAmount && o.rescheduleFeeAmount > 0) {
-        entry.rescheduleFee += o.rescheduleFeeAmount
-        entry.otherIncome += o.rescheduleFeeAmount
+      // 作废未退款：实收未退部分作为营业外收入单独展示
+      if (o.status === 'NO_SHOW') {
+        const key = format(o.noShowAt || o.updatedAt || o.createdAt, 'yyyy-MM-dd')
+        const entry = trendMap.get(key)
+        if (!entry) continue
+        const retainedIncome = noShowRetainedIncome(o)
+        if (retainedIncome > 0) {
+          entry.noShowPenalty += retainedIncome
+          entry.otherIncome += retainedIncome
+        }
       }
     }
   }
@@ -161,6 +221,7 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
     date,
     revenue: trendMap.get(date)!.revenue,
     refund: trendMap.get(date)!.refund,
+    cancelRefund: trendMap.get(date)!.cancelRefund,
     recharge: trendMap.get(date)!.recharge,
     otherIncome: trendMap.get(date)!.otherIncome,
     rescheduleFee: trendMap.get(date)!.rescheduleFee,
@@ -171,6 +232,7 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
   // Aggregate period totals from trend data
   const periodRevenue = revenueTrend.reduce((s, d) => s + d.revenue, 0)
   const periodRefund = revenueTrend.reduce((s, d) => s + d.refund, 0)
+  const periodCancelRefund = revenueTrend.reduce((s, d) => s + d.cancelRefund, 0)
   const periodRecharge = revenueTrend.reduce((s, d) => s + d.recharge, 0)
   const periodOtherIncome = revenueTrend.reduce((s, d) => s + d.otherIncome, 0)
   const periodRescheduleFee = revenueTrend.reduce((s, d) => s + d.rescheduleFee, 0)
@@ -186,7 +248,7 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
   const rechargeConsumption = await prisma.order.aggregate({
     where: {
       orderKind: 'NORMAL',
-      createdAt: { gte: start, lte: end },
+      paidAt: { gte: start, lte: end },
       status: { in: ['PAID', 'COMPLETED'] },
       payMethod: { in: ['BALANCE', 'BALANCE_POINTS'] },
       ...(venueId ? { venueId: venueId as string } : {}),
@@ -197,11 +259,13 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
   return success(res, {
     todayRevenue: todayRevenue._sum.amount || 0,
     todayRefund: todayRefund._sum.refundAmount || 0,
+    todayCancelRefund: todayCancelRefund._sum.refundAmount || 0,
     todayRecharge: todayRecharge._sum.amount || 0,
     todayOtherIncome,
     totalUserBalance: (totalUserBalance._sum.principalBalance || 0) + (totalUserBalance._sum.bonusBalance || 0),
     periodRevenue,
     periodRefund,
+    periodCancelRefund,
     periodRecharge,
     periodOtherIncome,
     periodRescheduleFee,
@@ -239,9 +303,11 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
   // Type filter mapping
   const needOrders = typeList.length === 0 || typeList.includes('ORDER')
   const needRefunds = typeList.length === 0 || typeList.includes('REFUND')
+  const needCancelRefunds = typeList.length === 0 || typeList.includes('CANCEL_REFUND')
   const needRecharges = typeList.length === 0 || typeList.includes('RECHARGE')
   const needRescheduleFees = typeList.length === 0 || typeList.includes('RESCHEDULE_FEE')
-  const needBalanceTx = typeList.length === 0 || typeList.includes('BALANCE_DEDUCT') || typeList.includes('BALANCE_REFUND')
+  // 余额流水默认不展示，避免与订单收入/退款重复；仅当用户显式筛选时展示
+  const needBalanceTx = typeList.includes('BALANCE_DEDUCT') || typeList.includes('BALANCE_REFUND')
 
   const items: any[] = []
 
@@ -249,7 +315,7 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
   if (needOrders) {
     const orders = await prisma.order.findMany({
       where: {
-        ...(hasDate ? { createdAt: dateWhere } : {}),
+        ...(hasDate ? { paidAt: dateWhere } : {}),
         orderKind: 'NORMAL',
         status: { in: ['PAID', 'COMPLETED'] },
         ...(payMethodList.length ? { payMethod: { in: payMethodList as any } } : {}),
@@ -270,18 +336,58 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
         amount: o.amount,
         payMethod: o.payMethod,
         remark: '订单收入',
-        createdAt: o.createdAt.toISOString(),
+        createdAt: orderIncomeTime(o).toISOString(),
       })
     }
   }
 
-  // ── Orders (退款) ──
+  // ── 作废未退收入（营业外收入） ──
+  if (needOrders) {
+    const noShowOrders = await prisma.order.findMany({
+      where: {
+        orderKind: 'NORMAL',
+        status: 'NO_SHOW',
+        ...(hasDate
+          ? {
+              OR: [
+                { noShowAt: dateWhere },
+                { noShowAt: null, updatedAt: dateWhere },
+              ],
+            }
+          : {}),
+        ...(payMethodList.length ? { payMethod: { in: payMethodList as any } } : {}),
+        ...(venueId ? { venueId: venueId as string } : {}),
+      },
+      include: {
+        user: { select: { name: true, phone: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+    for (const o of noShowOrders) {
+      const amount = noShowRetainedIncome(o)
+      if (amount <= 0) continue
+      const flowTime = o.noShowAt || o.updatedAt || o.createdAt
+      items.push({
+        id: o.id,
+        type: 'NO_SHOW_RETAINED',
+        orderNo: o.orderNo,
+        userName: (o as any).user?.name || '-',
+        userPhone: (o as any).user?.phone || '-',
+        amount,
+        payMethod: o.payMethod,
+        remark: '作废未退收入（营业外收入）',
+        createdAt: flowTime.toISOString(),
+      })
+    }
+  }
+
+  // ── Orders (退款处置) ──
   if (needRefunds) {
     const refunds = await prisma.order.findMany({
       where: {
-        ...(hasDate ? { createdAt: dateWhere } : {}),
+        ...(hasDate ? { updatedAt: dateWhere } : {}),
         orderKind: 'NORMAL',
-        status: { in: ['REFUNDED', 'CANCELLED'] },
+        status: 'REFUNDED',
         refundAmount: { gt: 0 },
         ...(venueId ? { venueId: venueId as string } : {}),
       },
@@ -299,8 +405,38 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
         userPhone: (o as any).user?.phone || '-',
         amount: -(o.refundAmount || 0),
         payMethod: o.payMethod,
-        remark: o.status === 'CANCELLED' ? '取消订单退款' : '订单退款',
-        createdAt: o.createdAt.toISOString(),
+        remark: '退款处置',
+        createdAt: orderRefundTime(o).toISOString(),
+      })
+    }
+  }
+
+  // ── Orders (取消退费) ──
+  if (needCancelRefunds) {
+    const cancelRefunds = await prisma.order.findMany({
+      where: {
+        ...(hasDate ? { cancelledAt: dateWhere } : {}),
+        orderKind: 'NORMAL',
+        status: 'CANCELLED',
+        refundAmount: { gt: 0 },
+        ...(venueId ? { venueId: venueId as string } : {}),
+      },
+      include: {
+        user: { select: { name: true, phone: true } },
+      },
+      orderBy: { cancelledAt: 'desc' },
+    })
+    for (const o of cancelRefunds) {
+      items.push({
+        id: o.id,
+        type: 'CANCEL_REFUND',
+        orderNo: o.orderNo,
+        userName: (o as any).user?.name || '-',
+        userPhone: (o as any).user?.phone || '-',
+        amount: -(o.refundAmount || 0),
+        payMethod: o.payMethod,
+        remark: '顾客取消订单退费',
+        createdAt: orderCancelTime(o).toISOString(),
       })
     }
   }
@@ -309,7 +445,7 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
   if (needRescheduleFees) {
     const feeOrders = await prisma.order.findMany({
       where: {
-        ...(hasDate ? { createdAt: dateWhere } : {}),
+        ...(hasDate ? { paidAt: dateWhere } : {}),
         orderKind: 'FEE',
         feeType: 'RESCHEDULE_FEE',
         status: 'PAID',
@@ -332,7 +468,7 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
         amount: o.amount,
         payMethod: o.payMethod,
         remark: o.feeReason || '改签手续费',
-        createdAt: o.createdAt.toISOString(),
+        createdAt: orderIncomeTime(o).toISOString(),
       })
     }
   }
@@ -370,7 +506,7 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
   if (needBalanceTx) {
     const txTypes: string[] = []
     if (typeList.length === 0 || typeList.includes('BALANCE_DEDUCT')) txTypes.push('DEDUCT')
-    if (typeList.length === 0 || typeList.includes('BALANCE_REFUND')) txTypes.push('REFUND')
+    if (typeList.length === 0 || typeList.includes('BALANCE_REFUND')) txTypes.push('REFUND', 'CANCEL_RESTORE')
 
     if (txTypes.length) {
       // 若按门店筛选，先查出该门店的所有订单 ID，再通过 orderId 过滤余额交易
@@ -398,19 +534,22 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
         })
         // Fetch orderNos for balance transactions that have orderId
         const orderIds = btxs.map((t) => t.orderId).filter(Boolean) as string[]
-        const orderMap = new Map<string, string>()
+        const orderMap = new Map<string, { orderNo: string; orderKind: string }>()
         if (orderIds.length) {
           const orders = await prisma.order.findMany({
             where: { id: { in: orderIds } },
-            select: { id: true, orderNo: true },
+            select: { id: true, orderNo: true, orderKind: true },
           })
-          for (const o of orders) orderMap.set(o.id, o.orderNo)
+          for (const o of orders) orderMap.set(o.id, { orderNo: o.orderNo, orderKind: o.orderKind })
         }
         for (const t of btxs) {
+          const orderInfo = t.orderId ? orderMap.get(t.orderId) : undefined
+          // 团购父订单的余额流水已在子券订单中体现，避免重复展示
+          if (orderInfo?.orderKind === 'GROUP_PARENT') continue
           items.push({
             id: t.id,
             type: t.type === 'DEDUCT' ? 'BALANCE_DEDUCT' : 'BALANCE_REFUND',
-            orderNo: t.orderId ? (orderMap.get(t.orderId) || '-') : '-',
+            orderNo: orderInfo?.orderNo || (t.orderId ? '-' : '-'),
             userName: (t as any).user?.name || '-',
             userPhone: (t as any).user?.phone || '-',
             amount: t.type === 'DEDUCT' ? -t.amount : t.amount,
@@ -441,9 +580,9 @@ export async function refunds(req: AuthenticatedRequest, res: Response) {
   const where: any = { status: 'REFUNDED', refundAmount: { gt: 0 } }
   if (venueId) where.venueId = venueId as string
   if (startDate || endDate) {
-    where.createdAt = {}
-    if (startDate) where.createdAt.gte = dayStart(startDate as string)
-    if (endDate) where.createdAt.lte = dayEnd(endDate as string)
+    where.updatedAt = {}
+    if (startDate) where.updatedAt.gte = dayStart(startDate as string)
+    if (endDate) where.updatedAt.lte = dayEnd(endDate as string)
   }
 
   const [data, total] = await Promise.all([
@@ -451,7 +590,7 @@ export async function refunds(req: AuthenticatedRequest, res: Response) {
       where,
       skip: (pageNum - 1) * sizeNum,
       take: sizeNum,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { updatedAt: 'desc' },
       include: {
         user: { select: { name: true, phone: true } },
         booking: { select: { personName: true } },

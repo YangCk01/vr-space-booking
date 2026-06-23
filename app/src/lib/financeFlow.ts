@@ -4,20 +4,24 @@ import type { FlowItem } from '@/api/finance'
 
 export const typeLabelMap: Record<string, string> = {
   ORDER: '订单收入',
-  REFUND: '退款',
+  REFUND: '退款处置',
+  CANCEL_REFUND: '取消退费',
   RECHARGE: '充值',
   BALANCE_DEDUCT: '余额扣款',
   BALANCE_REFUND: '余额退款',
   RESCHEDULE_FEE: '改签费收入',
+  NO_SHOW_RETAINED: '作废未退收入',
 }
 
 export const typeColorMap: Record<string, string> = {
   ORDER: '#10B981',
   REFUND: '#EF4444',
+  CANCEL_REFUND: '#F97316',
   RECHARGE: '#3B82F6',
   BALANCE_DEDUCT: '#F59E0B',
   BALANCE_REFUND: '#8B5CF6',
   RESCHEDULE_FEE: '#F97316',
+  NO_SHOW_RETAINED: '#8B5CF6',
 }
 
 export const payMethodLabelMap: Record<string, string> = {

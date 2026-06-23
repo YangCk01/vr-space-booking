@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { subDays, format } from 'date-fns'
+import { format } from 'date-fns'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
@@ -9,13 +9,23 @@ import {
   ChevronRight,
   Eye,
   Users,
+  AlertTriangle,
+  Building2,
+  CalendarDays,
+  CheckCircle2,
+  ClipboardList,
+  Clock3,
+  Wallet,
 } from 'lucide-react'
 import {
   AreaChart,
   Area,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
+  Pie,
+  PieChart,
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
@@ -50,6 +60,13 @@ function readSetting<T>(settings: Record<string, any> | undefined, key: string, 
   const raw = settings?.[key]
   const value = raw && typeof raw === 'object' && 'value' in raw ? raw.value : raw
   return (value ?? fallback) as T
+}
+
+function yuanFromCents(value: number | null | undefined, maximumFractionDigits = 0) {
+  return new Intl.NumberFormat('zh-CN', {
+    maximumFractionDigits,
+    minimumFractionDigits: maximumFractionDigits,
+  }).format((value || 0) / 100)
 }
 
 function datePart(value: string | Date | null | undefined): string | null {
@@ -100,73 +117,38 @@ function StatusBadge({ status, text }: { status: string; text: string }) {
 
 /* ─── Stat Card ─── */
 function StatCard({ stat, index }: { stat: any; index: number }) {
+  const Icon = stat.icon
   return (
     <motion.div
       variants={itemVariants}
-      className="group relative bg-vrbg-card rounded-xl p-5 border border-vrborder-subtle hover:border-vrborder-hover hover:shadow-vr-md transition-all duration-200 cursor-pointer hover:-translate-y-0.5"
+      className="soft-panel group relative min-h-[116px] p-5 transition-all duration-200 hover:-translate-y-0.5"
     >
-      {/* Bottom gradient border */}
-      <div className={cn('absolute bottom-0 left-4 right-4 h-[2px] rounded-full bg-gradient-to-r opacity-60', stat.gradient)} />
-
-      <p className="text-vr-caption text-vrtext-tertiary mb-2">{stat.label}</p>
-      <div className="flex items-end justify-between">
-        <div>
-          <motion.p
-            className="text-vr-data-lg text-vrtext-primary"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.5, delay: 0.3 + index * 0.1 }}
-          >
-            {stat.prefix}{stat.value}{stat.suffix}
-          </motion.p>
-          {stat.trendLabel && (
-            <div className="flex items-center gap-1 mt-1.5">
-              {stat.trend != null && (
-                stat.trend >= 0 ? (
-                  <TrendingUp className="w-3.5 h-3.5 text-vrsuccess" />
-                ) : (
-                  <TrendingDown className="w-3.5 h-3.5 text-vrerror" />
-                )
-              )}
-              <span className={cn('text-vr-caption', stat.trend != null ? (stat.trend >= 0 ? 'text-vrsuccess' : 'text-vrerror') : 'text-vrtext-muted')}>
-                {stat.trendLabel}
+      <div className="flex h-full items-center gap-5">
+        <span className={cn('soft-icon h-14 w-14 shrink-0 bg-gradient-to-br shadow-[0_18px_35px_rgba(59,130,246,0.16)]', stat.iconTone)}>
+          {Icon && <Icon className={cn('h-7 w-7', stat.iconColor)} />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-vr-body-sm text-vrtext-secondary">{stat.label}</p>
+          <div className="mt-1 flex items-center gap-3">
+            <motion.p
+              className="text-vr-data-md text-vrtext-primary"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.5, delay: 0.2 + index * 0.08 }}
+            >
+              {stat.prefix}{stat.value}{stat.suffix}
+            </motion.p>
+            {stat.trend != null && (
+              <span className={cn(
+                'rounded-full px-2.5 py-1 text-vr-caption font-semibold',
+                stat.trend >= 0 ? 'bg-vrsuccess/15 text-vrsuccess' : 'bg-vrerror/12 text-vrerror'
+              )}>
+                {stat.trend >= 0 ? '+' : ''}{stat.trend}%
               </span>
-            </div>
-          )}
+            )}
+          </div>
+          <p className="mt-1 text-vr-caption text-vrtext-tertiary">{stat.helper}</p>
         </div>
-
-        {/* Mini ring chart for occupancy */}
-        {stat.suffix === '%' && (
-          <div className="relative w-12 h-12">
-            <svg className="w-12 h-12 -rotate-90" viewBox="0 0 48 48">
-              <circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" className="text-vrborder-subtle" strokeWidth="4" />
-              <motion.circle
-                cx="24" cy="24" r="20" fill="none"
-                stroke="url(#ringGrad)"
-                strokeWidth="4"
-                strokeLinecap="round"
-                strokeDasharray={`${2 * Math.PI * 20}`}
-                initial={{ strokeDashoffset: 2 * Math.PI * 20 }}
-                animate={{ strokeDashoffset: 2 * Math.PI * 20 * (1 - stat.numericValue / 100) }}
-                transition={{ duration: 1, delay: 0.4, ease: [0, 0, 0.2, 1] as [number, number, number, number] }}
-              />
-              <defs>
-                <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stopColor="#F59E0B" />
-                  <stop offset="100%" stopColor="#EF4444" />
-                </linearGradient>
-              </defs>
-            </svg>
-            <span className="absolute inset-0 flex items-center justify-center text-vr-caption text-vrtext-primary font-semibold">
-              {stat.value}%
-            </span>
-          </div>
-        )}
-        {stat.label === '今日到场人次' && (
-          <div className="w-12 h-12 rounded-full bg-vrsuccess/10 flex items-center justify-center">
-            <Users className="w-6 h-6 text-vrsuccess" />
-          </div>
-        )}
       </div>
     </motion.div>
   )
@@ -248,193 +230,209 @@ function VenueCard({ venue, index }: { venue: any; index: number }) {
 }
 
 /* ─── Schedule Timeline ─── */
-function ScheduleTimeline({ venues, bookings, title = '今日排场' }: { venues: Venue[]; bookings: Booking[]; title?: string }) {
-  const slotHeight = 72
-  const { startHour, endHour, totalHours, timeSlots } = useMemo(() => {
-    const allOpen = venues.map((v) => v.openTime ? parseInt(v.openTime.split(':')[0]) : 9)
-    const allClose = venues.map((v) => v.closeTime ? parseInt(v.closeTime.split(':')[0]) : 22)
-    const startH = allOpen.length > 0 ? Math.min(...allOpen) : 9
-    const endH = allClose.length > 0 ? Math.max(...allClose) : 22
-    const hours = endH - startH + 1
-    const slots = Array.from({ length: hours }, (_, i) => {
-      const h = startH + i
-      return String(h).padStart(2, '0') + ':00'
-    })
-    return { startHour: startH, endHour: endH, totalHours: hours, timeSlots: slots }
-  }, [venues])
+function ScheduleTimeline({
+  venues,
+  bookings,
+  title = '今日排场',
+  selectedDate,
+  selectedVenueId,
+  onDateChange,
+  onVenueChange,
+}: {
+  venues: any[]
+  bookings: Booking[]
+  title?: string
+  selectedDate: string
+  selectedVenueId: string
+  onDateChange: (value: string) => void
+  onVenueChange: (value: string) => void
+}) {
+  const visibleVenues = selectedVenueId === 'all'
+    ? venues
+    : venues.filter((venue) => venue.id === selectedVenueId)
 
-  const getEventStyle = (booking: Booking) => {
-    if (booking.status === 'NO_SHOW') {
-      return 'bg-gray-500/20 border border-gray-400/40 border-dashed'
+  const { startHour, endHour, timeSlots, totalMinutes } = useMemo(() => {
+    const openingHours = visibleVenues
+      .map((venue) => Number(venue.openTime?.split(':')[0]))
+      .filter((value) => Number.isFinite(value))
+    const closingHours = visibleVenues
+      .map((venue) => Number(venue.closeTime?.split(':')[0]))
+      .filter((value) => Number.isFinite(value))
+    const startH = Math.min(10, ...(openingHours.length ? openingHours : [10]))
+    const endH = Math.max(22, ...(closingHours.length ? closingHours : [22]))
+    const slots = Array.from({ length: Math.floor((endH - startH) / 2) + 1 }, (_, i) => startH + i * 2)
+    return {
+      startHour: startH,
+      endHour: endH,
+      timeSlots: slots,
+      totalMinutes: Math.max((endH - startH) * 60, 60),
     }
+  }, [visibleVenues])
+
+  const getTypeLabel = (booking: Booking) => {
+    if (booking.game?.title) return booking.game.title
+    if (booking.title) return booking.title
     switch (booking.type) {
-      case 'TEAM': return 'bg-gradient-to-r from-vraccent-primary to-vraccent-secondary'
-      case 'INDIVIDUAL': return 'bg-gradient-to-r from-vrpurple to-vrindigo'
-      case 'CORPORATE': return 'bg-vrwarning'
-      case 'MAINTENANCE': return 'bg-vrtext-muted'
-      default: return 'bg-vrtext-muted'
-    }
-  }
-
-  const getTypeLabel = (type: string) => {
-    switch (type) {
       case 'TEAM': return '团队预约'
       case 'INDIVIDUAL': return '散客预约'
       case 'CORPORATE': return '企业活动'
-      case 'MAINTENANCE': return '维护中'
+      case 'MAINTENANCE': return '维护'
       default: return '预约'
     }
   }
 
-  // 计算 booking 在甘特图中的位置(px)和高度(px)
-  const getBookingPos = (booking: Booking) => {
-    const [sh, sm] = booking.startTime.split(':').map(Number)
-    const [eh, em] = booking.endTime.split(':').map(Number)
-    const startMin = (sh - startHour) * 60 + sm
-    const endMin = (eh - startHour) * 60 + em
-    const durationMin = endMin - startMin
+  const getEventTone = (booking: Booking) => {
+    if (booking.type === 'MAINTENANCE' || booking.status === 'NO_SHOW') {
+      return 'border-slate-300 bg-slate-50 text-slate-500 dark:bg-slate-500/12 dark:text-slate-300'
+    }
+    if (booking.type === 'TEAM') {
+      return 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/12 dark:text-emerald-300'
+    }
+    if (booking.type === 'CORPORATE') {
+      return 'border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-500/12 dark:text-amber-300'
+    }
+    return 'border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-500/12 dark:text-blue-300'
+  }
+
+  const getBlockMetrics = (booking: Booking) => {
+    const [startH, startM] = booking.startTime.split(':').map(Number)
+    const [endHValue, endM] = booking.endTime.split(':').map(Number)
+    const start = Math.max(0, (startH - startHour) * 60 + (startM || 0))
+    const end = Math.min(totalMinutes, (endHValue - startHour) * 60 + (endM || 0))
+    const width = Math.max(((end - start) / totalMinutes) * 100, 13)
     return {
-      top: (startMin / 60) * slotHeight + 2,
-      height: Math.max((durationMin / 60) * slotHeight - 4, 28),
+      left: `${(start / totalMinutes) * 100}%`,
+      width: `${Math.min(width, 100 - (start / totalMinutes) * 100)}%`,
     }
-  }
-
-  // 判断两个 booking 是否重叠
-  const isOverlap = (a: Booking, b: Booking) => {
-    const aStart = parseInt(a.startTime.replace(':', ''))
-    const aEnd = parseInt(a.endTime.replace(':', ''))
-    const bStart = parseInt(b.startTime.replace(':', ''))
-    const bEnd = parseInt(b.endTime.replace(':', ''))
-    return aStart < bEnd && bStart < aEnd
-  }
-
-  // 为每个 venue 的 bookings 分组（重叠的放在一起）
-  const getBookingGroups = (venueBookings: Booking[]) => {
-    const sorted = [...venueBookings].sort((a, b) => a.startTime.localeCompare(b.startTime))
-    const groups: Booking[][] = []
-    for (const b of sorted) {
-      let placed = false
-      for (const group of groups) {
-        if (group.some((g) => isOverlap(g, b))) {
-          group.push(b)
-          placed = true
-          break
-        }
-      }
-      if (!placed) groups.push([b])
-    }
-    return groups
   }
 
   return (
-    <motion.div
-      variants={itemVariants}
-      className="bg-vrbg-card rounded-xl border border-vrborder-subtle p-5"
-    >
-      <h3 className="text-vr-h3 text-vrtext-primary mb-4">{title}</h3>
-
-      {bookings.length === 0 ? (
-        <div className="text-center py-16 text-vr-caption text-vrtext-muted">
-          今日暂无排场
+    <motion.div variants={itemVariants} className="soft-panel p-5">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h3 className="text-vr-h3 text-vrtext-primary">{title}</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="soft-input relative flex h-9 items-center gap-2 px-3 text-vr-body-sm">
+            <CalendarDays className="h-4 w-4 text-vrtext-tertiary" />
+            <span className="min-w-[88px] text-vrtext-primary">{selectedDate}</span>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(event) => onDateChange(event.target.value)}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+            />
+          </label>
+          <select
+            value={selectedVenueId}
+            onChange={(event) => onVenueChange(event.target.value)}
+            className="soft-input h-9 px-3 text-vr-body-sm"
+          >
+            <option value="all">全部场地</option>
+            {venues.map((venue) => (
+              <option key={venue.id} value={venue.id}>{venue.name}</option>
+            ))}
+          </select>
         </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <div className="min-w-[600px]">
-            {/* Header row */}
-            <div className="grid gap-0 border-b border-vrborder-subtle pb-2 mb-0"
-              style={{ gridTemplateColumns: `64px repeat(${venues.length}, 1fr)` }}
-            >
-              <div />
-              {venues.map((v) => (
-                <div key={v.id} className="text-center text-sm text-vrtext-secondary py-1 font-medium">{v.name}</div>
+      </div>
+
+      <div className="overflow-x-auto pb-1">
+        <div className="min-w-[860px]">
+          <div className="grid grid-cols-[170px_minmax(680px,1fr)] border-b border-vrborder-subtle pb-3 text-vr-caption text-vrtext-secondary">
+            <span>时间</span>
+            <div className="relative h-5">
+              {timeSlots.map((hour) => (
+                <span
+                  key={hour}
+                  className={cn(
+                    'absolute top-0 whitespace-nowrap',
+                    hour === startHour ? 'translate-x-0' : hour === endHour ? '-translate-x-full' : '-translate-x-1/2'
+                  )}
+                  style={{ left: `${((hour - startHour) * 60 / totalMinutes) * 100}%` }}
+                >
+                  {String(hour).padStart(2, '0')}:00
+                </span>
               ))}
             </div>
+          </div>
 
-            {/* Scrollable timeline body */}
-            <div className="relative overflow-y-auto" style={{ height: 6 * slotHeight }}>
-              <div className="relative" style={{ height: totalHours * slotHeight }}>
-                {/* Hour grid lines + labels */}
-                {timeSlots.map((time, i) => (
-                  <div
-                    key={time}
-                    className="absolute left-0 right-0 flex"
-                    style={{ top: i * slotHeight, height: slotHeight }}
-                  >
-                    <div className="w-[64px] text-sm text-vrtext-muted flex items-start pt-1 pr-3 justify-end shrink-0">
-                      {time}
+          <div className="relative">
+            {visibleVenues.map((venue, rowIndex) => {
+              const venueBookings = bookings.filter((booking) => booking.venueId === venue.id)
+              return (
+                <div
+                  key={venue.id}
+                  className="grid min-h-[98px] grid-cols-[170px_minmax(680px,1fr)] border-b border-vrborder-subtle last:border-b-0"
+                >
+                  <div className="flex items-center gap-3 py-4 pr-4">
+                    <img src={getImageUrl(venue.image)} alt={venue.name} className="h-12 w-14 rounded-lg object-cover shadow-sm" />
+                    <div className="min-w-0">
+                      <p className="text-vr-body-sm font-semibold text-vrtext-primary">{venue.name}</p>
+                      <p className="text-vr-caption text-vrtext-tertiary">
+                        {venue.area}m² <span className="mx-1">·</span> {venue.capacity}人
+                      </p>
                     </div>
-                    <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${venues.length}, 1fr)` }}>
-                      {venues.map((v) => (
-                        <div key={v.id} className="border-l border-vrborder-subtle/40" />
+                  </div>
+                  <div className="relative py-4">
+                    <div className="absolute inset-y-0 left-0 right-0 grid" style={{ gridTemplateColumns: `repeat(${timeSlots.length - 1}, minmax(0, 1fr))` }}>
+                      {timeSlots.slice(0, -1).map((hour) => (
+                        <div key={hour} className="border-l border-dashed border-vrborder-subtle first:border-l" />
                       ))}
                     </div>
-                    <div className="absolute left-[64px] right-0 top-0 border-t border-dashed border-vrborder-subtle/50 pointer-events-none" />
-                  </div>
-                ))}
-
-                {/* Booking blocks */}
-                {venues.map((venue, vIdx) => {
-                  const venueBookings = bookings.filter((b) => b.venueId === venue.id)
-                  const groups = getBookingGroups(venueBookings)
-                  return groups.map((group, gIdx) =>
-                    group.map((booking, bIdx) => {
-                      const pos = getBookingPos(booking)
-                      const count = group.length
-                      const gap = 4
-                      const totalGap = (count - 1) * gap
-                      const colWidth = 100 / venues.length
-                      const baseLeft = 64
-                      const colPx = `calc((100% - ${baseLeft}px) * ${colWidth} / 100)`
-                      const itemW = `calc((${colPx} - 8px - ${totalGap}px) / ${count})`
-                      const leftPos = `calc(${baseLeft}px + ${vIdx * colWidth}% + 4px + ${bIdx} * (${itemW} + ${gap}px))`
+                    <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-vrborder-subtle" />
+                    {venueBookings.map((booking, bookingIndex) => {
+                      const metrics = getBlockMetrics(booking)
                       return (
                         <motion.div
                           key={booking.id}
-                          initial={{ opacity: 0, y: 6 }}
+                          initial={{ opacity: 0, y: 8 }}
                           animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.25, delay: 0.2 + gIdx * 0.06 + bIdx * 0.04 }}
+                          transition={{ duration: 0.25, delay: rowIndex * 0.06 + bookingIndex * 0.04 }}
                           className={cn(
-                            'absolute rounded-xl px-3 text-white text-sm font-medium cursor-pointer hover:brightness-110 transition-all shadow-lg flex items-center',
-                            getEventStyle(booking)
+                            'absolute top-1/2 z-10 min-h-[56px] -translate-y-1/2 rounded-lg border px-3 py-2 shadow-[0_12px_25px_rgba(15,23,42,0.08)] transition-transform hover:-translate-y-[calc(50%+2px)]',
+                            getEventTone(booking)
                           )}
-                          style={{
-                            left: leftPos,
-                            width: itemW,
-                            top: pos.top + 2,
-                            height: pos.height - 4,
-                            zIndex: 10,
-                          }}
-                          title={`${booking.title}`}
+                          style={metrics}
                         >
-                          <span className="truncate">
-                            {getTypeLabel(booking.type)} {booking.startTime}-{booking.endTime}
-                          </span>
+                          <p className="truncate text-vr-body-sm font-semibold">{getTypeLabel(booking)}</p>
+                          <p className="mt-0.5 text-vr-caption">{booking.startTime} - {booking.endTime}</p>
+                          <p className="text-vr-caption">{booking.personCount || 1}-{booking.personCount || 1}人</p>
                         </motion.div>
                       )
-                    })
-                  )
-                })}
-              </div>
-            </div>
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+            {visibleVenues.length === 0 && (
+              <div className="py-16 text-center text-vr-caption text-vrtext-muted">暂无场地数据</div>
+            )}
           </div>
         </div>
-      )}
+      </div>
+
+      <div className="mt-4 flex justify-center">
+        <div className="flex flex-wrap items-center gap-5 rounded-full border border-vrborder-subtle bg-vrbg-card px-5 py-2 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">
+          <span className="flex items-center gap-2 text-vr-caption text-vrtext-secondary"><i className="h-2.5 w-2.5 rounded-full bg-blue-500" />已预约</span>
+          <span className="flex items-center gap-2 text-vr-caption text-vrtext-secondary"><i className="h-2.5 w-2.5 rounded-full bg-emerald-400" />即将开始</span>
+          <span className="flex items-center gap-2 text-vr-caption text-vrtext-secondary"><i className="h-2.5 w-2.5 rounded-full bg-slate-300" />维护/不可用</span>
+          <span className="flex items-center gap-2 text-vr-caption text-vrtext-secondary"><i className="h-2.5 w-2.5 rounded-full bg-slate-200" />空闲</span>
+        </div>
+      </div>
     </motion.div>
   )
 }
 
-/* ─── Order Chart ─── */
-function OrderChart({ chartData, period, onPeriodChange }: { chartData: any[]; period: '7d' | '30d'; onPeriodChange: (p: '7d' | '30d') => void }) {
+/* ─── Revenue Chart ─── */
+function RevenueChart({ chartData, period, onPeriodChange }: { chartData: any[]; period: '7d' | '30d'; onPeriodChange: (p: '7d' | '30d') => void }) {
   const data = chartData.length > 0 ? chartData : []
 
   return (
     <motion.div
       variants={itemVariants}
-      className="bg-vrbg-card rounded-xl border border-vrborder-subtle p-5 h-full"
+      className="soft-panel p-5 h-full"
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-vr-h3 text-vrtext-primary">线上 vs 线下</h3>
+        <h3 className="text-vr-h3 text-vrtext-primary">近{period === '7d' ? '7' : '30'}天营收趋势</h3>
         <div className="flex items-center gap-1 bg-vrbg-surface rounded-full p-0.5">
           {(['7d', '30d'] as const).map((p) => (
             <button
@@ -457,11 +455,15 @@ function OrderChart({ chartData, period, onPeriodChange }: { chartData: any[]; p
       <div className="flex items-center gap-4 mb-2">
         <div className="flex items-center gap-1.5">
           <span className="w-3 h-3 rounded-full bg-[#3B82F6]" />
-          <span className="text-vr-caption text-vrtext-secondary">线上预约</span>
+          <span className="text-vr-caption text-vrtext-secondary">线上收入</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-3 h-3 rounded-full bg-[#10B981]" />
-          <span className="text-vr-caption text-vrtext-secondary">线下排场</span>
+          <span className="text-vr-caption text-vrtext-secondary">线下收入</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-full bg-[#F59E0B]" />
+          <span className="text-vr-caption text-vrtext-secondary">营业外</span>
         </div>
       </div>
 
@@ -493,20 +495,21 @@ function OrderChart({ chartData, period, onPeriodChange }: { chartData: any[]; p
             />
             <Tooltip
               contentStyle={{
-                backgroundColor: 'var(--vr-bg-card)',
-                border: '1px solid var(--vr-border-hover)',
-                borderRadius: '8px',
-                fontSize: 12,
-                color: 'var(--vr-text-primary)',
-              }}
-              formatter={(value: number, name: string) => {
-                const label = name === 'onlineCount' ? '线上预约' : '线下排场'
-                return [`${value}单`, label]
+                  backgroundColor: 'rgba(255,255,255,0.96)',
+                  border: '1px solid var(--vr-border-subtle)',
+                  borderRadius: '12px',
+                  boxShadow: '0 16px 35px rgba(15,23,42,0.08)',
+                  fontSize: 12,
+                  color: 'var(--vr-text-primary)',
+                }}
+                formatter={(value: number, name: string) => {
+                const label = name === 'onlineAmount' ? '线上收入' : name === 'offlineAmount' ? '线下收入' : '营业外收入'
+                return [`¥${(Number(value) / 100).toLocaleString()}`, label]
               }}
             />
             <Area
               type="monotone"
-              dataKey="onlineCount"
+              dataKey="onlineAmount"
               stroke="#3B82F6"
               strokeWidth={2}
               fill="url(#areaOnline)"
@@ -515,10 +518,19 @@ function OrderChart({ chartData, period, onPeriodChange }: { chartData: any[]; p
             />
             <Area
               type="monotone"
-              dataKey="offlineCount"
+              dataKey="offlineAmount"
               stroke="#10B981"
               strokeWidth={2}
               fill="url(#areaOffline)"
+              animationDuration={1200}
+              animationEasing="ease-out"
+            />
+            <Area
+              type="monotone"
+              dataKey="otherIncome"
+              stroke="#F59E0B"
+              strokeWidth={2}
+              fill="transparent"
               animationDuration={1200}
               animationEasing="ease-out"
             />
@@ -529,13 +541,124 @@ function OrderChart({ chartData, period, onPeriodChange }: { chartData: any[]; p
   )
 }
 
+function VenueStatusPanel({ venues }: { venues: any[] }) {
+  return (
+    <motion.div variants={itemVariants} className="soft-panel p-5">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-vr-h3 text-vrtext-primary">场地状态</h3>
+        <span className="text-vr-caption text-vrtext-tertiary">{venues.length} 个场地</span>
+      </div>
+      <div className="space-y-3">
+        {venues.slice(0, 5).map((venue) => (
+          <div key={venue.id} className="flex items-center gap-3 rounded-xl border border-vrborder-subtle bg-vrbg-card p-3 shadow-[0_8px_20px_rgba(15,23,42,0.035)]">
+            <img src={getImageUrl(venue.image)} alt={venue.name} className="h-12 w-16 rounded-lg object-cover" />
+            <div className="min-w-0 flex-1">
+              <p className="text-vr-body-sm font-medium text-vrtext-primary truncate">{venue.name}</p>
+              <p className="text-vr-caption text-vrtext-tertiary">
+                {venue.area}m² <span className="mx-1">·</span> {venue.deviceCount || 0}台设备 <span className="mx-1">·</span> {venue.capacity}人
+              </p>
+              <p className="text-vr-caption text-vrtext-tertiary">{venue.openTime || '10:00'} - {venue.closeTime || '22:00'}</p>
+            </div>
+            <VerticalStatusTag status={venue.status} />
+          </div>
+        ))}
+        {venues.length === 0 && (
+          <div className="py-8 text-center text-vr-caption text-vrtext-muted">暂无场地数据</div>
+        )}
+      </div>
+    </motion.div>
+  )
+}
+
+function TodoPanel({ pendingVerify, reconAlerts, refundAlerts }: { pendingVerify: number; reconAlerts: number; refundAlerts: number }) {
+  const todos = [
+    { label: '退款处置异常', value: refundAlerts, icon: AlertTriangle, tone: 'text-vrerror bg-vrerror/10', badge: 'bg-vrerror/12 text-vrerror' },
+    { label: '今日待核销', value: pendingVerify, icon: CheckCircle2, tone: 'text-vrwarning bg-vrwarning/10', badge: 'bg-vrwarning/15 text-vrwarning' },
+    { label: '对账提醒', value: reconAlerts, icon: ClipboardList, tone: 'text-vraccent-primary bg-vraccent-primary/10', badge: 'bg-vraccent-primary/12 text-vraccent-primary' },
+  ]
+  return (
+    <motion.div variants={itemVariants} className="soft-panel p-5">
+      <h3 className="text-vr-h3 text-vrtext-primary mb-4">待处理事项</h3>
+      <div className="space-y-3">
+        {todos.map((todo) => (
+          <button key={todo.label} className="flex w-full items-center gap-3 rounded-xl border border-vrborder-subtle bg-vrbg-card p-3 text-left shadow-[0_8px_20px_rgba(15,23,42,0.035)] transition-colors hover:bg-vrbg-hover">
+            <span className={cn('soft-icon h-10 w-10', todo.tone)}>
+              <todo.icon className="w-4 h-4" />
+            </span>
+            <span className="flex-1 text-vr-body-sm text-vrtext-secondary">{todo.label}</span>
+            <span className={cn('min-w-6 rounded-full px-2 py-0.5 text-center text-vr-caption font-semibold', todo.badge)}>{todo.value}</span>
+            <ChevronRight className="h-4 w-4 text-vrtext-muted" />
+          </button>
+        ))}
+      </div>
+    </motion.div>
+  )
+}
+
+function OrderCompositionPanel({ orders }: { orders: any[] }) {
+  const paid = orders.filter((o) => ['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(o.status)).length
+  const completed = orders.filter((o) => o.status === 'COMPLETED').length
+  const pending = orders.filter((o) => o.status === 'PENDING').length
+  const closed = Math.max(0, orders.length - paid - completed - pending)
+  const data = [
+    { name: '待核销', value: paid, color: '#3B82F6' },
+    { name: '已完成', value: completed, color: '#10B981' },
+    { name: '待支付', value: pending, color: '#F59E0B' },
+    { name: '已关闭', value: closed, color: '#94A3B8' },
+  ].filter((item) => item.value > 0)
+
+  return (
+    <motion.div variants={itemVariants} className="soft-panel p-5">
+      <h3 className="text-vr-h3 text-vrtext-primary mb-4">订单构成</h3>
+      <div className="grid min-h-[220px] grid-cols-1 items-center gap-4 sm:grid-cols-[1fr_150px]">
+        <div className="relative h-[210px]">
+        {data.length > 0 ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={data} innerRadius={62} outerRadius={88} paddingAngle={3} dataKey="value">
+                {data.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
+              </Pie>
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: 'rgba(255,255,255,0.96)',
+                  border: '1px solid var(--vr-border-subtle)',
+                  borderRadius: 12,
+                  boxShadow: '0 16px 35px rgba(15,23,42,0.08)',
+                  fontSize: 12,
+                }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="flex h-full items-center justify-center text-vr-caption text-vrtext-muted">暂无订单数据</div>
+        )}
+          {data.length > 0 && (
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <p className="text-vr-data-md text-vrtext-primary">{orders.length}</p>
+              <p className="text-vr-caption text-vrtext-secondary">总订单</p>
+            </div>
+          )}
+        </div>
+      <div className="space-y-3">
+        {data.map((item) => (
+          <div key={item.name} className="flex items-center justify-between gap-3 text-vr-caption text-vrtext-secondary">
+            <span className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ background: item.color }} />
+              {item.name}
+            </span>
+            <span>{orders.length ? Math.round((item.value / orders.length) * 1000) / 10 : 0}% ({item.value})</span>
+          </div>
+        ))}
+      </div>
+      </div>
+    </motion.div>
+  )
+}
+
 /* ─── Latest Orders ─── */
 function LatestOrders({ orders, title = '最新订单' }: { orders: any[]; title?: string }) {
   const displayOrders = orders
   const navigate = useNavigate()
-
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(5)
 
   const statusTextMap: Record<string, string> = {
     PENDING: '待支付',
@@ -547,25 +670,23 @@ function LatestOrders({ orders, title = '最新订单' }: { orders: any[]; title
     NO_SHOW: '未到场',
   }
 
-  const total = displayOrders.length
-  const totalPages = Math.max(1, Math.ceil(total / pageSize))
-  const safePage = Math.min(currentPage, totalPages)
-
-  const paginatedOrders = displayOrders.slice((safePage - 1) * pageSize, safePage * pageSize)
-
-  const pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1)
-  // 最多显示5个页码，当前页居中
-  let startPage = Math.max(1, safePage - 2)
-  let endPage = Math.min(totalPages, startPage + 4)
-  if (endPage - startPage < 4) {
-    startPage = Math.max(1, endPage - 4)
+  const statusTone: Record<string, string> = {
+    PENDING: 'bg-vrwarning/15 text-vrwarning',
+    PAID: 'bg-vraccent-primary/12 text-vraccent-primary',
+    READY_TO_VERIFY: 'bg-vrwarning/15 text-vrwarning',
+    PLAYING: 'bg-vraccent-primary/12 text-vraccent-primary',
+    COMPLETED: 'bg-vrsuccess/15 text-vrsuccess',
+    CANCELLED: 'bg-vrtext-muted/15 text-vrtext-tertiary',
+    REFUNDING: 'bg-vrwarning/15 text-vrwarning',
+    REFUNDED: 'bg-vrerror/12 text-vrerror',
   }
-  const visiblePages = pageNumbers.slice(startPage - 1, endPage)
+
+  const compactOrders = displayOrders.slice(0, 3)
 
   return (
     <motion.div
       variants={itemVariants}
-      className="bg-vrbg-card rounded-xl border border-vrborder-subtle p-5 mt-6"
+      className="soft-panel p-5"
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
@@ -580,48 +701,35 @@ function LatestOrders({ orders, title = '最新订单' }: { orders: any[]; title
 
       {/* Table */}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[600px]">
+        <table className="w-full min-w-[360px]">
           <thead>
-            <tr className="bg-vrbg-elevated rounded-lg">
-              <th className="text-left text-vr-caption text-vrtext-secondary font-medium px-4 py-3 rounded-l-lg">订单号</th>
-              <th className="text-left text-vr-caption text-vrtext-secondary font-medium px-4 py-3">场地</th>
-              <th className="text-left text-vr-caption text-vrtext-secondary font-medium px-4 py-3">金额</th>
-              <th className="text-left text-vr-caption text-vrtext-secondary font-medium px-4 py-3">状态</th>
-              <th className="text-left text-vr-caption text-vrtext-secondary font-medium px-4 py-3 rounded-r-lg">操作</th>
+            <tr className="bg-vrbg-elevated">
+              <th className="rounded-l-lg px-3 py-3 text-left text-vr-caption font-medium text-vrtext-secondary">订单号</th>
+              <th className="px-3 py-3 text-left text-vr-caption font-medium text-vrtext-secondary">用户</th>
+              <th className="px-3 py-3 text-left text-vr-caption font-medium text-vrtext-secondary">金额</th>
+              <th className="rounded-r-lg px-3 py-3 text-left text-vr-caption font-medium text-vrtext-secondary">状态</th>
             </tr>
           </thead>
           <tbody>
-            {paginatedOrders.map((order: any, idx: number) => (
+            {compactOrders.map((order: any, idx: number) => (
               <motion.tr
                 key={order.id}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ duration: 0.3, delay: 0.5 + idx * 0.06 }}
                 className="border-b border-vrborder-subtle/50 hover:bg-vrbg-elevated/40 transition-colors"
+                onClick={() => navigate('/orders')}
               >
-                <td className="px-4 py-3.5 text-vr-body-sm text-vrtext-primary font-mono">{order.orderNo}</td>
-                <td className="px-4 py-3.5 text-vr-body-sm text-vrtext-secondary">{order.venueName || order.venue}</td>
-                <td className="px-4 py-3.5 text-vr-body-sm text-vrtext-primary font-medium">¥{(order.amount / 100).toLocaleString()}</td>
-                <td className="px-4 py-3.5">
-                  <StatusBadge status={order.status.toLowerCase()} text={statusTextMap[order.status] || order.status} />
+                <td className="px-3 py-3 text-vr-caption font-mono text-vrtext-secondary">{order.orderNo}</td>
+                <td className="px-3 py-3">
+                  <p className="text-vr-caption font-medium text-vrtext-primary">{order.userName || order.customerName || order.personName || '-'}</p>
+                  <p className="text-[11px] text-vrtext-tertiary">{order.userPhone || order.personPhone || ''}</p>
                 </td>
-                <td className="px-4 py-3.5">
-                  {order.status === 'PENDING' && (
-                    <button className="px-3 py-1 bg-vrwarning text-vrbg-base rounded-md text-vr-caption font-medium hover:bg-vrwarning/90 transition-colors">
-                      催付
-                    </button>
-                  )}
-                  {(order.status === 'PAID' || order.status === 'COMPLETED') && (
-                    <button
-                      onClick={() => navigate('/orders')}
-                      className="flex items-center gap-1 text-vr-caption text-vraccent-primary hover:underline transition-colors"
-                    >
-                      <Eye className="w-3.5 h-3.5" /> 详情
-                    </button>
-                  )}
-                  {order.status === 'CANCELLED' && (
-                    <span className="text-vr-caption text-vrtext-muted">—</span>
-                  )}
+                <td className="px-3 py-3 text-vr-caption font-semibold text-vrerror">¥{(order.amount / 100).toFixed(2)}</td>
+                <td className="px-3 py-3">
+                  <span className={cn('rounded-full px-2 py-1 text-[11px] font-semibold', statusTone[order.status] || 'bg-vraccent-primary/12 text-vraccent-primary')}>
+                    {statusTextMap[order.status] || order.status}
+                  </span>
                 </td>
               </motion.tr>
             ))}
@@ -630,40 +738,10 @@ function LatestOrders({ orders, title = '最新订单' }: { orders: any[]; title
       </div>
 
       {/* Empty state */}
-      {total === 0 && (
+      {displayOrders.length === 0 && (
         <div className="flex flex-col items-center justify-center py-12">
           <Eye className="w-10 h-10 text-vrtext-muted mb-3" />
           <p className="text-vr-body text-vrtext-secondary">暂无订单数据</p>
-        </div>
-      )}
-
-      {/* Pagination */}
-      {total > 0 && (
-        <div className="flex items-center justify-end gap-2 mt-4">
-          {visiblePages.map((page) => (
-            <button
-              key={page}
-              onClick={() => setCurrentPage(page)}
-              className={cn(
-                'px-3 py-1.5 rounded-lg text-vr-caption font-medium transition-colors',
-                page === safePage
-                  ? 'bg-vraccent-primary text-white'
-                  : 'text-vrtext-secondary hover:bg-vrbg-elevated'
-              )}
-            >
-              {page}
-            </button>
-          ))}
-          {endPage < totalPages && <span className="text-vrtext-muted px-1">...</span>}
-          <select
-            value={pageSize}
-            onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}
-            className="ml-2 h-7 px-2 rounded-lg bg-vrbg-surface border border-vrborder-subtle text-vr-caption text-vrtext-secondary focus:outline-none focus:border-vraccent-primary"
-          >
-            <option value={5}>5条/页</option>
-            <option value={10}>10条/页</option>
-            <option value={20}>20条/页</option>
-          </select>
         </div>
       )}
     </motion.div>
@@ -672,11 +750,13 @@ function LatestOrders({ orders, title = '最新订单' }: { orders: any[]; title
 
 /* ─── Home Page ─── */
 export default function Home() {
-  const [dashRange, setDashRange] = useState<'today' | '7days' | '30days' | '90days'>('today')
+  const today = format(new Date(), 'yyyy-MM-dd')
+  const [scheduleDate, setScheduleDate] = useState(today)
+  const [selectedVenueId, setSelectedVenueId] = useState('all')
 
   const { data: dashboardData } = useQuery({
-    queryKey: ['dashboard', dashRange],
-    queryFn: () => getDashboard(dashRange),
+    queryKey: ['dashboard', 'today'],
+    queryFn: () => getDashboard('today'),
   })
 
   const { data: pageSettings } = useQuery({
@@ -698,27 +778,17 @@ export default function Home() {
 
   const stats = dashboardData?.stats
   const latestOrders = dashboardData?.latestOrders || []
-  const bHomeNoticeEnabled = readSetting(pageSettings, 'b_home_notice_enabled', true)
-  const bHomeNoticeTitle = readSetting(pageSettings, 'b_home_notice_title', '今日运营提醒')
-  const bHomeNoticeContent = readSetting(pageSettings, 'b_home_notice_content', '重点关注待核销订单、设备状态与退款审批，异常请及时处理。')
-  const bHomeNoticeLevel = readSetting<'info' | 'success' | 'warning'>(pageSettings, 'b_home_notice_level', 'info')
-  const bHomeStatsTitle = readSetting(pageSettings, 'b_home_stats_title', '核心指标')
-  const bHomeMetricNote = readSetting(pageSettings, 'b_home_metric_note', '营业额按付款时间统计 · 预约/核销按到场日期统计')
   const bHomeScheduleTitle = readSetting(pageSettings, 'b_home_schedule_title', '今日排场')
   const bHomeOrdersTitle = readSetting(pageSettings, 'b_home_orders_title', '最新订单')
-  const noticeClass = {
-    info: 'border-vraccent-primary/30 bg-vraccent-primary/10 text-vraccent-primary',
-    success: 'border-vrsuccess/30 bg-vrsuccess/10 text-vrsuccess',
-    warning: 'border-vrwarning/40 bg-vrwarning/10 text-vrwarning',
-  }[bHomeNoticeLevel]
 
-  // 今日日期
-  const today = new Date().toISOString().split('T')[0]
-
-  // 获取今日预约
+  // 获取排场预约
   const { data: bookingData } = useQuery({
-    queryKey: ['bookings', 'today', today],
-    queryFn: () => getBookings({ date: today, pageSize: 100 }),
+    queryKey: ['bookings', 'home-schedule', scheduleDate, selectedVenueId],
+    queryFn: () => getBookings({
+      date: scheduleDate,
+      venueId: selectedVenueId === 'all' ? undefined : selectedVenueId,
+      pageSize: 100,
+    }),
   })
   const todayBookings = (bookingData?.data || []).filter((b: Booking) => b.status !== 'CANCELLED')
 
@@ -755,14 +825,58 @@ export default function Home() {
     }
   })
 
-  // 构建 Stats 数据
-  const prefix = dashRange === 'today' ? '今日' : '总'
-  const compareLabel = dashRange === 'today' ? '较昨日' : '较上期'
+  const pendingVerifyCount = todayBookings.filter((b: any) => ['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(b.status)).length
+  const refundAlertCount = stats?.refundedOrders || 0
+  const reconAlertCount = (stats?.noShowCount || 0) + (stats?.cancelledOrders || 0)
+
   const statCards = stats ? [
-    { label: `${prefix}预约场次`, value: String(stats.todayBookings), numericValue: stats.todayBookings, trend: stats.bookingTrend, trendLabel: stats.bookingTrend != null ? `${compareLabel} ${stats.bookingTrend >= 0 ? '+' : ''}${stats.bookingTrend}%` : `${compareLabel} —`, gradient: 'from-vraccent-primary to-vraccent-secondary' },
-    { label: `${prefix}核销场次`, value: String(stats.todayUsed), numericValue: stats.todayUsed, trend: stats.usedTrend ?? null, trendLabel: stats.usedTrend != null ? `${compareLabel} ${stats.usedTrend >= 0 ? '+' : ''}${stats.usedTrend}%` : '', gradient: 'from-vraccent-secondary to-vrsuccess' },
-    { label: `${prefix}营业额`, value: String((stats.todayRevenue / 100).toFixed(2)), numericValue: stats.todayRevenue / 100, prefix: '¥', trend: stats.revenueTrend, trendLabel: stats.revenueTrend != null ? `${compareLabel} ${stats.revenueTrend >= 0 ? '+' : ''}${stats.revenueTrend}%` : `${compareLabel} —`, gradient: 'from-vrpurple to-vrindigo' },
-    { label: `${prefix}到场人次`, value: String(stats.todayPlayers), numericValue: stats.todayPlayers, suffix: '', trend: stats.playersTrend ?? null, trendLabel: stats.playersTrend != null ? `${compareLabel} ${stats.playersTrend >= 0 ? '+' : ''}${stats.playersTrend}%` : `${compareLabel} —`, gradient: 'from-vrsuccess to-vraccent-secondary' },
+    {
+      label: '今日营收',
+      value: yuanFromCents(stats.todayRevenue, 0),
+      numericValue: stats.todayRevenue / 100,
+      prefix: '¥',
+      trend: stats.revenueTrend,
+      helper: stats.revenueTrend != null ? (stats.revenueTrend >= 0 ? '较昨日增长' : '较昨日下降') : '较昨日 —',
+      iconTone: 'from-blue-50 to-blue-100 dark:from-blue-500/20 dark:to-blue-500/10',
+      iconColor: 'text-vraccent-primary',
+      icon: Wallet,
+    },
+    {
+      label: '今日订单',
+      value: String(stats.todayBookings || todayBookings.length || 0),
+      numericValue: stats.todayBookings,
+      prefix: '',
+      suffix: '',
+      trend: stats.bookingTrend,
+      helper: stats.bookingTrend != null ? `较昨日 ${stats.bookingTrend >= 0 ? '+' : ''}${stats.bookingTrend}` : '较昨日 —',
+      iconTone: 'from-emerald-50 to-emerald-100 dark:from-emerald-500/20 dark:to-emerald-500/10',
+      iconColor: 'text-vrsuccess',
+      icon: ClipboardList,
+    },
+    {
+      label: '待核销',
+      value: String(pendingVerifyCount || stats.pendingOrders || 0),
+      numericValue: pendingVerifyCount,
+      prefix: '',
+      suffix: '',
+      trend: null,
+      helper: '待核销订单',
+      iconTone: 'from-amber-50 to-orange-100 dark:from-amber-500/20 dark:to-orange-500/10',
+      iconColor: 'text-vrwarning',
+      icon: CalendarDays,
+    },
+    {
+      label: '场地在线',
+      value: `${stats.todayActiveVenues || venues.filter((venue) => venue.status === 'open').length || 0} / ${stats.totalVenues || venues.length || 0}`,
+      numericValue: stats.todayActiveVenues || 0,
+      prefix: '',
+      suffix: '',
+      trend: null,
+      helper: '在线场地 / 总场地',
+      iconTone: 'from-red-50 to-rose-100 dark:from-red-500/20 dark:to-rose-500/10',
+      iconColor: 'text-vrerror',
+      icon: Building2,
+    },
   ] : []
 
   return (
@@ -771,63 +885,41 @@ export default function Home() {
         variants={containerVariants}
         initial="hidden"
         animate="visible"
-        className="space-y-6"
+        className="space-y-5"
       >
-        {bHomeNoticeEnabled && (
-          <motion.div variants={itemVariants} className={cn('rounded-xl border p-4', noticeClass)}>
-            <p className="text-vr-body-sm font-semibold">{bHomeNoticeTitle}</p>
-            <p className="text-vr-body-sm text-vrtext-secondary mt-1">{bHomeNoticeContent}</p>
-          </motion.div>
-        )}
+        <motion.header variants={itemVariants} className="pt-1">
+          <h1 className="text-vr-h1 text-vrtext-primary font-semibold">首页概览</h1>
+          <p className="mt-1 text-vr-body-sm text-vrtext-secondary">今日经营、排场、场地状态与待办提醒</p>
+        </motion.header>
 
-        {/* Section 2: Stats cards */}
-        <div className="flex items-center justify-between">
-          <p className="text-vr-body-sm text-vrtext-secondary font-medium">{bHomeStatsTitle}</p>
-          <div className="flex items-center gap-1 bg-vrbg-card border border-vrborder-subtle rounded-lg p-0.5">
-            {([
-              { key: 'today', label: '今日' },
-              { key: '7days', label: '近7天' },
-              { key: '30days', label: '近30天' },
-              { key: '90days', label: '近90天' },
-            ] as const).map((r) => (
-              <button
-                key={r.key}
-                onClick={() => setDashRange(r.key)}
-                className={`px-3 py-1 rounded-md text-vr-caption transition-colors ${
-                  dashRange === r.key
-                    ? 'bg-vraccent-primary text-white'
-                    : 'text-vrtext-secondary hover:text-vrtext-primary hover:bg-vrborder-hover/50'
-                }`}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
           {statCards.map((stat, idx) => (
             <StatCard key={stat.label} stat={stat as any} index={idx} />
           ))}
         </div>
-        <p className="text-vr-caption text-vrtext-muted text-center">
-          {bHomeMetricNote}
-        </p>
 
-        {/* Section 3: Venue cards + Order chart */}
-        <div className="grid grid-cols-1 xl:grid-cols-[3fr_2fr] gap-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-4 content-start">
-            {venues.map((venue: any, idx: number) => (
-              <VenueCard key={venue.id} venue={venue} index={idx} />
-            ))}
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_420px] gap-5">
+          <div className="space-y-5">
+            <ScheduleTimeline
+              venues={venues}
+              bookings={todayBookings}
+              title={bHomeScheduleTitle}
+              selectedDate={scheduleDate}
+              selectedVenueId={selectedVenueId}
+              onDateChange={setScheduleDate}
+              onVenueChange={setSelectedVenueId}
+            />
+            <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.35fr)_380px] gap-5">
+              <RevenueChart chartData={revenueData || []} period={revenuePeriod} onPeriodChange={setRevenuePeriod} />
+              <OrderCompositionPanel orders={latestOrders} />
+            </div>
           </div>
-          <OrderChart chartData={revenueData || []} period={revenuePeriod} onPeriodChange={setRevenuePeriod} />
+          <div className="space-y-5">
+            <VenueStatusPanel venues={venues} />
+            <TodoPanel pendingVerify={pendingVerifyCount || stats?.pendingOrders || 0} reconAlerts={reconAlertCount} refundAlerts={refundAlertCount} />
+            <LatestOrders orders={latestOrders} title={bHomeOrdersTitle} />
+          </div>
         </div>
-
-        {/* Section 4: Schedule timeline */}
-        <ScheduleTimeline venues={venues} bookings={todayBookings} title={bHomeScheduleTitle} />
-
-        {/* Section 4: Latest orders */}
-        <LatestOrders orders={latestOrders} title={bHomeOrdersTitle} />
       </motion.div>
     </Layout>
   )

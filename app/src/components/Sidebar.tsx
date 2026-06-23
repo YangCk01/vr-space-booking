@@ -213,7 +213,7 @@ function SubMenu({
         className={cn(
           'relative flex items-center gap-1 h-11 px-3 rounded-lg transition-all duration-150 group',
           isParentActive
-            ? 'bg-vrbg-active text-vraccent-primary'
+            ? 'bg-gradient-to-r from-vraccent-primary to-vraccent-secondary text-white shadow-[0_10px_22px_rgba(59,130,246,0.22)]'
             : 'text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary'
         )}
         style={{ paddingLeft: depth > 0 ? `${12 + depth * 16}px` : undefined }}
@@ -221,7 +221,7 @@ function SubMenu({
         {isParentActive && !depth && (
           <motion.div
             layoutId="sidebar-active"
-            className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-vraccent-primary rounded-r-full"
+            className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-white/80 rounded-r-full"
             transition={{ type: 'spring', stiffness: 350, damping: 30 }}
           />
         )}
@@ -273,7 +273,7 @@ function SubMenu({
                 className={cn(
                   'relative flex items-center h-10 px-3 rounded-lg transition-all duration-150 text-vr-body-sm',
                   isActive
-                    ? 'bg-vrbg-active text-vraccent-primary font-medium'
+                    ? 'bg-vrbg-active text-vraccent-primary font-medium shadow-[inset_0_0_0_1px_rgba(59,130,246,0.12)]'
                     : 'text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary'
                 )}
                 style={{ paddingLeft: `${12 + (depth + 1) * 16}px` }}
@@ -344,10 +344,12 @@ export default function Sidebar() {
   const logo = settings?.logo?.value || ''
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col bg-vrbg-sidebar text-vrtext-primary">
       {/* Logo */}
       <div className="h-16 flex items-center gap-3 px-4 border-b border-vrborder-subtle shrink-0">
-        <img src={logo ? getImageUrl(logo) : '/logo.svg'} alt="VR Logo" className="w-8 h-8 object-contain" />
+        <div className="soft-icon h-10 w-10 bg-vrbg-surface">
+          <img src={logo ? getImageUrl(logo) : '/logo.svg'} alt="VR Logo" className="w-7 h-7 object-contain" />
+        </div>
         <div className="min-w-0">
           <h1 className="text-vr-h4 text-vrtext-primary font-semibold leading-tight truncate max-w-[130px]">{brandName}</h1>
           <p className="text-vr-caption text-vrtext-muted mt-0.5 truncate">预约排场系统</p>

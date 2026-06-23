@@ -220,7 +220,7 @@ export default function ScanModal({ open, onClose, onScan, title = '扫码识别
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="w-full h-9 flex items-center justify-center gap-2 rounded-lg bg-white border border-vrborder-subtle text-vr-body-sm text-vrtext-primary hover:border-vraccent-primary hover:text-vraccent-primary transition-colors"
+                className="w-full h-9 flex items-center justify-center gap-2 rounded-xl bg-vrbg-card border border-vrborder-subtle text-vr-body-sm text-vrtext-primary hover:border-vraccent-primary hover:text-vraccent-primary transition-colors"
               >
                 <Upload className="w-4 h-4" />
                 上传二维码截图
@@ -231,7 +231,7 @@ export default function ScanModal({ open, onClose, onScan, title = '扫码识别
                   value={manualCode}
                   onChange={(e) => setManualCode(e.target.value)}
                   placeholder="输入券码或订单号模拟识别"
-                  className="flex-1 h-9 px-3 rounded-lg bg-white border border-vrborder-subtle text-vr-body-sm text-vrtext-primary outline-none focus:border-vraccent-primary"
+                  className="soft-input flex-1 h-9 px-3 text-vr-body-sm"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && manualCode.trim()) {
                       onScan(manualCode.trim())
@@ -247,7 +247,7 @@ export default function ScanModal({ open, onClose, onScan, title = '扫码识别
                       onClose()
                     }
                   }}
-                  className="h-9 px-4 rounded-lg bg-vraccent-primary text-white text-xs font-medium hover:bg-vraccent-primary/90 transition-colors"
+                  className="h-9 px-4 rounded-xl bg-vraccent-primary text-white text-xs font-medium hover:bg-vraccent-primary/90 transition-colors"
                 >
                   模拟识别
                 </button>

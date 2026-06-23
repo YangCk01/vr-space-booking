@@ -20,8 +20,12 @@ const tabs = [
   { key: 'PAID', label: '待核销' },
   { key: 'GROUP_BUY', label: '团购订单' },
   { key: 'COMPLETED', label: '已完成' },
-  { key: 'CANCELLED', label: '已取消' },
+  { key: 'CLOSED', label: '已关闭' },
 ]
+
+function isExpiredPending(o: any) {
+  return o.status === 'PENDING' && o.expireAt && new Date(o.expireAt).getTime() <= Date.now()
+}
 
 const groupBuySubTabs = [
   { key: 'all', label: '全部' },
@@ -276,25 +280,53 @@ export default function Orders() {
   const allOrders = data?.data || []
   const orders = useMemo(() => {
     if (activeTab === 'all') return allOrders
-    if (activeTab === 'PAID') {
-      return allOrders.filter((o: any) => ['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(o.status) && o.orderKind !== 'FEE')
+    if (activeTab === 'PENDING') {
+      return allOrders.filter((o: any) => o.status === 'PENDING' && !isExpiredPending(o))
     }
-    if (activeTab === 'CANCELLED') {
-      return allOrders.filter((o: any) => ['CANCELLED', 'NO_SHOW', 'REFUNDED'].includes(o.status))
+    if (activeTab === 'PAID') {
+      // 待核销：普通预约订单（排除改签费订单与团购券订单）
+      return allOrders.filter(
+        (o: any) =>
+          ['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(o.status) &&
+          o.orderKind !== 'FEE' &&
+          !o.groupBuyPackageId &&
+          !o.groupBuyPackage
+      )
+    }
+    if (activeTab === 'CLOSED') {
+      return allOrders.filter(
+        (o: any) => ['CANCELLED', 'NO_SHOW', 'REFUNDED'].includes(o.status) || isExpiredPending(o)
+      )
     }
     if (activeTab === 'GROUP_BUY') {
-      const list = allOrders.filter((o: any) => !!o.groupBuyPackage && o.status !== 'CANCELLED')
+      // 团购订单：只展示未关闭的团购券（待使用/已使用）
+      const list = allOrders.filter(
+        (o: any) =>
+          (o.groupBuyPackageId || o.groupBuyPackage) &&
+          !['CANCELLED', 'REFUNDED', 'NO_SHOW'].includes(o.status) &&
+          !isExpiredPending(o)
+      )
       if (groupBuySubTab === 'pending_use') {
-        // 待使用：仅未预约的团购券
-        return list.filter((o: any) => o.status === 'PAID' && !o.booking)
+        // 待使用：未核销且未生成关联订单
+        return list.filter(
+          (o: any) =>
+            o.status === 'PAID' &&
+            !o.booking &&
+            !o.metadata?.redeemedOrderId
+        )
       }
       if (groupBuySubTab === 'used') {
-        // 已使用：已预约（有 booking）或已完成/作废/退款
-        return list.filter((o: any) => o.booking || ['COMPLETED', 'NO_SHOW', 'REFUNDED'].includes(o.status))
+        // 已使用：已核销、已完成或已生成关联订单（兼容旧数据 bookingId）
+        return list.filter(
+          (o: any) =>
+            o.status === 'COMPLETED' ||
+            !!o.booking ||
+            !!o.metadata?.redeemedOrderId
+        )
       }
       return list
     }
-    return allOrders.filter((o: any) => o.status === activeTab)
+    return allOrders.filter((o: any) => o.status === activeTab && !o.groupBuyPackageId && !o.groupBuyPackage)
   }, [allOrders, activeTab, groupBuySubTab])
 
   const lastExpiredSyncKey = useRef('')
@@ -446,7 +478,7 @@ export default function Orders() {
                       )}
                       {o.refundAmount && o.refundAmount > 0 && (
                         <p className="text-xs text-[var(--error)]">
-                          已退款 ¥{((o.refundAmount || 0) / 100).toFixed(2)}
+                          {o.status === 'CANCELLED' ? '已退费' : '已退款'} ¥{((o.refundAmount || 0) / 100).toFixed(2)}
                         </p>
                       )}
                     </div>
@@ -595,7 +627,7 @@ export default function Orders() {
                           <span className="text-xs text-[var(--success)]">优惠 ¥{(o.couponDiscount / 100).toFixed(2)}</span>
                         )}
                         {o.refundAmount && o.refundAmount > 0 && (
-                          <span className="text-xs text-[var(--error)]">已退 ¥{((o.refundAmount || 0) / 100).toFixed(2)}</span>
+                          <span className="text-xs text-[var(--error)]">{o.status === 'CANCELLED' ? '已退费' : '已退款'} ¥{((o.refundAmount || 0) / 100).toFixed(2)}</span>
                         )}
                       </div>
                     </div>
@@ -780,7 +812,7 @@ export default function Orders() {
                           </div>
                         ) : info.rate === 0 ? (
                           <div className="rounded-xl p-3 bg-red-500/10 border border-red-500/20">
-                            <p className="text-sm font-medium text-red-400">开场前{cancelHours}小时内不可退款</p>
+                            <p className="text-sm font-medium text-red-400">开场前{cancelHours}小时内不可退费</p>
                             <p className="text-xs text-[var(--text-muted)] mt-0.5">确认取消后订单将关闭，款项不予退回</p>
                           </div>
                         ) : (

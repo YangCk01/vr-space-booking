@@ -59,11 +59,11 @@ export default function Refund() {
       queryClient.invalidateQueries({ queryKey: ['orders'] })
       queryClient.invalidateQueries({ queryKey: ['order', id] })
       refreshUser()
-      toastSuccess('退款申请已提交')
+      toastSuccess(isGroupBuy ? '退款申请已提交' : '取消退费申请已提交')
       navigate('/orders', { replace: true })
     },
     onError: (error: any) => {
-      toastError('退款失败: ' + (error?.response?.data?.message || error?.message || '未知错误'))
+      toastError(`${isGroupBuy ? '退款' : '取消退费'}失败: ` + (error?.response?.data?.message || error?.message || '未知错误'))
     },
   })
 
@@ -107,7 +107,7 @@ export default function Refund() {
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
-          <h1 className="text-lg font-semibold text-[var(--text-primary)]">申请退款</h1>
+          <h1 className="text-lg font-semibold text-[var(--text-primary)]">{isGroupBuy ? '申请退款' : '取消退费'}</h1>
         </div>
       </div>
 
@@ -137,9 +137,9 @@ export default function Refund() {
           </div>
         </div>
 
-        {/* 退款原因 */}
+        {/* 退费原因 */}
         <div className="bg-white rounded-2xl border border-[var(--border-subtle)] p-4 shadow-[var(--shadow-sm)]">
-          <h3 className="text-sm font-bold text-[var(--text-primary)] mb-3">退款原因</h3>
+          <h3 className="text-sm font-bold text-[var(--text-primary)] mb-3">{isGroupBuy ? '退款原因' : '取消原因'}</h3>
           <div className="space-y-2">
             {reasons.map((r) => (
               <label
@@ -170,22 +170,22 @@ export default function Refund() {
           </div>
         </div>
 
-        {/* 退款金额 */}
+        {/* 退费金额 */}
         <div className="bg-white rounded-2xl border border-[var(--border-subtle)] p-4 shadow-[var(--shadow-sm)]">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-[var(--text-primary)]">退款金额</h3>
+            <h3 className="text-sm font-bold text-[var(--text-primary)]">{isGroupBuy ? '退款金额' : '预计退费'}</h3>
             <span className="text-lg font-black text-[var(--error)]">{formatAmount(refundAmount)}</span>
           </div>
           <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
-            <span>原路退回</span>
+            <span>{isGroupBuy ? '原路退回' : '取消后按规则退回'}</span>
             <span>余额/支付账户</span>
           </div>
           <p className="text-xs text-[var(--text-muted)] mt-1">提交后预计 1-3 个工作日到账</p>
         </div>
 
-        {/* 退款规则 */}
+        {/* 退费规则 */}
         <div className="bg-white rounded-2xl border border-[var(--border-subtle)] p-4 shadow-[var(--shadow-sm)]">
-          <h3 className="text-sm font-bold text-[var(--text-primary)] mb-3">退款规则</h3>
+          <h3 className="text-sm font-bold text-[var(--text-primary)] mb-3">{isGroupBuy ? '退款规则' : '取消退费规则'}</h3>
           {isGroupBuy ? (
             <ul className="space-y-1.5 text-xs text-[var(--text-secondary)] list-disc pl-4">
               <li>未预约或团购券到期，可全额退款</li>
@@ -194,17 +194,17 @@ export default function Refund() {
           ) : refundInfo?.isExpired ? (
             <div className="rounded-xl p-3 bg-red-500/10 border border-red-500/20">
               <p className="text-sm font-medium text-red-400">已过最迟取消时间</p>
-              <p className="text-xs text-[var(--text-muted)] mt-0.5">该订单已开场或超出取消时限，不可退款</p>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">该订单已开场或超出取消时限，不可取消退费</p>
             </div>
           ) : refundInfo?.rate === 0 ? (
             <div className="rounded-xl p-3 bg-red-500/10 border border-red-500/20">
-              <p className="text-sm font-medium text-red-400">开场前{cancelHours}小时内不可退款</p>
-              <p className="text-xs text-[var(--text-muted)] mt-0.5">确认退款后订单将关闭，款项不予退回</p>
+              <p className="text-sm font-medium text-red-400">开场前{cancelHours}小时内不可退费</p>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">确认取消后订单将关闭，款项不予退回</p>
             </div>
           ) : (
             <ul className="space-y-1.5 text-xs text-[var(--text-secondary)] list-disc pl-4">
               <li>当前可退比例 {Math.round((refundInfo?.rate || 0) * 100)}%（{refundInfo?.activeTier?.label}）</li>
-              <li>开场前{cancelHours}小时内不可退款</li>
+              <li>开场前{cancelHours}小时内不可退费</li>
             </ul>
           )}
         </div>
@@ -214,7 +214,7 @@ export default function Refund() {
       <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-md border-t border-[var(--border-subtle)]">
         <div className="max-w-lg mx-auto px-4 h-[calc(3.5rem+var(--safe-bottom))] pb-[var(--safe-bottom)] flex items-center justify-between gap-3">
           <div className="text-sm">
-            <span className="text-[var(--text-secondary)]">退款 </span>
+            <span className="text-[var(--text-secondary)]">{isGroupBuy ? '退款 ' : '预计退费 '}</span>
             <span className="font-black text-[var(--error)]">{formatAmount(refundAmount)}</span>
           </div>
           <button
@@ -222,7 +222,7 @@ export default function Refund() {
             disabled={!canRefund || cancelMutation.isPending}
             className="px-6 py-2.5 rounded-full text-sm font-bold text-white bg-gradient-accent disabled:opacity-50 disabled:cursor-not-allowed shadow-glow-sm"
           >
-            {cancelMutation.isPending ? '提交中...' : !canRefund ? '不可退款' : '提交申请'}
+            {cancelMutation.isPending ? '提交中...' : !canRefund ? (isGroupBuy ? '不可退款' : '不可退费') : '提交申请'}
           </button>
         </div>
       </div>
