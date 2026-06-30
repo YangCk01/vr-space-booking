@@ -8,5 +8,8 @@ function getDefaultApiBaseHost() {
   return `http://${hostname}:${apiPort}`
 }
 
-export const API_BASE_HOST = import.meta.env.VITE_API_BASE_URL || getDefaultApiBaseHost()
+const configuredApiBaseHost = import.meta.env.VITE_API_BASE_URL
+
+export const API_BASE_HOST =
+  configuredApiBaseHost === undefined ? getDefaultApiBaseHost() : configuredApiBaseHost
 export const API_BASE_URL = import.meta.env.VITE_API_URL || `${API_BASE_HOST}/api`
