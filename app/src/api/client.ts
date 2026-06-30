@@ -1,6 +1,9 @@
 import axios from 'axios'
 import { API_BASE_URL } from '@/lib/apiBase'
 
+export const ADMIN_ACCESS_TOKEN_KEY = 'adminAccessToken'
+export const ADMIN_REFRESH_TOKEN_KEY = 'adminRefreshToken'
+
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
@@ -12,7 +15,7 @@ export const apiClient = axios.create({
 // 请求拦截器：自动附加 Token
 apiClient.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('accessToken')
+    const token = localStorage.getItem(ADMIN_ACCESS_TOKEN_KEY)
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -30,7 +33,7 @@ apiClient.interceptors.response.use(
     // Token 过期，尝试刷新
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true
-      const refreshToken = localStorage.getItem('refreshToken')
+      const refreshToken = localStorage.getItem(ADMIN_REFRESH_TOKEN_KEY)
 
       if (refreshToken) {
         try {
@@ -38,14 +41,14 @@ apiClient.interceptors.response.use(
             refreshToken,
           })
           const { accessToken, refreshToken: newRefreshToken } = res.data.data
-          localStorage.setItem('accessToken', accessToken)
-          localStorage.setItem('refreshToken', newRefreshToken)
+          localStorage.setItem(ADMIN_ACCESS_TOKEN_KEY, accessToken)
+          localStorage.setItem(ADMIN_REFRESH_TOKEN_KEY, newRefreshToken)
           originalRequest.headers.Authorization = `Bearer ${accessToken}`
           return apiClient(originalRequest)
         } catch {
           // 刷新失败，清除登录态
-          localStorage.removeItem('accessToken')
-          localStorage.removeItem('refreshToken')
+          localStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+          localStorage.removeItem(ADMIN_REFRESH_TOKEN_KEY)
           window.location.href = '/login'
         }
       }

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { ADMIN_ACCESS_TOKEN_KEY, ADMIN_REFRESH_TOKEN_KEY } from '@/api/client'
 
 export interface User {
   id: string
@@ -30,8 +31,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   setAuthenticated: (value) => set({ isAuthenticated: value }),
   setLoading: (value) => set({ isLoading: value }),
   logout: () => {
-    localStorage.removeItem('accessToken')
-    localStorage.removeItem('refreshToken')
+    localStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+    localStorage.removeItem(ADMIN_REFRESH_TOKEN_KEY)
     set({ user: null, isAuthenticated: false })
   },
 }))

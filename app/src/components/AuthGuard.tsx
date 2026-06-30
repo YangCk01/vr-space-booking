@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { getMe } from '@/api/auth'
+import { ADMIN_ACCESS_TOKEN_KEY } from '@/api/client'
 
 // 路由路径到所需权限码的映射（与 Sidebar keyToPermission 保持一致）
 const routeToPermission: Record<string, string | string[]> = {
@@ -47,7 +48,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         return
       }
 
-      const token = localStorage.getItem('accessToken')
+      const token = localStorage.getItem(ADMIN_ACCESS_TOKEN_KEY)
 
       if (!token) {
         setLoading(false)

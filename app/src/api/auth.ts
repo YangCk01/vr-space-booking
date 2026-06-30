@@ -1,4 +1,4 @@
-import { apiClient } from './client'
+import { ADMIN_ACCESS_TOKEN_KEY, ADMIN_REFRESH_TOKEN_KEY, apiClient } from './client'
 
 export interface LoginInput {
   phone: string
@@ -31,8 +31,8 @@ export async function getMe() {
 
 export async function logout() {
   await apiClient.post('/auth/logout')
-  localStorage.removeItem('accessToken')
-  localStorage.removeItem('refreshToken')
+  localStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+  localStorage.removeItem(ADMIN_REFRESH_TOKEN_KEY)
 }
 
 export async function changePassword(input: { oldPassword: string; newPassword: string }) {

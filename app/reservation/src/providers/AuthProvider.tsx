@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, ty
 import { useQueryClient } from '@tanstack/react-query'
 import { getMe, login as loginApi, register as registerApi } from '@/api/auth'
 import type { LoginInput, RegisterInput, AuthUser } from '@/api/auth'
-import { apiClient } from '@/api/client'
+import { CUSTOMER_ACCESS_TOKEN_KEY, CUSTOMER_REFRESH_TOKEN_KEY, apiClient } from '@/api/client'
 import { AUTH_LOGOUT_EVENT, bumpAuthSessionVersion, emitAuthLogout } from '@/lib/authSession'
 
 interface AuthContextValue {
@@ -45,15 +45,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient])
 
   const clearAuthState = useCallback(() => {
-    localStorage.removeItem('accessToken')
-    localStorage.removeItem('refreshToken')
+    localStorage.removeItem(CUSTOMER_ACCESS_TOKEN_KEY)
+    localStorage.removeItem(CUSTOMER_REFRESH_TOKEN_KEY)
     delete apiClient.defaults.headers.common.Authorization
     setUser(null)
     void clearPrivateQueries()
   }, [clearPrivateQueries])
 
   const init = useCallback(async () => {
-    const token = localStorage.getItem('accessToken')
+    const token = localStorage.getItem(CUSTOMER_ACCESS_TOKEN_KEY)
     if (!token) {
       setUser(null)
       setIsLoading(false)
@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const authVersion = authVersionRef.current
     try {
       const me = await getMe()
-      if (authVersionRef.current === authVersion && localStorage.getItem('accessToken') === token) {
+      if (authVersionRef.current === authVersion && localStorage.getItem(CUSTOMER_ACCESS_TOKEN_KEY) === token) {
         if (isValidCustomerUser(me)) {
           setUser(me)
         } else {
@@ -98,8 +98,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authVersionRef.current += 1
     bumpAuthSessionVersion()
     const res = await loginApi(input)
-    localStorage.setItem('accessToken', res.accessToken)
-    localStorage.setItem('refreshToken', res.refreshToken)
+    localStorage.setItem(CUSTOMER_ACCESS_TOKEN_KEY, res.accessToken)
+    localStorage.setItem(CUSTOMER_REFRESH_TOKEN_KEY, res.refreshToken)
     const me = await getMe()
     if (isValidCustomerUser(me)) {
       setUser(me)
@@ -113,8 +113,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authVersionRef.current += 1
     bumpAuthSessionVersion()
     const res = await registerApi(input)
-    localStorage.setItem('accessToken', res.accessToken)
-    localStorage.setItem('refreshToken', res.refreshToken)
+    localStorage.setItem(CUSTOMER_ACCESS_TOKEN_KEY, res.accessToken)
+    localStorage.setItem(CUSTOMER_REFRESH_TOKEN_KEY, res.refreshToken)
     const me = await getMe()
     if (isValidCustomerUser(me)) {
       setUser(me)
@@ -127,8 +127,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const handleLogout = () => {
     authVersionRef.current += 1
     bumpAuthSessionVersion()
-    localStorage.removeItem('accessToken')
-    localStorage.removeItem('refreshToken')
+    localStorage.removeItem(CUSTOMER_ACCESS_TOKEN_KEY)
+    localStorage.removeItem(CUSTOMER_REFRESH_TOKEN_KEY)
     delete apiClient.defaults.headers.common.Authorization
     setUser(null)
     void clearPrivateQueries()
@@ -136,7 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const refreshUser = useCallback(async () => {
-    const token = localStorage.getItem('accessToken')
+    const token = localStorage.getItem(CUSTOMER_ACCESS_TOKEN_KEY)
     if (!token) {
       setUser(null)
       void clearPrivateQueries()
@@ -145,7 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const authVersion = authVersionRef.current
     try {
       const me = await getMe()
-      if (authVersionRef.current === authVersion && localStorage.getItem('accessToken') === token) {
+      if (authVersionRef.current === authVersion && localStorage.getItem(CUSTOMER_ACCESS_TOKEN_KEY) === token) {
         if (isValidCustomerUser(me)) {
           setUser(me)
         } else {

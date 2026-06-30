@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Building2, ExternalLink, Eye, EyeOff, Headset, LockKeyhole, X } from 'lucide-react'
 import { login } from '@/api/auth'
+import { ADMIN_ACCESS_TOKEN_KEY, ADMIN_REFRESH_TOKEN_KEY } from '@/api/client'
 import { getPagePublicSettings } from '@/api/settings'
 import { useAuthStore } from '@/stores/authStore'
 import { getImageUrl } from '@/lib/imageUrl'
@@ -80,8 +81,8 @@ export default function Login() {
 
     try {
       const result = await login({ phone, password })
-      localStorage.setItem('accessToken', result.accessToken)
-      localStorage.setItem('refreshToken', result.refreshToken)
+      localStorage.setItem(ADMIN_ACCESS_TOKEN_KEY, result.accessToken)
+      localStorage.setItem(ADMIN_REFRESH_TOKEN_KEY, result.refreshToken)
       queryClient.clear()
       setUser(result.user)
       navigate('/')

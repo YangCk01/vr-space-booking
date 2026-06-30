@@ -1,10 +1,11 @@
 import { API_BASE_URL } from '@/lib/apiBase'
+import { ADMIN_ACCESS_TOKEN_KEY } from './client'
 
 export async function uploadFile(type: 'venues' | 'logos' | 'avatars' | 'games' | 'products' | 'pages' | 'group-buys', file: File) {
   const formData = new FormData()
   formData.append('file', file)
 
-  const token = localStorage.getItem('accessToken')
+  const token = localStorage.getItem(ADMIN_ACCESS_TOKEN_KEY)
   const res = await fetch(`${API_BASE_URL}/upload/${type}`, {
     method: 'POST',
     headers: token ? { Authorization: 'Bearer ' + token } : {},
