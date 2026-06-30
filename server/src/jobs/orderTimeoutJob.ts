@@ -2,6 +2,13 @@ import cron from 'node-cron'
 import { prisma } from '../utils/prisma'
 import { releaseEquipment } from '../services/equipmentService'
 
+function readOrderMetadata(metadata: unknown): Record<string, any> {
+  if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+    return metadata as Record<string, any>
+  }
+  return {}
+}
+
 /**
  * 关闭已超过支付时限的待支付订单。
  * 该函数可被定时任务调用，也可在订单列表/详情等入口做兜底同步。
@@ -12,7 +19,7 @@ export async function expirePendingOrders(now = new Date()) {
       status: 'PENDING',
       expireAt: { lt: now },
     },
-    select: { id: true, orderNo: true, userCouponId: true, bookingId: true },
+    select: { id: true, orderNo: true, userCouponId: true, bookingId: true, metadata: true },
   })
 
   if (expiredOrders.length === 0) return 0
@@ -48,6 +55,14 @@ export async function expirePendingOrders(now = new Date()) {
               data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
             })
           }
+        }
+
+        const thirdPartyCoupon = readOrderMetadata(order.metadata).thirdPartyCoupon
+        if (thirdPartyCoupon?.id) {
+          await tx.thirdPartyCoupon.updateMany({
+            where: { id: String(thirdPartyCoupon.id), status: 'USED' },
+            data: { status: 'UNUSED', usedAt: null },
+          })
         }
 
         if (order.bookingId) {

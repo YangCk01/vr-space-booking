@@ -5,9 +5,10 @@ import Home from './pages/Home'
 import Venues from './pages/Venues'
 import Booking from './pages/Booking'
 import Orders from './pages/Orders'
-import Users from './pages/Users'
+import MemberCenter from './pages/MemberCenter'
 import Analytics from './pages/Analytics'
 import Finance from './pages/Finance'
+import FinanceCompliance from './pages/FinanceCompliance'
 import Settings from './pages/Settings'
 import MemberMarketing from './pages/MemberMarketing'
 import Games from './pages/Games'
@@ -22,11 +23,12 @@ import Campaigns from './pages/Campaigns'
 import TriggerRules from './pages/TriggerRules'
 import Approvals from './pages/Approvals'
 import GroupBuys from './pages/GroupBuys'
+import PlatformManagement from './pages/PlatformManagement'
 
 export default function App() {
   return (
     <>
-      <Toaster position="top-right" />
+      <Toaster position="bottom-right" />
       <AuthGuard>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -35,9 +37,10 @@ export default function App() {
           <Route path="/booking" element={<Booking />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/approvals" element={<Approvals />} />
-          <Route path="/users" element={<Users />} />
+          <Route path="/member-center" element={<MemberCenter />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/finance" element={<Finance />} />
+          <Route path="/finance/compliance" element={<FinanceCompliance />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/member-marketing" element={<MemberMarketing />} />
           <Route path="/games" element={<Games />} />
@@ -50,6 +53,7 @@ export default function App() {
           <Route path="/campaigns" element={<Campaigns />} />
           <Route path="/trigger-rules" element={<TriggerRules />} />
           <Route path="/group-buys" element={<GroupBuys />} />
+          <Route path="/platforms" element={<PlatformManagement />} />
         </Routes>
       </AuthGuard>
     </>

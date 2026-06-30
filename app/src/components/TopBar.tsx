@@ -1,15 +1,19 @@
-import { Bell, Search, ChevronDown, RefreshCw, LogOut, X, Eye, EyeOff, Sun, Moon } from 'lucide-react'
-import { useState } from 'react'
+import { Search, ChevronDown, RefreshCw, LogOut, X, Eye, EyeOff, User, Lock } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuthStore } from '@/stores/authStore'
+import { NotificationPopover } from '@/components/ui/notification-popover'
 import { useThemeStore } from '@/stores/themeStore'
 import { logout, changePassword } from '@/api/auth'
 import { getLogs } from '@/api/logs'
 import { globalSearch } from '@/api/search'
 import { getNotifications, getUnreadCount, markAllRead, clearAllNotifications } from '@/api/notifications'
+import { getSettings } from '@/api/settings'
+import { playNotificationSound, speakNotification, getVoiceTextByType } from '@/lib/notificationSound'
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import LanguageSelect from '@/components/LanguageSelect'
+import { ThemeToggle } from '@/components/ui/theme-toggle'
 import {
   Dialog,
   DialogContent,
@@ -17,6 +21,14 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 interface TopBarProps {
   breadcrumb?: string[]
@@ -37,8 +49,19 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
   const navigate = useNavigate()
   const { user, logout: clearAuth } = useAuthStore()
   const { theme, toggleTheme } = useThemeStore()
-  const [showDropdown, setShowDropdown] = useState(false)
   const [showNotify, setShowNotify] = useState(false)
+  const notifyRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showNotify) return
+    const handler = (e: MouseEvent) => {
+      if (notifyRef.current && !notifyRef.current.contains(e.target as Node)) {
+        setShowNotify(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showNotify])
   const [showPwdDialog, setShowPwdDialog] = useState(false)
   const [oldPwd, setOldPwd] = useState('')
   const [newPwd, setNewPwd] = useState('')
@@ -61,14 +84,72 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
   const { data: notifyData } = useQuery({
     queryKey: ['notifications', 'admin'],
     queryFn: () => getNotifications({ page: 1, pageSize: 10 }),
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   })
 
   const { data: unreadCount = 0 } = useQuery({
     queryKey: ['notifications', 'admin', 'unread'],
     queryFn: getUnreadCount,
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   })
+
+  const { data: notificationSettings } = useQuery({
+    queryKey: ['settings', 'notification'],
+    queryFn: () => getSettings('notification'),
+    staleTime: 60000,
+  })
+
+  const soundEnabled = notificationSettings?.notification_sound_enabled?.value ?? true
+  const soundMode = notificationSettings?.notification_sound_mode?.value ?? 'voice'
+  const soundType = notificationSettings?.notification_sound_type?.value ?? 'default'
+  const soundUrl = notificationSettings?.notification_sound_url?.value ?? ''
+  const voiceText = notificationSettings?.notification_voice_text?.value ?? '您有新的订单，请及时查看'
+  const audioUnlockedRef = useRef(false)
+
+  // 浏览器自动播放策略：首次用户交互后解锁音频
+  useEffect(() => {
+    const unlock = () => {
+      if (audioUnlockedRef.current) return
+      try {
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext
+        if (AudioContext) {
+          const ctx = new AudioContext()
+          if (ctx.state === 'suspended') {
+            ctx.resume().then(() => ctx.close())
+          } else {
+            ctx.close()
+          }
+        }
+        audioUnlockedRef.current = true
+      } catch {
+        // ignore
+      }
+    }
+    window.addEventListener('click', unlock, { once: true })
+    return () => window.removeEventListener('click', unlock)
+  }, [])
+
+  // 新通知声音提醒：基于最新通知时间戳，避免刷新时重复播放
+  useEffect(() => {
+    if (!soundEnabled) return
+    const list = (notifyData?.data || []) as Array<{ createdAt: string; type?: string }>
+    if (list.length === 0) return
+    const latest = list[0]
+    const latestTime = new Date(latest.createdAt).getTime()
+    if (Number.isNaN(latestTime)) return
+    const lastNotifiedAt = Number(localStorage.getItem('vr_last_notification_at') || '0')
+    if (latestTime > lastNotifiedAt) {
+      if (soundMode === 'voice') {
+        const text = getVoiceTextByType(latest.type, String(voiceText))
+        speakNotification(text)
+      } else if (soundMode === 'custom') {
+        playNotificationSound('custom', String(soundUrl))
+      } else {
+        playNotificationSound(String(soundType))
+      }
+      localStorage.setItem('vr_last_notification_at', String(latestTime))
+    }
+  }, [notifyData, soundEnabled, soundMode, soundType, soundUrl, voiceText])
 
   const notifications = (notifyData?.data || []).map((n: any) => ({
     id: n.id,
@@ -173,7 +254,7 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
     setSearchResults(null)
     if (type === 'venue') navigate('/venues')
     if (type === 'order') navigate('/orders')
-    if (type === 'user') navigate('/users')
+    if (type === 'user') navigate('/member-center')
   }
 
   const totalResults = searchResults
@@ -323,153 +404,91 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
         </div>
 
         {/* Right: Actions */}
-        <div className="flex items-center gap-3">
-          <LanguageSelect />
+        <div className="flex items-center gap-2">
+          <div className="flex items-center bg-vrbg-card/80 border border-vrborder-subtle rounded-xl p-1 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+            <LanguageSelect
+              compact
+              buttonClassName="h-8 w-8 rounded-lg text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary"
+            />
 
-          <button
-            onClick={handleRefresh}
-            className="relative p-2 rounded-xl text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
-            title="刷新数据"
-          >
-            <RefreshCw className="w-[18px] h-[18px]" />
-          </button>
-
-          <button
-            onClick={toggleTheme}
-            className="relative p-2 rounded-xl text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
-            title={theme === 'dark' ? '切换亮色' : '切换暗色'}
-          >
-            {theme === 'dark' ? <Sun className="w-[18px] h-[18px]" /> : <Moon className="w-[18px] h-[18px]" />}
-          </button>
-
-          {/* Notification */}
-          <div className="relative">
             <button
-              onClick={() => setShowNotify(!showNotify)}
-              className="relative p-2 rounded-xl text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
+              onClick={handleRefresh}
+              className="relative h-8 w-8 rounded-lg flex items-center justify-center text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors"
+              title="刷新数据"
             >
-              <Bell className="w-5 h-5" />
-              {notifyCount > 0 && (
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-vrerror rounded-full animate-pulse-dot" />
-              )}
+              <RefreshCw className="w-4 h-4" />
             </button>
 
-            <AnimatePresence>
-              {showNotify && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowNotify(false)} />
-                  <motion.div
-                    initial={{ opacity: 0, y: -4, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -4, scale: 0.95 }}
-                    transition={{ duration: 0.15 }}
-                    className="absolute right-0 top-full mt-2 w-80 bg-vrbg-card border border-vrborder-subtle rounded-2xl shadow-[0_24px_60px_rgba(15,23,42,0.18)] z-50 overflow-hidden"
-                  >
-                    <div className="px-4 py-3 border-b border-vrborder-subtle flex items-center justify-between">
-                      <p className="text-vr-body-sm text-vrtext-primary font-medium">系统动态</p>
-                      <div className="flex items-center gap-3">
-                        {notifyCount > 0 && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); markAllReadMutation.mutate() }}
-                            className="text-xs text-vraccent-primary hover:underline"
-                          >
-                            全部已读
-                          </button>
-                        )}
-                        {notifications.length > 0 && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); clearAllMutation.mutate() }}
-                            className="text-xs text-vrerror hover:underline"
-                          >
-                            清除
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="max-h-72 overflow-y-auto">
-                      {notifications.length === 0 ? (
-                        <div className="px-4 py-6 text-center text-vr-caption text-vrtext-muted">
-                          暂无新动态
-                        </div>
-                      ) : (
-                        notifications.map((n: any) => (
-                          <div key={n.id} className={`px-4 py-3 border-b border-vrborder-subtle last:border-0 hover:bg-vrbg-hover cursor-pointer transition-colors ${n.read ? 'opacity-60' : ''}`}>
-                            <div className="flex items-center justify-between">
-                              <p className="text-vr-body-sm text-vrtext-primary font-semibold">用户：{n.userName} {n.userPhone}</p>
-                              <span className="text-xs text-vrtext-muted shrink-0 ml-2">{n.time}</span>
-                            </div>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                              {n.source === 'USER' && (<span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-vraccent-primary/10 text-vraccent-primary shrink-0">用户</span>)}
-                              <p className="text-vr-body-sm text-vrtext-primary font-medium">{n.title}</p>
-                            </div>
-                            <p className="text-vr-caption text-vrtext-tertiary mt-0.5">{n.desc}</p>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </motion.div>
-                </>
-              )}
-            </AnimatePresence>
+            <ThemeToggle
+              isDark={theme === 'dark'}
+              onToggle={toggleTheme}
+              className="h-8 w-8 rounded-lg"
+            />
+
+            {/* Notification */}
+            <div className="relative" ref={notifyRef}>
+              <NotificationPopover
+                open={showNotify}
+                onOpenChange={setShowNotify}
+                notifications={(notifyData?.data || []).map((n: any) => ({
+                  id: String(n.id),
+                  title: n.title,
+                  description: n.content,
+                  timestamp: new Date(n.createdAt),
+                  read: n.read,
+                  source: n.source || 'SYSTEM',
+                  type: n.type,
+                }))}
+                onMarkAllAsRead={() => markAllReadMutation.mutate()}
+                onMarkAsRead={() => markAllReadMutation.mutate()}
+                onClearAll={() => clearAllMutation.mutate()}
+                title="系统动态"
+                emptyText="暂无新动态"
+                buttonClassName="h-8 w-8 rounded-lg text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary"
+                popoverClassName="bg-vrbg-card border border-vrborder-subtle shadow-[0_24px_60px_rgba(15,23,42,0.18)]"
+                textColor="text-vrtext-primary"
+                hoverBgColor="hover:bg-vrbg-hover"
+                dividerColor="divide-vrborder-subtle"
+                headerBorderColor="border-vrborder-subtle"
+              />
+            </div>
           </div>
 
           {/* Admin dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setShowDropdown(!showDropdown)}
-              className="flex items-center gap-2 pl-2 pr-1 py-1 rounded-xl hover:bg-vrbg-elevated transition-colors"
-            >
-              <div
-                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium border border-vrborder-subtle"
-                style={{ backgroundColor: avatarColor }}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-2 h-10 pl-1.5 pr-2 rounded-xl bg-vrbg-card/80 border border-vrborder-subtle hover:bg-vrbg-elevated transition-colors shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+                <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium bg-slate-200 text-slate-600">
+                  {avatarLetter}
+                </div>
+                <span className="text-sm text-vrtext-primary hidden sm:inline">{user?.name || '管理员'}</span>
+                <ChevronDown className="w-4 h-4 text-vrtext-muted" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-48" align="end" sideOffset={8}>
+              <DropdownMenuLabel className="flex flex-col gap-0.5">
+                <span className="text-sm font-medium text-vrtext-primary">{user?.name || '系统管理员'}</span>
+                <span className="text-xs text-vrtext-tertiary">{user?.phone || 'admin@vrspace.com'}</span>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="cursor-pointer" onClick={() => navigate('/settings')}>
+                <User className="w-4 h-4 opacity-60" />
+                <span>个人设置</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="cursor-pointer" onClick={() => setShowPwdDialog(true)}>
+                <Lock className="w-4 h-4 opacity-60" />
+                <span>修改密码</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="cursor-pointer text-vrerror focus:text-vrerror focus:bg-vrerror/10"
+                onClick={handleLogout}
               >
-                {avatarLetter}
-              </div>
-              <span className="text-vr-body-sm text-vrtext-primary">{user?.name || '管理员'}</span>
-              <ChevronDown className="w-4 h-4 text-vrtext-muted" />
-            </button>
-
-            <AnimatePresence>
-              {showDropdown && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowDropdown(false)} />
-                  <motion.div
-                    initial={{ opacity: 0, y: -4, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -4, scale: 0.95 }}
-                    transition={{ duration: 0.15 }}
-                    className="absolute right-0 top-full mt-2 w-48 bg-vrbg-card border border-vrborder-subtle rounded-2xl shadow-[0_24px_60px_rgba(15,23,42,0.18)] z-50 overflow-hidden"
-                  >
-                    <div className="px-4 py-3 border-b border-vrborder-subtle">
-                      <p className="text-vr-body-sm text-vrtext-primary font-medium">{user?.name || '系统管理员'}</p>
-                      <p className="text-vr-caption text-vrtext-tertiary mt-0.5">{user?.phone || 'admin@vrspace.com'}</p>
-                    </div>
-                    <div className="p-1">
-                      <button
-                        onClick={() => { setShowDropdown(false); navigate('/settings') }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-hover hover:text-vrtext-primary transition-colors"
-                      >
-                        个人设置
-                      </button>
-                      <button
-                        onClick={() => { setShowDropdown(false); setShowPwdDialog(true) }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-hover hover:text-vrtext-primary transition-colors"
-                      >
-                        修改密码
-                      </button>
-                      <button
-                        onClick={handleLogout}
-                        className="w-full text-left px-3 py-2 rounded-xl text-vr-body-sm text-vrerror hover:bg-vrerror/10 transition-colors flex items-center gap-2"
-                      >
-                        <LogOut className="w-4 h-4" />
-                        退出登录
-                      </button>
-                    </div>
-                  </motion.div>
-                </>
-              )}
-            </AnimatePresence>
-          </div>
+                <LogOut className="w-4 h-4 opacity-60" />
+                <span>退出登录</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
 

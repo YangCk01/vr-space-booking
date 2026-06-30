@@ -9,7 +9,6 @@ import {
   Home,
   X,
   AlertTriangle,
-  Upload,
   Clock,
   Monitor,
   PauseCircle,
@@ -18,6 +17,8 @@ import {
   Wrench,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
+import { NumberFieldInput } from '@/components/ui/number-field'
+import { ImageUpload } from '@/components/ui/image-upload'
 import { getVenues, createVenue, updateVenue, deleteVenue, batchDeleteVenues, batchUpdateVenueStatus } from '@/api/venues'
 import type { Venue } from '@/api/venues'
 import { uploadFile } from '@/api/upload'
@@ -148,7 +149,6 @@ export default function Venues() {
   const canMaintainVenues = hasAnyPermission(currentUser, ['venue:manage', 'venue:maintenance'])
   const [searchQuery, setSearchQuery] = useState('')
   const [activeFilter, setActiveFilter] = useState('all')
-  const [uploadingImage, setUploadingImage] = useState(false)
 
   /* ─── Fetch venues ─── */
   const { data: venueData, isLoading } = useQuery({
@@ -697,39 +697,36 @@ export default function Venues() {
                     <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">
                       面积(㎡) <span className="text-vr-red">*</span>
                     </label>
-                    <input
-                      type="number"
+                    <NumberFieldInput
+                      value={formData.area || undefined}
+                      minValue={1}
                       placeholder="请输入场地面积"
-                      value={formData.area || ''}
-                      onChange={(e) => updateField('area', Number(e.target.value))}
-                      min={1}
-                      className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all"
+                      onChange={(value) => updateField('area', value)}
+                      required
                     />
                   </div>
                   <div>
                     <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">
                       容量(人) <span className="text-vr-red">*</span>
                     </label>
-                    <input
-                      type="number"
+                    <NumberFieldInput
+                      value={formData.capacity || undefined}
+                      minValue={1}
                       placeholder="请输入容纳人数"
-                      value={formData.capacity || ''}
-                      onChange={(e) => updateField('capacity', Number(e.target.value))}
-                      min={1}
-                      className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all"
+                      onChange={(value) => updateField('capacity', value)}
+                      required
                     />
                   </div>
                   <div>
                     <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">
                       设备数量(台) <span className="text-vr-red">*</span>
                     </label>
-                    <input
-                      type="number"
+                    <NumberFieldInput
+                      value={formData.deviceCount || undefined}
+                      minValue={1}
                       placeholder="设备数量"
-                      value={formData.deviceCount || ''}
-                      onChange={(e) => updateField('deviceCount', Number(e.target.value))}
-                      min={1}
-                      className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all"
+                      onChange={(value) => updateField('deviceCount', value)}
+                      required
                     />
                   </div>
                 </motion.div>
@@ -743,45 +740,19 @@ export default function Venues() {
                   <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">
                     场地图片
                   </label>
-                  <div className="flex items-center gap-3">
-                    <label className="w-[120px] h-[90px] rounded-xl border-2 border-dashed border-vrborder-DEFAULT flex flex-col items-center justify-center gap-1.5 hover:border-vr-blue transition-colors cursor-pointer bg-vrbg-card relative">
-                      {uploadingImage ? (
-                        <span className="text-vr-caption text-vrtext-muted">上传中...</span>
-                      ) : (
-                        <>
-                          <Upload className="w-5 h-5 text-vrtext-muted" />
-                          <span className="text-vr-caption text-vrtext-muted">点击上传</span>
-                        </>
-                      )}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        disabled={uploadingImage}
-                        className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0]
-                          if (file) {
-                            setUploadingImage(true)
-                            try {
-                              const result = await uploadFile('venues', file)
-                              setFormData((p: any) => ({ ...p, image: result.url }))
-                            } catch (err) {
-                              alert('图片上传失败: ' + (err as Error).message)
-                            } finally {
-                              setUploadingImage(false)
-                            }
-                          }
-                        }}
-                      />
-                    </label>
-                    {formData.image && (
-                      <img
-                        src={formData.image ? getImageUrl(formData.image) : ''}
-                        alt="Preview"
-                        className="w-[120px] h-[90px] rounded-xl object-cover"
-                      />
-                    )}
-                  </div>
+                  <ImageUpload
+                    value={formData.image ? getImageUrl(formData.image) : null}
+                    onUpload={async (file) => {
+                      try {
+                        const result = await uploadFile('venues', file)
+                        setFormData((p: any) => ({ ...p, image: result.url }))
+                      } catch (err) {
+                        alert('图片上传失败: ' + (err as Error).message)
+                      }
+                    }}
+                    onRemove={() => setFormData((p: any) => ({ ...p, image: '' }))}
+                    className="w-full max-w-[200px]"
+                  />
                 </motion.div>
 
                 {/* Status */}
@@ -949,81 +920,37 @@ export default function Venues() {
                     {/* QR Code */}
                     <div>
                       <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">门店微信二维码</label>
-                      <div className="flex items-center gap-3">
-                        <div className="w-20 h-20 bg-vrbg-surface border border-vrborder-subtle rounded-lg flex items-center justify-center overflow-hidden">
-                          {formData.qrCode ? (
-                            <img src={getImageUrl(formData.qrCode)} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <Upload className="w-4 h-4 text-vrtext-muted" />
-                          )}
-                        </div>
-                        <label className="inline-flex items-center gap-2 px-3 py-2 border border-vrborder-hover rounded-lg text-vr-caption text-vrtext-secondary hover:bg-vrbg-hover transition-colors cursor-pointer relative">
-                          <Upload className="w-3.5 h-3.5" />
-                          {uploadingImage ? "上传中..." : "上传"}
-                          <input
-                            type="file"
-                            accept="image/*"
-                            disabled={uploadingImage}
-                            className="absolute inset-0 opacity-0 cursor-pointer"
-                            onChange={async (e) => {
-                              const file = e.target.files?.[0]
-                              if (!file) return
-                              setUploadingImage(true)
-                              try {
-                                const result = await uploadFile('venues', file)
-                                setFormData((p: any) => ({ ...p, qrCode: result.url }))
-                              } catch (err) {
-                                alert('上传失败: ' + (err as Error).message)
-                              } finally {
-                                setUploadingImage(false)
-                              }
-                            }}
-                          />
-                        </label>
-                        {formData.qrCode && (
-                          <button onClick={() => setFormData((p: any) => ({ ...p, qrCode: '' }))} className="text-vr-caption text-vrerror hover:underline">移除</button>
-                        )}
-                      </div>
+                      <ImageUpload
+                        compact
+                        value={formData.qrCode ? getImageUrl(formData.qrCode) : null}
+                        onUpload={async (file) => {
+                          try {
+                            const result = await uploadFile('venues', file)
+                            setFormData((p: any) => ({ ...p, qrCode: result.url }))
+                          } catch (err) {
+                            alert('上传失败: ' + (err as Error).message)
+                          }
+                        }}
+                        onRemove={() => setFormData((p: any) => ({ ...p, qrCode: '' }))}
+                      />
                     </div>
 
                     {/* Service QR */}
                     <div>
                       <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">客服微信二维码</label>
-                      <div className="flex items-center gap-3">
-                        <div className="w-20 h-20 bg-vrbg-surface border border-vrborder-subtle rounded-lg flex items-center justify-center overflow-hidden">
-                          {formData.serviceQr ? (
-                            <img src={getImageUrl(formData.serviceQr)} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <Upload className="w-4 h-4 text-vrtext-muted" />
-                          )}
-                        </div>
-                        <label className="inline-flex items-center gap-2 px-3 py-2 border border-vrborder-hover rounded-lg text-vr-caption text-vrtext-secondary hover:bg-vrbg-hover transition-colors cursor-pointer relative">
-                          <Upload className="w-3.5 h-3.5" />
-                          {uploadingImage ? "上传中..." : "上传"}
-                          <input
-                            type="file"
-                            accept="image/*"
-                            disabled={uploadingImage}
-                            className="absolute inset-0 opacity-0 cursor-pointer"
-                            onChange={async (e) => {
-                              const file = e.target.files?.[0]
-                              if (!file) return
-                              setUploadingImage(true)
-                              try {
-                                const result = await uploadFile('venues', file)
-                                setFormData((p: any) => ({ ...p, serviceQr: result.url }))
-                              } catch (err) {
-                                alert('上传失败: ' + (err as Error).message)
-                              } finally {
-                                setUploadingImage(false)
-                              }
-                            }}
-                          />
-                        </label>
-                        {formData.serviceQr && (
-                          <button onClick={() => setFormData((p: any) => ({ ...p, serviceQr: '' }))} className="text-vr-caption text-vrerror hover:underline">移除</button>
-                        )}
-                      </div>
+                      <ImageUpload
+                        compact
+                        value={formData.serviceQr ? getImageUrl(formData.serviceQr) : null}
+                        onUpload={async (file) => {
+                          try {
+                            const result = await uploadFile('venues', file)
+                            setFormData((p: any) => ({ ...p, serviceQr: result.url }))
+                          } catch (err) {
+                            alert('上传失败: ' + (err as Error).message)
+                          }
+                        }}
+                        onRemove={() => setFormData((p: any) => ({ ...p, serviceQr: '' }))}
+                      />
                     </div>
 
                     {/* Map Links */}

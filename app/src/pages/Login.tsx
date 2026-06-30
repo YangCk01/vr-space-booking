@@ -1,27 +1,16 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
+import { MeshGradient } from '@paper-design/shaders-react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  Activity,
-  Building2,
-  CalendarDays,
-  ExternalLink,
-  Eye,
-  EyeOff,
-  Headset,
-  LockKeyhole,
-  ShieldCheck,
-  Sparkles,
-  Wallet,
-  X,
-} from 'lucide-react'
+import { Building2, ExternalLink, Eye, EyeOff, Headset, LockKeyhole, X } from 'lucide-react'
 import { login } from '@/api/auth'
 import { getPagePublicSettings } from '@/api/settings'
 import { useAuthStore } from '@/stores/authStore'
 import { getImageUrl } from '@/lib/imageUrl'
 import { cn } from '@/lib/utils'
 import LanguageSelect from '@/components/LanguageSelect'
+import LoginHero from '@/components/LoginHero'
 
 type LoginFeatureCard = {
   title?: string
@@ -36,22 +25,10 @@ const defaultFeatureCards: LoginFeatureCard[] = [
   { title: '审计留痕', desc: '关键操作记录可追溯', icon: 'shield', enabled: true },
 ]
 
-const featureIcons = {
-  calendar: CalendarDays,
-  wallet: Wallet,
-  shield: ShieldCheck,
-  activity: Activity,
-  sparkle: Sparkles,
-}
-
 function parseOverlay(value: unknown) {
   const num = Number(value)
   if (Number.isNaN(num)) return 72
   return Math.min(Math.max(num, 0), 92)
-}
-
-function getFeatureIcon(icon?: string) {
-  return featureIcons[(icon || 'activity') as keyof typeof featureIcons] || Activity
 }
 
 export default function Login() {
@@ -82,7 +59,6 @@ export default function Login() {
   const securityText = pageSettings?.bLoginSecurityText || '登录后将记录操作审计日志'
   const footerText = pageSettings?.bLoginFooterText || ''
   const showDemoAccount = pageSettings?.bLoginShowDemoAccount ?? true
-  const overlay = parseOverlay(pageSettings?.bLoginBackgroundOverlay)
   const logoUrl = pageSettings?.logo ? getImageUrl(pageSettings.logo, '') : ''
   const bgImageUrl = pageSettings?.bLoginBackgroundImage ? getImageUrl(pageSettings.bLoginBackgroundImage, '') : ''
   const bgVideoUrl = pageSettings?.bLoginBackgroundVideo ? getImageUrl(pageSettings.bLoginBackgroundVideo, '') : ''
@@ -117,203 +93,203 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-[100dvh] bg-[#07111f] text-white lg:grid lg:grid-cols-[1.08fr_0.92fr]">
+    <div className="relative min-h-[100dvh] overflow-hidden text-white lg:grid lg:grid-cols-[1.08fr_0.92fr]">
       <div className="fixed right-5 top-5 z-50">
         <LanguageSelect />
       </div>
-      <section className="relative hidden min-h-[100dvh] overflow-hidden lg:flex">
-        {bgVideoUrl ? (
+
+      {/* Full-page shader background */}
+      <div className="fixed inset-0 -z-10">
+        <MeshGradient
+          className="absolute inset-0 h-full w-full"
+          colors={['#ffffff', '#e0f2fe', '#06b6d4', '#f97316', '#bae6fd']}
+          speed={0.25}
+          distortion={0.4}
+          swirl={0.25}
+          grainMixer={0.15}
+          grainOverlay={0.05}
+          scale={1}
+        />
+        <MeshGradient
+          className="absolute inset-0 h-full w-full opacity-70"
+          colors={['#ffffff', '#67e8f9', '#fdba74', '#0ea5e9']}
+          speed={0.18}
+          distortion={0.35}
+          swirl={0.15}
+          grainMixer={0.1}
+          scale={1.3}
+        />
+        {bgVideoUrl && (
           <video
             src={bgVideoUrl}
-            className="absolute inset-0 h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full object-cover opacity-40 mix-blend-overlay"
             autoPlay
             muted
             loop
             playsInline
             preload="metadata"
           />
-        ) : bgImageUrl ? (
-          <img src={bgImageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
-        ) : (
-          <div className="absolute inset-0 bg-[url('/venue-cyber.jpg')] bg-cover bg-center" />
         )}
-        <div className="absolute inset-0 bg-[#07111f]" style={{ opacity: overlay / 100 }} />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#07111f] via-[#07111f]/70 to-transparent" />
+        {bgImageUrl && (
+          <img src={bgImageUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-30 mix-blend-overlay" />
+        )}
+        <div className="absolute inset-0 bg-black/10" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/30 via-transparent to-black/20" />
+      </div>
 
-        <div className="relative z-10 flex w-full flex-col justify-between px-12 py-10 xl:px-16">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/10">
-                {logoUrl ? (
-                  <img src={logoUrl} alt="" className="h-full w-full object-contain" />
-                ) : (
-                  <Headset className="h-6 w-6 text-white" />
-                )}
-              </div>
+      <section className="relative hidden min-h-[100dvh] overflow-hidden lg:flex">
+        <LoginHero
+          brandName={brandName}
+          subtitle={subtitle}
+          heroTitle={heroTitle}
+          heroDesc={heroDesc}
+          featureCards={featureCards}
+          logoUrl={pageSettings?.logo}
+          footerText={footerText || securityText}
+          onIntroOpen={() => setIntroOpen(true)}
+        />
+      </section>
+
+      <section className="relative flex min-h-[100dvh] items-center justify-center px-6 py-8">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-[440px]"
+        >
+          <div className="mb-6 flex flex-col items-center text-center">
+            <motion.div
+              className="mb-4 flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-white/20 bg-white/10 shadow-lg shadow-cyan-500/10 backdrop-blur-xl"
+              whileHover={{ scale: 1.05 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 10 }}
+            >
+              {logoUrl ? (
+                <img src={logoUrl} alt="" className="h-full w-full object-contain" />
+              ) : (
+                <Headset className="h-8 w-8 text-cyan-300" />
+              )}
+            </motion.div>
+            <h1 className="text-2xl font-bold text-white drop-shadow">{brandName}</h1>
+            <p className="mt-1 text-sm text-white/55">{subtitle}</p>
+          </div>
+
+          <motion.form
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, duration: 0.4 }}
+            onSubmit={handleSubmit}
+            className="relative space-y-6 overflow-hidden rounded-[32px] border border-white/10 bg-white/[0.04] p-8 shadow-2xl shadow-black/40 backdrop-blur-[60px]"
+            style={{
+              boxShadow:
+                'inset 0 1.5px 1px rgba(255,255,255,0.18), 0 30px 70px -20px rgba(0,0,0,0.55)',
+            }}
+          >
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
+            <motion.div
+              className="pointer-events-none absolute -top-32 -left-32 h-64 w-64 rounded-full bg-cyan-400/15 blur-[100px]"
+              animate={{ x: [0, 120, 0], y: [0, 60, 0], opacity: [0.3, 0.5, 0.3] }}
+              transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <motion.div
+              className="pointer-events-none absolute -bottom-32 -right-32 h-64 w-64 rounded-full bg-orange-400/12 blur-[100px]"
+              animate={{ x: [0, -100, 0], y: [0, -60, 0], opacity: [0.25, 0.45, 0.25] }}
+              transition={{ duration: 16, repeat: Infinity, ease: 'easeInOut' }}
+            />
+
+            <div className="relative z-10">
+              <h2 className="text-xl font-semibold text-white">{formTitle}</h2>
+              <p className="mt-1 text-sm text-white/50">{formDesc}</p>
+            </div>
+
+            <div className="relative z-10 space-y-4">
               <div>
-                <p className="text-vr-body font-semibold text-white">{brandName}</p>
-                <p className="text-vr-caption text-white/60">{subtitle}</p>
+                <label className="mb-1.5 block text-xs font-medium text-white/55">手机号</label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="请输入手机号"
+                  autoComplete="username"
+                  className="w-full h-12 px-4 bg-white/[0.05] border border-white/10 rounded-xl text-base text-white placeholder:text-white/30 focus:outline-none focus:bg-white/[0.10] focus:border-white/25 focus:ring-1 focus:ring-white/5 transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-white/55">密码</label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="请输入密码"
+                    autoComplete="current-password"
+                    className="w-full h-12 px-4 pr-11 bg-white/[0.05] border border-white/10 rounded-xl text-base text-white placeholder:text-white/30 focus:outline-none focus:bg-white/[0.10] focus:border-white/25 focus:ring-1 focus:ring-white/5 transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/35 hover:text-white/70 transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
             </div>
+
+            {error && (
+              <motion.p
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="relative z-10 text-sm text-red-400"
+              >
+                {error}
+              </motion.p>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className={cn(
+                'group relative z-10 w-full h-[52px] overflow-hidden rounded-full border text-base font-semibold transition-all',
+                loading
+                  ? 'border-white/10 bg-white/10 text-white cursor-not-allowed'
+                  : 'border-white/15 bg-white/10 text-white hover:border-white/25 hover:bg-white/15 active:scale-[0.98]'
+              )}
+            >
+              {!loading && (
+                <motion.span
+                  className="absolute inset-0 bg-gradient-to-r from-cyan-500/80 to-orange-500/80"
+                  initial={{ x: '-100%' }}
+                  whileHover={{ x: 0 }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }}
+                />
+              )}
+              {loading && <span className="absolute inset-0 bg-white/10" />}
+              <span className="relative z-10">{loading ? '登录中...' : '登录'}</span>
+            </button>
+
+            <div className="relative z-10 flex items-start gap-2.5 rounded-xl border border-white/10 bg-white/[0.04] p-3 backdrop-blur-md">
+              <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0 text-cyan-300" />
+              <p className="text-xs leading-5 text-white/45">{securityText}</p>
+            </div>
+          </motion.form>
+
+          {showDemoAccount && (
+            <p className="mt-5 text-center text-xs text-white/40">{demoText}</p>
+          )}
+          <p className="mt-1.5 text-center text-xs text-white/40">{supportText}</p>
+          <div className="mt-4 flex justify-center">
             <button
               type="button"
               onClick={() => setIntroOpen(true)}
-              className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-vr-body-sm font-medium text-white/85 backdrop-blur transition-colors hover:bg-white/15"
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs text-white/60 backdrop-blur-md transition-colors hover:bg-white/[0.08] hover:text-white"
             >
               <Building2 className="h-4 w-4" />
-              公司简介
+              查看公司简介
             </button>
           </div>
-
-          <div className="max-w-[620px]">
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-vr-caption text-white/80">
-              <Activity className="h-3.5 w-3.5 text-vraccent-primary" />
-              运营后台
-            </div>
-            <h1 className="text-[44px] font-bold leading-tight tracking-normal text-white xl:text-[56px]">
-              {heroTitle}
-            </h1>
-            <p className="mt-5 max-w-[560px] text-vr-body-lg leading-8 text-white/70">
-              {heroDesc}
-            </p>
-            {featureCards.length > 0 && (
-              <div className="mt-8 grid max-w-[720px] grid-cols-3 gap-3">
-                {featureCards.slice(0, 3).map((item: LoginFeatureCard, index: number) => {
-                  const Icon = getFeatureIcon(item.icon)
-                  return (
-                    <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                      <Icon className="h-5 w-5 text-vraccent-primary" />
-                      <p className="mt-3 text-vr-body-sm font-semibold text-white">{item.title}</p>
-                      <p className="mt-1 text-vr-caption leading-5 text-white/55">{item.desc}</p>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
-          <p className="text-vr-caption text-white/45">{footerText || securityText}</p>
-        </div>
-      </section>
-
-      <section className="flex min-h-[100dvh] items-center justify-center bg-[#07111f] px-5 py-8">
-        <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-          className="w-full max-w-[430px]"
-      >
-        <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-4 flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white/10 shadow-vr-glow-blue">
-            {logoUrl ? (
-              <img src={logoUrl} alt="" className="h-full w-full object-contain" />
-            ) : (
-              <Headset className="h-8 w-8 text-[#38bdf8]" />
-            )}
-          </div>
-          <h1 className="text-vr-h1 font-bold text-white">{brandName}</h1>
-          <p className="mt-1 text-vr-body-sm text-slate-400">{subtitle}</p>
-        </div>
-
-        <motion.form
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2, duration: 0.4 }}
-          onSubmit={handleSubmit}
-          className="space-y-5 rounded-2xl border border-white/10 bg-[#111827]/95 p-6 shadow-2xl shadow-black/30"
-        >
-          <div>
-            <h2 className="text-vr-h3 font-semibold text-white">{formTitle}</h2>
-            <p className="mt-1 text-vr-body-sm text-slate-400">{formDesc}</p>
-          </div>
-          <div>
-            <label className="block text-vr-caption text-slate-300 mb-1.5">
-              手机号
-            </label>
-            <input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="请输入手机号"
-              autoComplete="username"
-              className="w-full h-11 px-4 bg-[#0b1220] border border-white/10 rounded-lg text-vr-body-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#3B82F6] focus:ring-1 focus:ring-[#3B82F6]/25 transition-all"
-            />
-          </div>
-
-          <div>
-            <label className="block text-vr-caption text-slate-300 mb-1.5">
-              密码
-            </label>
-            <div className="relative">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="请输入密码"
-                autoComplete="current-password"
-                className="w-full h-11 px-4 pr-11 bg-[#0b1220] border border-white/10 rounded-lg text-vr-body-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#3B82F6] focus:ring-1 focus:ring-[#3B82F6]/25 transition-all"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                aria-label={showPassword ? '隐藏密码' : '显示密码'}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          {error && (
-            <motion.p
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              className="text-vr-caption text-red-400"
-            >
-              {error}
-            </motion.p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className={cn(
-              'w-full h-11 rounded-lg text-vr-body-sm font-semibold transition-all',
-              loading
-                ? 'bg-[#3B82F6]/50 text-white cursor-not-allowed'
-                : 'bg-[#3B82F6] text-white hover:bg-[#2563EB] active:scale-[0.98]'
-            )}
-          >
-            {loading ? '登录中...' : '登录'}
-          </button>
-
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="flex items-start gap-2">
-              <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0 text-[#38bdf8]" />
-              <p className="text-vr-caption leading-5 text-slate-400">{securityText}</p>
-            </div>
-          </div>
-        </motion.form>
-
-        {showDemoAccount && (
-          <p className="mt-6 text-center text-vr-caption text-slate-500">
-            {demoText}
-          </p>
-        )}
-        <p className="mt-2 text-center text-vr-caption text-slate-500">
-          {supportText}
-        </p>
-        <div className="mt-4 flex justify-center">
-          <button
-            type="button"
-            onClick={() => setIntroOpen(true)}
-            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-vr-body-sm text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
-          >
-            <Building2 className="h-4 w-4" />
-            查看公司简介
-          </button>
-        </div>
-      </motion.div>
+        </motion.div>
       </section>
 
       {introOpen && (

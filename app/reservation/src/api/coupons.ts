@@ -25,11 +25,6 @@ export async function getMyCoupons() {
   return res.data.data as ThirdPartyCoupon[]
 }
 
-export async function useCoupon(id: string) {
-  const res = await apiClient.put(`/coupons/${id}/use`)
-  return res.data.data as ThirdPartyCoupon
-}
-
 export interface UserCoupon {
   id: string
   name: string

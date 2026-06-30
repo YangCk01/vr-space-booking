@@ -163,22 +163,22 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
         })
     const usageRate = totalVenues > 0 ? Math.round((activeVenues / totalVenues) * 100) : 0
 
-    // 待处理订单
+    // 待处理订单（仅统计主订单，不含改签费/团购父订单）
     const pendingOrders = await prisma.order.count({
-      where: { createdAt: { gte: start, lte: end }, status: 'PENDING', ...venueWhere },
+      where: { createdAt: { gte: start, lte: end }, status: 'PENDING', orderKind: 'NORMAL', ...venueWhere },
     })
 
-    // 取消订单 & 退款订单
+    // 取消订单 & 退款订单（仅统计主订单，不含改签费/团购父订单）
     const cancelledOrders = await prisma.order.count({
-      where: { createdAt: { gte: start, lte: end }, status: 'CANCELLED', ...venueWhere },
+      where: { createdAt: { gte: start, lte: end }, status: 'CANCELLED', orderKind: 'NORMAL', ...venueWhere },
     })
     const refundedOrders = await prisma.order.count({
-      where: { createdAt: { gte: start, lte: end }, status: 'REFUNDED', ...venueWhere },
+      where: { createdAt: { gte: start, lte: end }, status: 'REFUNDED', orderKind: 'NORMAL', ...venueWhere },
     })
 
-    // No-Show 统计
+    // No-Show 统计（仅统计主订单，不含改签费/团购父订单）
     const noShowCount = await prisma.order.count({
-      where: { createdAt: { gte: start, lte: end }, status: 'NO_SHOW', ...venueWhere },
+      where: { createdAt: { gte: start, lte: end }, status: 'NO_SHOW', orderKind: 'NORMAL', ...venueWhere },
     })
     const noShowLoss = await prisma.order.aggregate({
       where: { createdAt: { gte: start, lte: end }, status: 'NO_SHOW', ...venueWhere },
@@ -770,8 +770,10 @@ export async function orderStatusDistribution(req: AuthenticatedRequest, res: Re
 
     const orders = await prisma.order.groupBy({
       by: ['status'],
+      // 订单状态分布仅统计主订单（NORMAL），不含改签费/团购父订单
       where: {
         createdAt: { gte: start, lte: end },
+        orderKind: 'NORMAL',
       },
       _count: { id: true },
     })

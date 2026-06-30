@@ -16,14 +16,11 @@ import {
   ClipboardList,
   Clock3,
   Wallet,
+  User,
+  Wrench,
 } from 'lucide-react'
 import {
-  AreaChart,
-  Area,
   Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
   Pie,
   PieChart,
   Tooltip,
@@ -31,6 +28,7 @@ import {
 } from 'recharts'
 import Layout from '@/components/Layout'
 import { getDashboard, getRevenue } from '@/api/analytics'
+import ProgressMetricCard from '@/components/ui/progress-metric-card'
 import { getVenues } from '@/api/venues'
 import type { Venue } from '@/api/venues'
 import { getBookings } from '@/api/bookings'
@@ -123,14 +121,6 @@ function StatCard({ stat, index }: { stat: any; index: number }) {
       variants={itemVariants}
       className="soft-panel group relative min-h-[116px] p-5 transition-all duration-200 hover:-translate-y-0.5"
     >
-      {stat.trend != null && (
-        <span className={cn(
-          'absolute right-4 top-4 rounded-full px-2.5 py-1 text-vr-caption font-semibold',
-          stat.trend >= 0 ? 'bg-vrsuccess/15 text-vrsuccess' : 'bg-vrerror/12 text-vrerror'
-        )}>
-          {stat.trend >= 0 ? '+' : ''}{stat.trend}%
-        </span>
-      )}
       <div className="flex h-full items-center gap-5">
         <span className={cn('soft-icon h-14 w-14 shrink-0 bg-gradient-to-br shadow-[0_18px_35px_rgba(59,130,246,0.16)]', stat.iconTone)}>
           {Icon && <Icon className={cn('h-7 w-7', stat.iconColor)} />}
@@ -147,7 +137,17 @@ function StatCard({ stat, index }: { stat: any; index: number }) {
               {stat.prefix}{stat.value}{stat.suffix}
             </motion.p>
           </div>
-          <p className="mt-1 text-vr-caption text-vrtext-tertiary">{stat.helper}</p>
+          <div className="mt-1 flex items-center gap-2 text-vr-caption">
+            <span className="text-vrtext-tertiary">{stat.helper}</span>
+            {stat.trend != null && (
+              <span className={cn(
+                'rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                stat.trend >= 0 ? 'bg-vrsuccess/15 text-vrsuccess' : 'bg-vrerror/12 text-vrerror'
+              )}>
+                {stat.trend >= 0 ? '+' : ''}{stat.trend}%
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </motion.div>
@@ -234,22 +234,77 @@ function ScheduleTimeline({
   venues,
   bookings,
   title = '今日排场',
-  selectedDate,
   selectedVenueId,
-  onDateChange,
   onVenueChange,
 }: {
   venues: any[]
   bookings: Booking[]
   title?: string
-  selectedDate: string
   selectedVenueId: string
-  onDateChange: (value: string) => void
   onVenueChange: (value: string) => void
 }) {
+  const timeToMinutes = (time: string) => {
+    const [h, m] = time.split(':').map(Number)
+    return h * 60 + (m || 0)
+  }
+
+  const groupOverlappingBookings = (bookings: Booking[]) => {
+    const sorted = [...bookings].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime))
+    const clusters: Booking[][] = []
+
+    for (const booking of sorted) {
+      const bStart = timeToMinutes(booking.startTime)
+      const bEnd = timeToMinutes(booking.endTime)
+      let placed = false
+      for (const cluster of clusters) {
+        const overlaps = cluster.some((b) => {
+          const start = timeToMinutes(b.startTime)
+          const end = timeToMinutes(b.endTime)
+          return bStart < end && bEnd > start
+        })
+        if (overlaps) {
+          cluster.push(booking)
+          placed = true
+          break
+        }
+      }
+      if (!placed) {
+        clusters.push([booking])
+      }
+    }
+
+    return clusters
+  }
+
+  const [activeClusterId, setActiveClusterId] = useState<string | null>(null)
   const visibleVenues = selectedVenueId === 'all'
     ? venues
     : venues.filter((venue) => venue.id === selectedVenueId)
+
+  const venueClustersMap = useMemo(() => {
+    const map = new Map<string, Booking[][]>()
+    for (const venue of visibleVenues) {
+      const venueBookings = bookings.filter((b) => b.venueId === venue.id)
+      map.set(venue.id, groupOverlappingBookings(venueBookings))
+    }
+    return map
+  }, [visibleVenues, bookings])
+
+  const allClusters = useMemo(() => {
+    const clusters: Booking[][] = []
+    venueClustersMap.forEach((value) => clusters.push(...value))
+    return clusters
+  }, [venueClustersMap])
+
+  const activeCluster = useMemo(() => {
+    if (allClusters.length === 0) return null
+    return allClusters.find((c) => c.map((b) => b.id).join('-') === activeClusterId) || allClusters[0]
+  }, [activeClusterId, allClusters])
+
+  const activeBooking = activeCluster?.[0] || null
+  const activeVenue = activeBooking
+    ? venues.find((venue) => venue.id === activeBooking.venueId)
+    : null
 
   const { startHour, endHour, timeSlots, totalMinutes } = useMemo(() => {
     const openingHours = visibleVenues
@@ -294,33 +349,54 @@ function ScheduleTimeline({
     return 'border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-500/12 dark:text-blue-300'
   }
 
-  const getBlockMetrics = (booking: Booking) => {
+  const getBookingMetrics = (booking: Booking) => {
     const [startH, startM] = booking.startTime.split(':').map(Number)
     const [endHValue, endM] = booking.endTime.split(':').map(Number)
     const start = Math.max(0, (startH - startHour) * 60 + (startM || 0))
     const end = Math.min(totalMinutes, (endHValue - startHour) * 60 + (endM || 0))
-    const width = Math.max(((end - start) / totalMinutes) * 100, 13)
+    const width = Math.max(((end - start) / totalMinutes) * 100, 4)
     return {
       left: `${(start / totalMinutes) * 100}%`,
       width: `${Math.min(width, 100 - (start / totalMinutes) * 100)}%`,
     }
   }
 
+  const getClusterMetrics = (cluster: Booking[]) => {
+    const starts = cluster.map((b) => timeToMinutes(b.startTime))
+    const ends = cluster.map((b) => timeToMinutes(b.endTime))
+    const start = Math.max(0, Math.min(...starts) - startHour * 60)
+    const end = Math.min(totalMinutes, Math.max(...ends) - startHour * 60)
+    const width = Math.max(((end - start) / totalMinutes) * 100, 4)
+    return {
+      left: `${(start / totalMinutes) * 100}%`,
+      width: `${Math.min(width, 100 - (start / totalMinutes) * 100)}%`,
+    }
+  }
+
+  const getBookingIcon = (booking: Booking) => {
+    if (booking.type === 'TEAM') return Users
+    if (booking.type === 'CORPORATE') return Building2
+    if (booking.type === 'MAINTENANCE') return Wrench
+    return User
+  }
+
+  const currentTimeLeft = useMemo(() => {
+    const now = new Date()
+    const currentMinutes =
+      (now.getHours() - startHour) * 60 +
+      now.getMinutes() +
+      now.getSeconds() / 60 +
+      now.getMilliseconds() / 60000
+    if (currentMinutes < 0) return '0%'
+    if (currentMinutes > totalMinutes) return '100%'
+    return `${(currentMinutes / totalMinutes) * 100}%`
+  }, [startHour, totalMinutes])
+
   return (
     <motion.div variants={itemVariants} className="soft-panel p-5">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h3 className="text-vr-h3 text-vrtext-primary">{title}</h3>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="soft-input relative flex h-9 items-center gap-2 px-3 text-vr-body-sm">
-            <CalendarDays className="h-4 w-4 text-vrtext-tertiary" />
-            <span className="min-w-[88px] text-vrtext-primary">{selectedDate}</span>
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(event) => onDateChange(event.target.value)}
-              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-            />
-          </label>
           <select
             value={selectedVenueId}
             onChange={(event) => onVenueChange(event.target.value)}
@@ -352,15 +428,33 @@ function ScheduleTimeline({
                 </span>
               ))}
             </div>
+            <div className="relative col-start-2 h-1.5">
+              {currentTimeLeft && (
+                <div
+                  className={cn(
+                    'absolute top-0 z-10 flex flex-col items-center',
+                    currentTimeLeft === '0%' && 'translate-x-0',
+                    currentTimeLeft === '100%' && '-translate-x-full',
+                    currentTimeLeft !== '0%' && currentTimeLeft !== '100%' && '-translate-x-1/2'
+                  )}
+                  style={{ left: currentTimeLeft }}
+                >
+                  <span className="mb-0.5 whitespace-nowrap rounded bg-vrerror px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                    现在
+                  </span>
+                  <div className="h-1.5 w-0.5 rounded-full bg-vrerror" />
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="relative">
             {visibleVenues.map((venue, rowIndex) => {
-              const venueBookings = bookings.filter((booking) => booking.venueId === venue.id)
+              const venueClusters = venueClustersMap.get(venue.id) || []
               return (
                 <div
                   key={venue.id}
-                  className="grid min-h-[98px] grid-cols-[170px_minmax(680px,1fr)] border-b border-vrborder-subtle last:border-b-0"
+                  className="grid min-h-[44px] grid-cols-[170px_minmax(680px,1fr)] border-b border-vrborder-subtle last:border-b-0"
                 >
                   <div className="flex items-center gap-3 py-4 pr-4">
                     <img src={getImageUrl(venue.image)} alt={venue.name} className="h-12 w-14 rounded-lg object-cover shadow-sm" />
@@ -371,30 +465,68 @@ function ScheduleTimeline({
                       </p>
                     </div>
                   </div>
-                  <div className="relative py-4">
+                  <div className="relative h-full py-4">
                     <div className="absolute inset-y-0 left-0 right-0 grid" style={{ gridTemplateColumns: `repeat(${timeSlots.length - 1}, minmax(0, 1fr))` }}>
                       {timeSlots.slice(0, -1).map((hour) => (
                         <div key={hour} className="border-l border-dashed border-vrborder-subtle first:border-l" />
                       ))}
                     </div>
-                    <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-vrborder-subtle" />
-                    {venueBookings.map((booking, bookingIndex) => {
-                      const metrics = getBlockMetrics(booking)
+                    {venue.status === 'maintenance' && venueClusters.length === 0 && (
+                      <div className="absolute inset-x-0 top-1/2 z-10 -translate-y-1/2 flex items-center justify-center">
+                        <div className="flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-4 py-1.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:border-amber-500/30 dark:text-amber-400">
+                          <Wrench className="h-3.5 w-3.5" />
+                          <span>
+                            维护中
+                            {venue.maintenanceStartTime && venue.maintenanceEndTime && (
+                              <span className="ml-1 opacity-90">
+                                {venue.maintenanceStartTime}-{venue.maintenanceEndTime}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    {venueClusters.map((cluster, clusterIndex) => {
+                      const isSingle = cluster.length === 1
+                      const firstBooking = cluster[0]
+                      const metrics = getClusterMetrics(cluster)
+                      const BookingIcon = getBookingIcon(firstBooking)
+                      const tone = getEventTone(firstBooking)
+                      const clusterKey = cluster.map((b) => b.id).join('-')
                       return (
                         <motion.div
-                          key={booking.id}
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.25, delay: rowIndex * 0.06 + bookingIndex * 0.04 }}
-                          className={cn(
-                            'absolute top-1/2 z-10 min-h-[72px] -translate-y-1/2 rounded-lg border px-3 py-2 shadow-[0_12px_25px_rgba(15,23,42,0.08)] transition-transform hover:-translate-y-[calc(50%+2px)]',
-                            getEventTone(booking)
-                          )}
-                          style={metrics}
+                          key={clusterKey}
+                          initial={{ opacity: 0, scale: 0.8 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ duration: 0.25, delay: rowIndex * 0.06 + clusterIndex * 0.04 }}
+                          className="absolute top-1/2 z-10 -translate-y-1/2"
+                          style={{ left: metrics.left }}
+                          onMouseEnter={() => setActiveClusterId(clusterKey)}
+                          onFocus={() => setActiveClusterId(clusterKey)}
                         >
-                          <p className="truncate text-vr-body-sm font-semibold">{getTypeLabel(booking)}</p>
-                          <p className="mt-0.5 text-vr-caption">{booking.startTime} - {booking.endTime}</p>
-                          <p className="text-vr-caption">{booking.personCount || 1}人</p>
+                          <button
+                            type="button"
+                            onClick={() => setActiveClusterId(clusterKey)}
+                            className="relative flex h-7 w-7 items-center justify-center focus:outline-none"
+                            title={cluster
+                              .map((b) => `${getTypeLabel(b)} ${b.startTime}-${b.endTime} ${b.personCount || 1}人`)
+                              .join('\n')}
+                          >
+                            <span
+                              className={cn(
+                                'relative z-10 flex h-7 w-7 items-center justify-center rounded-xl border shadow-sm transition-all hover:scale-110 hover:shadow-md focus:ring-2 focus:ring-vraccent-primary/25',
+                                tone,
+                                activeCluster?.map((b) => b.id).join('-') === clusterKey && 'scale-110 shadow-md ring-2 ring-vraccent-primary/20'
+                              )}
+                            >
+                              <BookingIcon className="h-3.5 w-3.5" />
+                            </span>
+                            {!isSingle && (
+                              <span className="absolute -right-1 -top-1 z-20 flex h-4 min-w-4 items-center justify-center rounded-full bg-vrerror px-1 text-[10px] font-bold text-white shadow-sm">
+                                {cluster.length}
+                              </span>
+                            )}
+                          </button>
                         </motion.div>
                       )
                     })}
@@ -409,6 +541,77 @@ function ScheduleTimeline({
         </div>
       </div>
 
+      <div className="mt-4 rounded-xl border border-vrborder-subtle bg-vrbg-surface px-4 py-3">
+        {activeCluster ? (
+          activeCluster.length === 1 ? (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="truncate text-vr-body-sm font-semibold text-vrtext-primary">
+                  {getTypeLabel(activeBooking!)}
+                </p>
+                <p className="mt-1 text-vr-caption text-vrtext-tertiary">
+                  {activeVenue?.name || activeBooking!.venue?.name || '未知场地'}
+                  {activeBooking!.personName ? ` · ${activeBooking!.personName}` : ''}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-vr-caption text-vrtext-secondary">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-vrbg-card px-3 py-1.5">
+                  <Clock3 className="h-3.5 w-3.5" />
+                  {activeBooking!.startTime}-{activeBooking!.endTime}
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-vrbg-card px-3 py-1.5">
+                  <Users className="h-3.5 w-3.5" />
+                  {activeBooking!.personCount || 1}人
+                </span>
+                {activeBooking!.personPhone && (
+                  <span className="inline-flex items-center rounded-full bg-vrbg-card px-3 py-1.5">
+                    {activeBooking!.personPhone}
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="truncate text-vr-body-sm font-semibold text-vrtext-primary">
+                  {getTypeLabel(activeBooking!)} 等 {activeCluster.length} 笔预约
+                </p>
+                <p className="text-vr-caption text-vrtext-tertiary">
+                  {activeVenue?.name || activeBooking!.venue?.name || '未知场地'}
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {activeCluster.map((booking) => (
+                  <div
+                    key={booking.id}
+                    className="flex flex-col gap-1.5 rounded-lg border border-vrborder-subtle bg-vrbg-card px-3 py-2 text-vr-caption text-vrtext-secondary"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Clock3 className="h-3.5 w-3.5" />
+                        {booking.startTime}-{booking.endTime}
+                      </span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Users className="h-3.5 w-3.5" />
+                        {booking.personCount || 1}人
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]">
+                      {booking.personName && <span>{booking.personName}</span>}
+                      {booking.personPhone && <span>{booking.personPhone}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        ) : (
+          <p className="text-center text-vr-caption text-vrtext-muted">
+            悬停或点击排场图标查看完整预约信息
+          </p>
+        )}
+      </div>
+
       <div className="mt-4 flex justify-center">
         <div className="flex flex-wrap items-center gap-5 rounded-full border border-vrborder-subtle bg-vrbg-card px-5 py-2 shadow-[0_8px_18px_rgba(15,23,42,0.04)]">
           <span className="flex items-center gap-2 text-vr-caption text-vrtext-secondary"><i className="h-2.5 w-2.5 rounded-full bg-blue-500" />已预约</span>
@@ -416,126 +619,6 @@ function ScheduleTimeline({
           <span className="flex items-center gap-2 text-vr-caption text-vrtext-secondary"><i className="h-2.5 w-2.5 rounded-full bg-slate-300" />维护/不可用</span>
           <span className="flex items-center gap-2 text-vr-caption text-vrtext-secondary"><i className="h-2.5 w-2.5 rounded-full bg-slate-200" />空闲</span>
         </div>
-      </div>
-    </motion.div>
-  )
-}
-
-/* ─── Revenue Chart ─── */
-function RevenueChart({ chartData, period, onPeriodChange }: { chartData: any[]; period: '7d' | '30d'; onPeriodChange: (p: '7d' | '30d') => void }) {
-  const data = chartData.length > 0 ? chartData : []
-
-  return (
-    <motion.div
-      variants={itemVariants}
-      className="soft-panel p-5 h-full"
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-vr-h3 text-vrtext-primary">近{period === '7d' ? '7' : '30'}天营收趋势</h3>
-        <div className="flex items-center gap-1 bg-vrbg-surface rounded-full p-0.5">
-          {(['7d', '30d'] as const).map((p) => (
-            <button
-              key={p}
-              onClick={() => onPeriodChange(p)}
-              className={cn(
-                'px-3 py-1 rounded-full text-vr-caption font-medium transition-all duration-150',
-                period === p
-                  ? 'bg-vraccent-primary text-white'
-                  : 'text-vrtext-secondary hover:bg-vrbg-elevated'
-              )}
-            >
-              {p === '7d' ? '近7天' : '近30天'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Legend */}
-      <div className="flex items-center gap-4 mb-2">
-        <div className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-full bg-[#3B82F6]" />
-          <span className="text-vr-caption text-vrtext-secondary">线上收入</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-full bg-[#10B981]" />
-          <span className="text-vr-caption text-vrtext-secondary">线下收入</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-full bg-[#F59E0B]" />
-          <span className="text-vr-caption text-vrtext-secondary">营业外</span>
-        </div>
-      </div>
-
-      {/* Chart */}
-      <div className="h-[220px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
-            <defs>
-              <linearGradient id="areaOnline" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.2} />
-                <stop offset="100%" stopColor="#3B82F6" stopOpacity={0} />
-              </linearGradient>
-              <linearGradient id="areaOffline" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#10B981" stopOpacity={0.2} />
-                <stop offset="100%" stopColor="#10B981" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--vr-border-subtle)" vertical={false} />
-            <XAxis
-              dataKey="label"
-              tick={{ fill: 'var(--vr-text-muted)', fontSize: 12 }}
-              axisLine={{ stroke: 'var(--vr-border-subtle)' }}
-              tickLine={false}
-            />
-            <YAxis
-              tick={{ fill: 'var(--vr-text-muted)', fontSize: 12 }}
-              axisLine={false}
-              tickLine={false}
-            />
-            <Tooltip
-              contentStyle={{
-                  backgroundColor: 'rgba(255,255,255,0.96)',
-                  border: '1px solid var(--vr-border-subtle)',
-                  borderRadius: '12px',
-                  boxShadow: '0 16px 35px rgba(15,23,42,0.08)',
-                  fontSize: 12,
-                  color: 'var(--vr-text-primary)',
-                }}
-                formatter={(value: number, name: string) => {
-                const label = name === 'onlineAmount' ? '线上收入' : name === 'offlineAmount' ? '线下收入' : '营业外收入'
-                return [`¥${(Number(value) / 100).toLocaleString()}`, label]
-              }}
-            />
-            <Area
-              type="monotone"
-              dataKey="onlineAmount"
-              stroke="#3B82F6"
-              strokeWidth={2}
-              fill="url(#areaOnline)"
-              animationDuration={1200}
-              animationEasing="ease-out"
-            />
-            <Area
-              type="monotone"
-              dataKey="offlineAmount"
-              stroke="#10B981"
-              strokeWidth={2}
-              fill="url(#areaOffline)"
-              animationDuration={1200}
-              animationEasing="ease-out"
-            />
-            <Area
-              type="monotone"
-              dataKey="otherIncome"
-              stroke="#F59E0B"
-              strokeWidth={2}
-              fill="transparent"
-              animationDuration={1200}
-              animationEasing="ease-out"
-            />
-          </AreaChart>
-        </ResponsiveContainer>
       </div>
     </motion.div>
   )
@@ -751,7 +834,6 @@ function LatestOrders({ orders, title = '最新订单' }: { orders: any[]; title
 /* ─── Home Page ─── */
 export default function Home() {
   const today = format(new Date(), 'yyyy-MM-dd')
-  const [scheduleDate, setScheduleDate] = useState(today)
   const [selectedVenueId, setSelectedVenueId] = useState('all')
 
   const { data: dashboardData } = useQuery({
@@ -783,9 +865,9 @@ export default function Home() {
 
   // 获取排场预约
   const { data: bookingData } = useQuery({
-    queryKey: ['bookings', 'home-schedule', scheduleDate, selectedVenueId],
+    queryKey: ['bookings', 'home-schedule', today, selectedVenueId],
     queryFn: () => getBookings({
-      date: scheduleDate,
+      date: today,
       venueId: selectedVenueId === 'all' ? undefined : selectedVenueId,
       pageSize: 100,
     }),
@@ -832,7 +914,7 @@ export default function Home() {
   const statCards = stats ? [
     {
       label: '今日营收',
-      value: yuanFromCents(stats.todayRevenue, 0),
+      value: yuanFromCents(stats.todayRevenue, 2),
       numericValue: stats.todayRevenue / 100,
       prefix: '¥',
       trend: stats.revenueTrend,
@@ -904,13 +986,39 @@ export default function Home() {
               venues={venues}
               bookings={todayBookings}
               title={bHomeScheduleTitle}
-              selectedDate={scheduleDate}
               selectedVenueId={selectedVenueId}
-              onDateChange={setScheduleDate}
               onVenueChange={setSelectedVenueId}
             />
             <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.35fr)_380px] gap-5">
-              <RevenueChart chartData={revenueData || []} period={revenuePeriod} onPeriodChange={setRevenuePeriod} />
+              <ProgressMetricCard
+                title={`近${revenuePeriod === '7d' ? '7' : '30'}天营收趋势`}
+                series={[
+                  {
+                    name: '线上收入',
+                    data: (revenueData || []).map((d: any) => ({ value: (d.onlineAmount || 0) / 100, date: d.label })),
+                    accent: 'blue',
+                  },
+                  {
+                    name: '线下收入',
+                    data: (revenueData || []).map((d: any) => ({ value: (d.offlineAmount || 0) / 100, date: d.label })),
+                    accent: 'emerald',
+                  },
+                  {
+                    name: '营业外',
+                    data: (revenueData || []).map((d: any) => ({ value: (d.otherIncome || 0) / 100, date: d.label })),
+                    accent: 'amber',
+                  },
+                ]}
+                period={revenuePeriod === '7d' ? '近7天' : '近30天'}
+                periodOptions={[
+                  { label: '近7天', points: 7 },
+                  { label: '近30天', points: 30 },
+                ]}
+                onPeriodChange={(option) => setRevenuePeriod(option.label === '近7天' ? '7d' : '30d')}
+                valueFormatter={(v) => `¥${new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v)}`}
+                size="md"
+                className="h-full"
+              />
               <OrderCompositionPanel orders={latestOrders} />
             </div>
           </div>

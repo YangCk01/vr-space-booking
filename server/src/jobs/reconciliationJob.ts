@@ -7,6 +7,7 @@ import { fetchWechatBill, fetchAlipayBill } from '../services/channelBillService
 import { fetchBankStatement } from '../services/bankStatementService'
 import { fetchDeviceLogs } from '../services/deviceLogService'
 import { sendReconAlert } from '../services/notificationService'
+import { pushAdminNotification } from '../controllers/notificationController'
 import { summarizePendingReconExceptions } from '../services/reconExceptionState'
 
 /**
@@ -354,20 +355,14 @@ function checkDimensionAlert(
 
 async function sendReconNotifications(dateStr: string, alerts: string[]) {
   try {
-    const targetUsers = await prisma.user.findMany({
-      where: { role: { in: ['SUPER_ADMIN', 'FINANCE'] } },
-      select: { id: true },
-    })
-
     const title = `【对账异常告警】${dateStr}`
     const content = `日期 ${dateStr} 对账发现以下异常，请关注：\n${alerts.join('\n')}`
 
-    await Promise.all(
-      targetUsers.map((u) =>
-        prisma.notification.create({
-          data: { userId: u.id, type: 'RECON_ALERT', title, content },
-        })
-      )
+    await pushAdminNotification(
+      'RECON_ALERT',
+      title,
+      content,
+      'SYSTEM'
     )
   } catch (err) {
     console.error('[ReconJob] 创建对账告警通知失败:', err)

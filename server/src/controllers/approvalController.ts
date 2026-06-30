@@ -15,6 +15,8 @@ type NoShowRefundPayload = {
 type OrderRefundPayload = {
   amount?: number
   reason: string
+  feeOrderIds?: string[]
+  feeAmount?: number
 }
 
 const APPROVER_ROLES = ['SUPER_ADMIN', 'ADMIN', 'FINANCE', 'MANAGER']
@@ -201,7 +203,7 @@ export async function createOrderRefundApproval(req: AuthenticatedRequest, res: 
       where: { OR: [{ id }, { orderNo: id }] },
     })
     if (!order) return error(res, '订单不存在', 404)
-    if (!['PAID', 'READY_TO_VERIFY'].includes(order.status)) {
+    if (!['PAID', 'READY_TO_VERIFY', 'COMPLETED'].includes(order.status)) {
       return error(res, '该订单状态不允许发起退款审批', 400)
     }
 
@@ -222,20 +224,43 @@ export async function createOrderRefundApproval(req: AuthenticatedRequest, res: 
       return error(res, '该订单已有待审批的退款申请，请勿重复提交', 400)
     }
 
+    const feeOrders = await prisma.order.findMany({
+      where: {
+        parentOrderId: order.id,
+        orderKind: 'FEE',
+        feeType: 'RESCHEDULE_FEE',
+        status: { in: ['PAID', 'READY_TO_VERIFY', 'COMPLETED'] },
+      },
+    })
+    const feeAmount = feeOrders.reduce((sum, o) => sum + o.amount, 0)
+    const totalAmount = amount + feeAmount
+    const feeOrderIds = feeOrders.map((o) => o.id)
+
     const approval = await prisma.approvalRequest.create({
       data: {
         type: 'ORDER_REFUND',
         status: 'PENDING',
         targetType: 'ORDER',
         targetId: order.id,
-        targetDesc: `订单 ${order.orderNo}`,
+        targetDesc: feeAmount > 0
+          ? `订单 ${order.orderNo}（含改签费 ¥${(feeAmount / 100).toFixed(2)}）`
+          : `订单 ${order.orderNo}`,
         requesterId: requester.id,
         requesterName: requester.name,
         requesterRole: requester.role,
-        requestPayload: { amount, reason },
-        beforeValue: { status: order.status, amount: order.amount, refundAmount: order.refundAmount },
-        afterValue: { status: 'REFUNDED', refundAmount: amount },
-        amount,
+        requestPayload: { amount, reason, feeOrderIds, feeAmount },
+        beforeValue: {
+          status: order.status,
+          amount: order.amount,
+          refundAmount: order.refundAmount,
+          feeOrders: feeOrders.map((o) => ({ id: o.id, orderNo: o.orderNo, amount: o.amount, status: o.status })),
+        },
+        afterValue: {
+          status: 'REFUNDED',
+          refundAmount: amount,
+          feeOrders: feeOrders.map((o) => ({ id: o.id, status: 'REFUNDED', refundAmount: o.amount })),
+        },
+        amount: totalAmount,
         reason,
       },
     })
@@ -248,7 +273,7 @@ export async function createOrderRefundApproval(req: AuthenticatedRequest, res: 
       actionName: '发起审批',
       beforeValue: approval.beforeValue,
       afterValue: approval.afterValue,
-      amount,
+      amount: totalAmount,
       reason,
     })
 
@@ -289,12 +314,38 @@ export async function approveApproval(req: AuthenticatedRequest, res: Response) 
         })
       } else if (approval.type === 'ORDER_REFUND') {
         const payload = approval.requestPayload as OrderRefundPayload
-        execution = await executeOrderRefund({
+        const mainExecution = await executeOrderRefund({
           orderIdOrNo: approval.targetId,
           amount: payload.amount,
           reason: payload.reason,
           req,
         })
+
+        const feeExecutions: any[] = []
+        for (const feeOrderId of payload.feeOrderIds || []) {
+          const feeExecution = await executeOrderRefund({
+            orderIdOrNo: feeOrderId,
+            reason: payload.reason,
+            req,
+          })
+          feeExecutions.push(feeExecution)
+        }
+
+        const totalAmount =
+          (mainExecution.amount || 0) +
+          feeExecutions.reduce((sum, e) => sum + (e.amount || 0), 0)
+
+        execution = {
+          amount: totalAmount,
+          beforeValue: {
+            main: mainExecution.beforeValue,
+            fees: feeExecutions.map((e) => e.beforeValue),
+          },
+          afterValue: {
+            main: mainExecution.afterValue,
+            fees: feeExecutions.map((e) => e.afterValue),
+          },
+        }
       } else {
         throw new Error('该审批类型暂未接入自动执行')
       }

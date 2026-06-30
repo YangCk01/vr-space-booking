@@ -3,6 +3,7 @@ import { prisma } from "../utils/prisma"
 import { success, error } from "../utils/response"
 import { getMemberLevels, getPointsConfig } from "../utils/memberConfig"
 import { getConfig } from "../services/configService"
+import { getPlatformConfig } from "../utils/platformConfig"
 
 interface RefundTier {
   hours: number
@@ -38,6 +39,16 @@ export async function memberPublic(req: Request, res: Response) {
   }
 }
 
+/** 公开接口：返回第三方平台配置（供C端券码兑换/支付使用） */
+export async function platformPublic(req: Request, res: Response) {
+  try {
+    const config = getPlatformConfig()
+    return success(res, config)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
 /** 公开接口：返回B/C端页面展示配置（供C端首页使用） */
 export async function pagePublic(req: Request, res: Response) {
   try {
@@ -62,6 +73,7 @@ export async function pagePublic(req: Request, res: Response) {
       "c_home_vip_title",
       "c_home_vip_desc",
       "c_home_vip_button",
+      "c_home_greeting_subtitle",
       "c_home_hot_title",
       "c_home_hot_link_text",
       "c_home_custom_modules",
@@ -139,6 +151,7 @@ export async function pagePublic(req: Request, res: Response) {
       cHomeVipTitle: map.c_home_vip_title ?? "VIP 专属权益",
       cHomeVipDesc: map.c_home_vip_desc ?? "开通会员，享受每月免费体验名额",
       cHomeVipButton: map.c_home_vip_button ?? "立即开通",
+      cHomeGreetingSubtitle: map.c_home_greeting_subtitle ?? "欢迎回到 VR大空间",
       cHomeHotTitle: map.c_home_hot_title ?? "热门体验",
       cHomeHotLinkText: map.c_home_hot_link_text ?? "查看全部",
       cHomeCustomModules: Array.isArray(map.c_home_custom_modules) ? map.c_home_custom_modules : [],

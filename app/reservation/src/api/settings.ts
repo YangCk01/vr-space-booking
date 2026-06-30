@@ -38,12 +38,35 @@ export async function getBookingLifecycle() {
   return res.data.data as BookingLifecycle
 }
 
+export interface PlatformConfig {
+  enabled: boolean
+  autoVerify: boolean
+  settlementCycle: 'T+0' | 'T+1' | 'T+7' | 'MONTHLY'
+  serviceRate: number
+  merchantId: string
+  contact: string
+}
+
+export type PlatformConfigMap = Record<'MEITUAN' | 'DOUYIN' | 'DIANPING', PlatformConfig>
+
+export async function getPlatformConfig() {
+  const res = await apiClient.get('/settings/platform-public')
+  return res.data.data as PlatformConfigMap
+}
+
 export interface BannerImage {
   id: string
   imageUrl: string
   badge: string
   title: string
   subtitle: string
+  linkUrl: string
+}
+
+export interface ContentCardItem {
+  id: string
+  imageUrl: string
+  title: string
   linkUrl: string
 }
 
@@ -55,8 +78,9 @@ export interface ContentCard {
   videoUrl: string
   linkUrl: string
   buttonText: string
-  layout: 'card' | 'banner'
+  layout: 'card' | 'banner' | 'grid'
   enabled: boolean
+  items: ContentCardItem[]
 }
 
 export interface FaqItem {
@@ -87,6 +111,7 @@ export interface PagePublicSettings {
   cHomeVipTitle: string
   cHomeVipDesc: string
   cHomeVipButton: string
+  cHomeGreetingSubtitle: string
   cHomeHotTitle: string
   cHomeHotLinkText: string
   cHomeCustomModules: ContentCard[]

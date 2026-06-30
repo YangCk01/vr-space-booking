@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion } from "framer-motion"
 import {
   ArrowDown, ArrowUp, Bell, Check, ChevronRight, CreditCard, Crown, Gamepad2, Gift,
-  HelpCircle, Image, ImagePlus, Link2, MapPin, Phone, Plus, Receipt,
-  RotateCcw, Save, Smartphone, Ticket, Trash2, Upload, User, Users, Video, X,
+  HelpCircle, Image, ImagePlus, Link2, MapPin, Phone, Plus, Receipt, RotateCcw,
+  Save, Search, Smartphone, Ticket, Trash2, Upload, User, Users, Video, X,
 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
@@ -13,6 +13,7 @@ import { uploadFile } from "@/api/upload"
 import { getGames } from "@/api/games"
 import { getImageUrl } from "@/lib/imageUrl"
 import { cn } from "@/lib/utils"
+import { ImageUpload } from "@/components/ui/image-upload"
 import { toast } from "sonner"
 
 type RawSettings = Record<string, { value?: any } | any>
@@ -33,6 +34,13 @@ export interface BannerImage {
   linkUrl: string
 }
 
+export interface ContentCardItem {
+  id: string
+  imageUrl: string
+  title: string
+  linkUrl: string
+}
+
 export interface ContentCard {
   id: string
   title: string
@@ -41,8 +49,9 @@ export interface ContentCard {
   videoUrl: string
   linkUrl: string
   buttonText: string
-  layout: "card" | "banner"
+  layout: "card" | "banner" | "grid"
   enabled: boolean
+  items: ContentCardItem[]
 }
 
 export interface FaqItem {
@@ -59,6 +68,7 @@ interface PageForm {
   cHomeVipTitle: string
   cHomeVipDesc: string
   cHomeVipButton: string
+  cHomeGreetingSubtitle: string
   cHomeHotTitle: string
   cHomeHotLinkText: string
   cHomeCustomModules: ContentCard[]
@@ -124,9 +134,20 @@ function normalizeModules(value: unknown): ContentCard[] {
     imageUrl: String(item?.imageUrl || ""),
     videoUrl: String(item?.videoUrl || ""),
     linkUrl: String(item?.linkUrl || ""),
-    buttonText: String(item?.buttonText || "查看详情"),
-    layout: item?.layout === "banner" ? "banner" : "card",
+    buttonText: typeof item?.buttonText === "string" ? item.buttonText : "查看详情",
+    layout: ["card", "banner", "grid"].includes(item?.layout) ? item.layout : "card",
     enabled: item?.enabled !== false,
+    items: normalizeGridItems(item?.items),
+  }))
+}
+
+function normalizeGridItems(value: unknown): ContentCardItem[] {
+  if (!Array.isArray(value)) return []
+  return value.map((item: any, index: number) => ({
+    id: String(item?.id || "grid-item-" + Date.now() + "-" + index),
+    imageUrl: String(item?.imageUrl || ""),
+    title: String(item?.title || ""),
+    linkUrl: String(item?.linkUrl || ""),
   }))
 }
 
@@ -148,6 +169,7 @@ function buildInitialForm(settings?: RawSettings): PageForm {
     cHomeVipTitle: readSetting(settings, "c_home_vip_title", "VIP 专属权益"),
     cHomeVipDesc: readSetting(settings, "c_home_vip_desc", "开通会员，享受每月免费体验名额"),
     cHomeVipButton: readSetting(settings, "c_home_vip_button", "立即开通"),
+    cHomeGreetingSubtitle: readSetting(settings, "c_home_greeting_subtitle", "欢迎回到 VR大空间"),
     cHomeHotTitle: readSetting(settings, "c_home_hot_title", "热门体验"),
     cHomeHotLinkText: readSetting(settings, "c_home_hot_link_text", "查看全部"),
     cHomeCustomModules: normalizeModules(readSetting(settings, "c_home_custom_modules", [])),
@@ -303,14 +325,12 @@ function LinkUrlInput({ value, onChange, placeholder }: { value: string; onChang
 function ImageUploadField({
   label,
   imageUrl,
-  uploading,
   onUpload,
   onRemove,
   desc,
 }: {
   label: string
   imageUrl: string
-  uploading: boolean
   onUpload: (file: File) => void
   onRemove: () => void
   desc?: string
@@ -320,38 +340,17 @@ function ImageUploadField({
   return (
     <Field label={label}>
       <div className="flex items-center gap-4">
-        <div className="w-28 h-16 bg-vrbg-surface border border-vrborder-subtle rounded-lg flex items-center justify-center overflow-hidden">
-          {imageUrl ? (
-            <img src={getImageUrl(imageUrl)} alt="" className="w-full h-full object-cover" />
-          ) : (
-            <Image className="w-5 h-5 text-vrtext-muted" />
-          )}
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="inline-flex items-center gap-2 px-4 py-2 border border-vrborder-hover rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated transition-colors cursor-pointer relative self-start">
-            <Upload className="w-4 h-4" />
-            {uploading ? "上传中..." : "上传图片"}
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml,.jpg,.jpeg,.png,.gif,.webp,.svg"
-              disabled={uploading}
-              className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                e.currentTarget.value = ""
-                if (!file) return
-                if (file.size > 5 * 1024 * 1024) { toast.error("图片大小不能超过 5MB"); return }
-                onUpload(file)
-              }}
-            />
-          </label>
-          <p className="text-vr-caption text-vrtext-tertiary">{imageHint}</p>
-        </div>
-        {imageUrl && (
-          <button type="button" onClick={onRemove} className="px-3 py-2 rounded-lg text-vr-body-sm text-vrerror hover:bg-vrerror/10">
-            移除
-          </button>
-        )}
+        <ImageUpload
+          compact
+          value={imageUrl ? getImageUrl(imageUrl) : null}
+          onUpload={(file) => {
+            if (file.size > 5 * 1024 * 1024) { toast.error("图片大小不能超过 5MB"); return }
+            onUpload(file)
+          }}
+          onRemove={onRemove}
+          accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml,.jpg,.jpeg,.png,.gif,.webp,.svg"
+        />
+        <p className="text-vr-caption text-vrtext-tertiary">{imageHint}</p>
       </div>
     </Field>
   )
@@ -428,40 +427,384 @@ function VideoUploadField({
   )
 }
 
-function PreviewCard({ form }: { form: PageForm }) {
+function TopPreview({ form }: { form: PageForm }) {
   const [activeBanner, setActiveBanner] = useState(0)
+  const banners = form.cHomeBannerEnabled ? form.cHomeBannerImages : []
+  const current = banners[activeBanner]
+  const searchEnabled = form.cHomeSectionOrder.find((s) => s.key === "search")?.enabled !== false
 
-  const previewSection = (key: string) => {
-    switch (key) {
-      case "search":
-        return (
-          <div className="h-9 rounded-full bg-slate-100 px-3 flex items-center text-xs text-slate-400">
+  if (!form.cHomeBannerEnabled) {
+    return (
+      <div className="relative rounded-t-2xl bg-white border-b border-slate-100 overflow-hidden">
+        {/* 导航栏 */}
+        <div className="relative z-30 px-4 pt-4 pb-3 flex items-center justify-between text-gray-900">
+          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 text-[10px]">
+            <MapPin className="w-3 h-3" />
+            <span>未定位</span>
+            <ChevronRight className="w-3 h-3 opacity-70" />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] text-gray-900">中</div>
+            <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center">
+              <Bell className="w-3.5 h-3.5 text-gray-900" />
+            </div>
+          </div>
+        </div>
+
+        {/* 搜索条 */}
+        {searchEnabled && (
+          <div className="relative z-20 px-4 pt-2 pb-3">
+            <div className="h-9 rounded-full bg-gray-100 px-3 flex items-center gap-2 text-[11px] text-gray-500">
+              <Search className="w-3.5 h-3.5 text-gray-500" />
+              {form.cHomeSearchPlaceholder || "搜索 VR 体验项目..."}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative h-[300px] rounded-2xl overflow-hidden">
+      {/* 背景 */}
+      <div className="absolute inset-0 bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600 z-0">
+        {current?.imageUrl && (
+          <img src={getImageUrl(current.imageUrl)} alt="" className="absolute inset-0 w-full h-full object-cover opacity-70" />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-black/20 to-transparent" />
+      </div>
+
+      {/* 导航栏 */}
+      <div className="relative z-30 px-4 pt-4 pb-3 flex items-center justify-between text-white">
+        <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/15 backdrop-blur text-[10px]">
+          <MapPin className="w-3 h-3" />
+          <span>未定位</span>
+          <ChevronRight className="w-3 h-3 opacity-70" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] text-white">中</div>
+          <div className="w-7 h-7 rounded-full bg-white/15 backdrop-blur flex items-center justify-center">
+            <Bell className="w-3.5 h-3.5" />
+          </div>
+        </div>
+      </div>
+
+      {/* 搜索条 */}
+      {searchEnabled && (
+        <div className="relative z-20 px-4 pt-2 pb-2">
+          <div className="h-9 rounded-full bg-white/90 backdrop-blur px-3 flex items-center gap-2 text-[11px] text-gray-400">
+            <Search className="w-3.5 h-3.5 text-gray-400" />
             {form.cHomeSearchPlaceholder || "搜索 VR 体验项目..."}
           </div>
-        )
-      case "banner":
-        return form.cHomeBannerEnabled && form.cHomeBannerImages.length > 0 ? (
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-950 via-violet-950 to-blue-950 p-4 text-white">
-            {form.cHomeBannerImages[activeBanner]?.imageUrl && (
-              <img src={getImageUrl(form.cHomeBannerImages[activeBanner].imageUrl)} alt="" className="absolute inset-0 w-full h-full object-cover opacity-80" />
-            )}
-            <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/35 to-transparent" />
-            <div className="relative">
-              <p className="text-[11px] text-cyan-300 mb-1">{form.cHomeBannerImages[activeBanner]?.badge || "限时特惠"}</p>
-              <p className="text-lg font-black leading-tight whitespace-pre-line">{form.cHomeBannerImages[activeBanner]?.title || "沉浸宇宙\n触手可及"}</p>
-              <p className="text-[11px] text-white/75 mt-2">{form.cHomeBannerImages[activeBanner]?.subtitle || "全场体验项目最高 30% OFF"}</p>
+        </div>
+      )}
+
+      {/* Banner 轮播内容 */}
+      <div className="absolute inset-0 z-10 flex overflow-x-auto snap-x snap-mandatory scrollbar-hide">
+        {banners.length > 0 ? (
+          banners.map((banner) => (
+            <div
+              key={banner.id}
+              className="relative w-full h-full shrink-0 snap-start flex flex-col justify-end pb-14 px-5 text-left"
+            >
+              <p className="text-[10px] font-semibold text-cyan-300 mb-2 flex items-center gap-1">
+                <span className="w-1 h-1 rounded-full bg-cyan-300" />
+                {banner.badge || "限时特惠"}
+              </p>
+              <p className="text-lg font-black text-white leading-tight italic whitespace-pre-line">
+                {banner.title || "沉浸宇宙\n触手可及"}
+              </p>
+              <p className="text-[11px] text-white/80 mt-2">
+                {banner.subtitle || "全场体验项目最高 30% OFF"}
+              </p>
+              <button className="mt-4 self-start px-3 py-1 rounded-full bg-white text-violet-600 text-[11px] font-semibold shadow-sm">
+                立即预约
+              </button>
             </div>
-            {form.cHomeBannerImages.length > 1 && (
-              <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1">
-                {form.cHomeBannerImages.map((_, i) => (
-                  <button key={i} onClick={() => setActiveBanner(i)}
-                    className={cn("h-1.5 rounded-full transition-all", i === activeBanner ? "w-5 bg-white" : "w-1.5 bg-white/50")}
-                  />
-                ))}
-              </div>
-            )}
+          ))
+        ) : (
+          <div className="relative w-full h-full shrink-0 flex flex-col justify-end pb-14 px-5 text-left">
+            <p className="text-[10px] font-semibold text-cyan-300 mb-2 flex items-center gap-1">
+              <span className="w-1 h-1 rounded-full bg-cyan-300" />
+              VR SPACE × 斩神II
+            </p>
+            <p className="text-lg font-black text-white leading-tight italic whitespace-pre-line">{"饮尽凡尘\n觉醒斩神"}</p>
+            <p className="text-[11px] text-white/80 mt-2">沉浸式 VR 大空间体验</p>
+            <button className="mt-4 self-start px-3 py-1 rounded-full bg-white text-violet-600 text-[11px] font-semibold shadow-sm">
+              立即预约
+            </button>
           </div>
-        ) : null
+        )}
+      </div>
+
+      {banners.length > 1 && (
+        <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1 z-20">
+          {banners.map((_, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => setActiveBanner(i)}
+              className={cn("h-1 rounded-full transition-all", i === activeBanner ? "w-4 bg-white" : "w-1 bg-white/50")}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GridItemsEditor({
+  moduleId,
+  items,
+  onChange,
+}: {
+  moduleId: string
+  items: ContentCardItem[]
+  onChange: (fn: (items: ContentCardItem[]) => ContentCardItem[]) => void
+}) {
+  const addItem = () => {
+    onChange((prev) => [
+      ...prev,
+      { id: "grid-item-" + Date.now(), imageUrl: "", title: "", linkUrl: "" },
+    ])
+  }
+
+  const updateItem = (itemId: string, patch: Partial<ContentCardItem>) => {
+    onChange((prev) => prev.map((item) => (item.id === itemId ? { ...item, ...patch } : item)))
+  }
+
+  const removeItem = (itemId: string) => {
+    onChange((prev) => prev.filter((item) => item.id !== itemId))
+  }
+
+  const moveItem = (itemId: string, direction: -1 | 1) => {
+    onChange((prev) => {
+      const arr = [...prev]
+      const idx = arr.findIndex((item) => item.id === itemId)
+      const target = idx + direction
+      if (idx < 0 || target < 0 || target >= arr.length) return prev
+      const [item] = arr.splice(idx, 1)
+      arr.splice(target, 0, item)
+      return arr
+    })
+  }
+
+  const uploadImage = async (file: File, itemId: string) => {
+    try {
+      const result = await uploadFile("pages", file)
+      updateItem(itemId, { imageUrl: result.url })
+      toast.success("上传成功")
+    } catch (err) {
+      toast.error("上传失败: " + (err as Error).message)
+    }
+  }
+
+  return (
+    <div className="col-span-full space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-vr-body-sm font-semibold text-vrtext-primary">快捷入口</p>
+        <button
+          type="button"
+          onClick={addItem}
+          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-vraccent-primary text-white text-vr-caption hover:bg-vraccent-primary-hover transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" />添加入口
+        </button>
+      </div>
+      {items.length === 0 && (
+        <p className="text-vr-caption text-vrtext-tertiary">暂无入口，点击上方按钮添加</p>
+      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {items.map((item, index) => (
+          <div key={item.id} className="rounded-lg border border-vrborder-subtle bg-vrbg-surface p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-vr-caption text-vrtext-secondary">入口 {index + 1}</span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => moveItem(item.id, -1)}
+                  disabled={index === 0}
+                  className="p-1 rounded text-vrtext-tertiary hover:bg-vrbg-elevated disabled:opacity-40"
+                >
+                  <ArrowUp className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => moveItem(item.id, 1)}
+                  disabled={index === items.length - 1}
+                  className="p-1 rounded text-vrtext-tertiary hover:bg-vrbg-elevated disabled:opacity-40"
+                >
+                  <ArrowDown className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeItem(item.id)}
+                  className="p-1 rounded text-vrerror hover:bg-vrerror/10"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+            <Field label="标题">
+              <TextInput value={item.title} onChange={(e) => updateItem(item.id, { title: e.target.value })} maxLength={8} />
+            </Field>
+            <ImageUploadField
+              label="图片"
+              imageUrl={item.imageUrl}
+              onUpload={(f) => uploadImage(f, item.id)}
+              onRemove={() => updateItem(item.id, { imageUrl: "" })}
+            />
+            <Field label="跳转链接（可选）">
+              <LinkUrlInput value={item.linkUrl} onChange={(v) => updateItem(item.id, { linkUrl: v })} placeholder="/recharge 或 https://..." />
+            </Field>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function CustomModulesCarousel({ modules }: { modules: ContentCard[] }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [active, setActive] = useState(0)
+  const timerRef = useRef<number | null>(null)
+
+  const start = useCallback(() => {
+    if (modules.length <= 1) return
+    if (timerRef.current) window.clearInterval(timerRef.current)
+    timerRef.current = window.setInterval(() => {
+      const el = ref.current
+      if (!el) return
+      const current = Math.round(el.scrollLeft / el.clientWidth)
+      const next = (current + 1) % modules.length
+      el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
+    }, 4000)
+  }, [modules.length])
+
+  const stop = useCallback(() => {
+    if (timerRef.current) window.clearInterval(timerRef.current)
+    timerRef.current = null
+  }, [])
+
+  const reset = useCallback(() => {
+    stop()
+    start()
+  }, [start, stop])
+
+  useEffect(() => {
+    start()
+    return () => stop()
+  }, [start, stop])
+
+  const handleScroll = () => {
+    const el = ref.current
+    if (!el || el.clientWidth === 0) return
+    setActive(Math.round(el.scrollLeft / el.clientWidth))
+  }
+
+  return (
+    <div className="relative">
+      <div
+        ref={ref}
+        onScroll={handleScroll}
+        onTouchStart={reset}
+        onMouseDown={reset}
+        className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide -mx-4 px-4"
+      >
+        {modules.map((item) => {
+          const hasTextContent = !!(item.title.trim() || item.content.trim())
+          const showButton = !!(item.linkUrl.trim() && item.buttonText.trim())
+          const hasContent = hasTextContent || showButton
+          return (
+            <div key={item.id} className="w-full shrink-0 snap-start px-4">
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                {item.layout === "grid" ? (
+                  <div>
+                    {item.title.trim() && <p className="text-xs font-bold text-slate-900 mb-2">{item.title}</p>}
+                    <div className="grid grid-cols-4 gap-2">
+                      {item.items.slice(0, 8).map((gridItem) => (
+                        <div key={gridItem.id} className="flex flex-col items-center gap-1">
+                          {gridItem.imageUrl ? (
+                            <div className="w-8 h-8 rounded-lg bg-slate-100 overflow-hidden">
+                              <img src={getImageUrl(gridItem.imageUrl)} alt="" className="w-full h-full object-cover" />
+                            </div>
+                          ) : (
+                            <div className="w-8 h-8 rounded-lg bg-slate-100" />
+                          )}
+                          <span className="text-[9px] text-slate-500 text-center line-clamp-1">{gridItem.title}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : item.videoUrl ? (
+                  <>
+                    <div className="aspect-video w-full overflow-hidden rounded-lg bg-black">
+                      <video src={getImageUrl(item.videoUrl)} className="w-full h-full object-contain block" autoPlay muted loop playsInline preload="metadata" />
+                    </div>
+                    {hasContent && (
+                      <div className="mt-2">
+                        {item.title.trim() && <p className="text-xs font-bold text-slate-900">{item.title}</p>}
+                        {item.content && <p className="mt-1 text-[11px] text-slate-500 line-clamp-2">{item.content}</p>}
+                        {showButton && <p className="mt-2 text-[11px] font-semibold text-violet-600">{item.buttonText.trim()}</p>}
+                      </div>
+                    )}
+                  </>
+                ) : item.imageUrl ? (
+                  <div className="relative">
+                    <div className="w-full bg-slate-100 flex items-center justify-center aspect-video overflow-hidden rounded-lg">
+                      <img src={getImageUrl(item.imageUrl)} alt="" className="w-full h-full object-cover block" />
+                    </div>
+                    {showButton && <p className="absolute bottom-2 left-2 text-[11px] font-semibold text-violet-600 bg-white/90 px-2 py-0.5 rounded-full shadow-sm">{item.buttonText.trim()}</p>}
+                    {hasTextContent && (
+                      <div className="mt-2">
+                        {item.title.trim() && <p className="text-xs font-bold text-slate-900">{item.title}</p>}
+                        {item.content && <p className="mt-1 text-[11px] text-slate-500 line-clamp-2">{item.content}</p>}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  hasContent && (
+                    <div className="mt-2">
+                      {item.title.trim() && <p className="text-xs font-bold text-slate-900">{item.title}</p>}
+                      {item.content && <p className="mt-1 text-[11px] text-slate-500 line-clamp-2">{item.content}</p>}
+                      {showButton && <p className="mt-2 text-[11px] font-semibold text-violet-600">{item.buttonText.trim()}</p>}
+                    </div>
+                  )
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {modules.length > 1 && (
+        <div className="flex justify-center gap-1 mt-2">
+          {modules.map((item, index) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => {
+                const el = ref.current
+                if (el) el.scrollTo({ left: index * el.clientWidth, behavior: 'smooth' })
+                reset()
+              }}
+              className={cn(
+                'h-1 rounded-full transition-all',
+                active === index ? 'w-4 bg-violet-600' : 'w-1 bg-slate-300'
+              )}
+              aria-label={`切换到第 ${index + 1} 个模块`}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PreviewCard({ form }: { form: PageForm }) {
+  const timeGreeting = new Date().getHours() < 12 ? "上午好" : new Date().getHours() < 18 ? "下午好" : "晚上好"
+  const bannerEnabled = form.cHomeBannerEnabled !== false
+  const previewSection = (key: string) => {
+    switch (key) {
       case "category":
         return form.cHomeCategoryEnabled ? (
           <div className="grid grid-cols-4 gap-2">
@@ -473,38 +816,40 @@ function PreviewCard({ form }: { form: PageForm }) {
             ))}
           </div>
         ) : null
-      case "vip":
-        return form.cHomeVipEnabled ? (
-          <div className="rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 p-3 text-white flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold">{form.cHomeVipTitle}</p>
-              <p className="text-[10px] text-white/80 mt-0.5">{form.cHomeVipDesc}</p>
-            </div>
-            <span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-violet-600">{form.cHomeVipButton}</span>
-          </div>
-        ) : null
-      case "customModules":
+      case "customModules": {
+        const enabledModules = form.cHomeCustomModules.filter((m) => m.enabled)
+        const grid = enabledModules.filter((m) => m.layout === "grid")
+        const carousel = enabledModules.filter((m) => m.layout !== "grid")
         return (
-          <>
-            {form.cHomeCustomModules.filter((m) => m.enabled).slice(0, 3).map((item) => (
-              <div key={item.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                {item.title.trim() && <p className="text-xs font-bold text-slate-900">{item.title}</p>}
-                {item.videoUrl ? (
-                  <div className="mt-2 aspect-video w-full overflow-hidden rounded-lg bg-black">
-                    <video src={getImageUrl(item.videoUrl)} className="w-full h-full object-contain" autoPlay muted loop playsInline preload="metadata" />
+          <div className="space-y-2">
+            {grid.map((module) => (
+              <div key={module.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                {module.title.trim() && (
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <div className="w-0.5 h-3 rounded-full bg-violet-600" />
+                    <p className="text-xs font-bold text-slate-900">{module.title}</p>
                   </div>
-                ) : item.imageUrl ? (
-                  <img src={getImageUrl(item.imageUrl)} alt="" className="mt-2 h-16 w-full rounded-lg object-cover" />
-                ) : null}
-                {item.content && <p className="mt-1 text-[11px] text-slate-500 line-clamp-2">{item.content}</p>}
-                {item.linkUrl && <p className="mt-2 text-[11px] font-semibold text-violet-600">{item.buttonText || "查看详情"}</p>}
+                )}
+                <div className="grid grid-cols-4 gap-2">
+                  {module.items.slice(0, 8).map((gridItem) => (
+                    <div key={gridItem.id} className="flex flex-col items-center gap-1">
+                      {gridItem.imageUrl ? (
+                        <div className="w-9 h-9 rounded-xl bg-slate-100 overflow-hidden">
+                          <img src={getImageUrl(gridItem.imageUrl)} alt="" className="w-full h-full object-cover" />
+                        </div>
+                      ) : (
+                        <div className="w-9 h-9 rounded-xl bg-slate-100" />
+                      )}
+                      <span className="text-[10px] text-slate-700 text-center line-clamp-1">{gridItem.title}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
-            {form.cHomeCustomModules.filter((m) => m.enabled).length > 3 && (
-              <p className="text-center text-[11px] text-slate-400">...更多模块</p>
-            )}
-          </>
+            {carousel.length > 0 && <CustomModulesCarousel modules={carousel} />}
+          </div>
         )
+      }
       case "groupBuy":
         return (
           <div className="space-y-2">
@@ -530,15 +875,53 @@ function PreviewCard({ form }: { form: PageForm }) {
     }
   }
 
+  const topSectionKeys = new Set(["search", "banner", "vip"])
+  const bottomSections = form.cHomeSectionOrder.filter((s) => s.enabled && !topSectionKeys.has(s.key))
+
   return (
-    <div className="sticky top-6 space-y-4 scrollbar-hide">
+    <div className="w-full space-y-4">
       <div className="rounded-2xl border border-vrborder-subtle bg-vrbg-surface p-4">
         <div className="flex items-center gap-2 text-vr-body-sm font-semibold text-vrtext-primary mb-3">
           <Smartphone className="w-4 h-4 text-vraccent-primary" />
           C端首页预览
         </div>
-        <div className="rounded-2xl bg-white p-3 shadow-sm space-y-3">
-          {form.cHomeSectionOrder.filter((s) => s.enabled).map((section) => (
+        <div className="rounded-2xl bg-white p-4 shadow-sm space-y-4">
+          {/* 顶部固定区域：定位、搜索、Banner、问候卡、VIP */}
+          <TopPreview form={form} />
+
+          {/* 问候 + VIP 卡片 */}
+          <div className={cn(
+            "mx-0 relative z-10 rounded-xl p-3.5 flex items-center justify-between transition-colors",
+            bannerEnabled
+              ? "-mt-10 border border-white/20 bg-white/14 text-white shadow-[0_14px_34px_rgba(15,23,42,0.22)] backdrop-blur-xl"
+              : "mt-4 border border-slate-100 bg-white text-gray-900 shadow-lg"
+          )}>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full border-2 border-white/80 bg-gradient-to-br from-violet-500 to-blue-500 flex items-center justify-center text-white text-xs font-bold shadow-sm">VR</div>
+              <div>
+                <p className={cn("text-[10px]", bannerEnabled ? "text-white/70" : "text-gray-500")}>{timeGreeting}</p>
+                <p className={cn("text-xs font-bold", bannerEnabled ? "text-white" : "text-gray-900")}>{form.cHomeGreetingSubtitle}</p>
+              </div>
+            </div>
+            {form.cHomeVipEnabled !== false && (
+              <button
+                type="button"
+                className={cn(
+                  "flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-semibold shadow-sm",
+                  bannerEnabled
+                    ? "bg-white text-violet-700"
+                    : "bg-gradient-to-r from-violet-600 to-purple-600 text-white"
+                )}
+              >
+                <Crown className={cn("w-3 h-3", bannerEnabled ? "text-violet-500" : "text-yellow-300")} />
+                {form.cHomeVipButton || '开通VIP'}
+                <ChevronRight className={cn("w-3 h-3", bannerEnabled ? "text-violet-500" : "text-white/80")} />
+              </button>
+            )}
+          </div>
+
+          {/* 其余模块 */}
+          {bottomSections.map((section) => (
             <div key={section.key}>{previewSection(section.key)}</div>
           ))}
         </div>
@@ -571,6 +954,7 @@ function PreviewCard({ form }: { form: PageForm }) {
 function validateForm(form: PageForm): string | null {
   if (form.cHomeVipTitle.length > 30) return "会员卡标题不能超过30字"
   if (form.cHomeVipDesc.length > 100) return "会员卡说明不能超过100字"
+  if (form.cHomeGreetingSubtitle.length > 30) return "欢迎语不能超过30字"
   for (const faq of form.cProfileHelpFaqs) {
     if (faq.question.length > 100) return "FAQ问题不能超过100字"
     if (faq.answer.length > 500) return "FAQ回答不能超过500字"
@@ -582,8 +966,6 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
   const [active, setActive] = useState<SectionKey>("home")
   const [form, setForm] = useState<PageForm>(() => buildInitialForm(settings))
   const [saved, setSaved] = useState(false)
-  const [uploadingBannerId, setUploadingBannerId] = useState<string | null>(null)
-  const [uploadingModuleId, setUploadingModuleId] = useState<string | null>(null)
   const [uploadingModuleVideoId, setUploadingModuleVideoId] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
 
@@ -678,6 +1060,7 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
         buttonText: "查看详情",
         layout: "card",
         enabled: true,
+        items: [],
       }],
     }))
   }
@@ -686,6 +1069,15 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
     setForm((prev) => ({
       ...prev,
       cHomeCustomModules: prev.cHomeCustomModules.map((m) => m.id === id ? { ...m, ...patch } : m),
+    }))
+  }
+
+  const updateModuleItems = (moduleId: string, fn: (items: ContentCardItem[]) => ContentCardItem[]) => {
+    setForm((prev) => ({
+      ...prev,
+      cHomeCustomModules: prev.cHomeCustomModules.map((m) =>
+        m.id === moduleId ? { ...m, items: fn([...m.items]) } : m
+      ),
     }))
   }
 
@@ -789,28 +1181,22 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
   }
 
   const uploadBannerImage = async (file: File, bannerId: string) => {
-    setUploadingBannerId(bannerId)
     try {
       const result = await uploadFile("pages", file)
       updateBanner(bannerId, { imageUrl: result.url })
       toast.success("上传成功")
     } catch (err) {
       toast.error("上传失败: " + (err as Error).message)
-    } finally {
-      setUploadingBannerId(null)
     }
   }
 
   const uploadModuleImage = async (file: File, moduleId: string) => {
-    setUploadingModuleId(moduleId)
     try {
       const result = await uploadFile("pages", file)
       updateModule(moduleId, { imageUrl: result.url })
       toast.success("上传成功")
     } catch (err) {
       toast.error("上传失败: " + (err as Error).message)
-    } finally {
-      setUploadingModuleId(null)
     }
   }
 
@@ -846,6 +1232,7 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
       { key: "c_home_vip_title", value: form.cHomeVipTitle, category: "page" },
       { key: "c_home_vip_desc", value: form.cHomeVipDesc, category: "page" },
       { key: "c_home_vip_button", value: form.cHomeVipButton, category: "page" },
+      { key: "c_home_greeting_subtitle", value: form.cHomeGreetingSubtitle, category: "page" },
       { key: "c_home_hot_title", value: form.cHomeHotTitle, category: "page" },
       { key: "c_home_hot_link_text", value: form.cHomeHotLinkText, category: "page" },
       { key: "c_home_custom_modules", value: form.cHomeCustomModules, category: "page" },
@@ -872,6 +1259,7 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
           cHomeBannerImages: defaults.cHomeBannerImages, cHomeCategoryEnabled: defaults.cHomeCategoryEnabled,
           cHomeVipEnabled: defaults.cHomeVipEnabled, cHomeVipTitle: defaults.cHomeVipTitle,
           cHomeVipDesc: defaults.cHomeVipDesc, cHomeVipButton: defaults.cHomeVipButton,
+          cHomeGreetingSubtitle: defaults.cHomeGreetingSubtitle,
           cHomeHotTitle: defaults.cHomeHotTitle, cHomeHotLinkText: defaults.cHomeHotLinkText,
         }))
         break
@@ -985,7 +1373,6 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
                           </div>
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                             <ImageUploadField label="Banner 图片" imageUrl={banner.imageUrl}
-                              uploading={uploadingBannerId === banner.id}
                               onUpload={(f) => uploadBannerImage(f, banner.id)}
                               onRemove={() => updateBanner(banner.id, { imageUrl: "" })}
                               desc="建议比例 16:9，大小不超过 5MB" />
@@ -1027,21 +1414,16 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Bell className="w-4 h-4 text-vraccent-primary" />
-                      <p className="text-vr-body-sm font-semibold text-vrtext-primary">会员权益卡片</p>
+                      <p className="text-vr-body-sm font-semibold text-vrtext-primary">VIP 入口按钮</p>
                     </div>
                     <Switch checked={form.cHomeVipEnabled} onCheckedChange={(v) => { update("cHomeVipEnabled", v); syncSectionEnabledFromFlags("vip", v) }} />
                   </div>
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                    <Field label="标题">
-                      <TextInput value={form.cHomeVipTitle} onChange={(e) => update("cHomeVipTitle", e.target.value)} maxLength={30} />
-                    </Field>
-                    <Field label="按钮文案">
-                      <TextInput value={form.cHomeVipButton} onChange={(e) => update("cHomeVipButton", e.target.value)} maxLength={20} />
-                    </Field>
-                    <Field label="说明文字">
-                      <TextInput value={form.cHomeVipDesc} onChange={(e) => update("cHomeVipDesc", e.target.value)} maxLength={100} />
-                    </Field>
-                  </div>
+                  <Field label="欢迎语" desc="C端首页会员卡左侧的第二行欢迎文字，如“欢迎回到 VR大空间”">
+                    <TextInput value={form.cHomeGreetingSubtitle} onChange={(e) => update("cHomeGreetingSubtitle", e.target.value)} maxLength={30} />
+                  </Field>
+                  <Field label="按钮文案" desc="C端首页会员卡右侧的按钮文字，如“立即开通”“开通VIP”">
+                    <TextInput value={form.cHomeVipButton} onChange={(e) => update("cHomeVipButton", e.target.value)} maxLength={20} />
+                  </Field>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1086,7 +1468,9 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
                             </span>
                             <div>
                               <p className="text-vr-body-sm font-semibold text-vrtext-primary">模块 {index + 1}</p>
-                              <p className="text-vr-caption text-vrtext-tertiary">{item.layout === "banner" ? "通栏横幅" : "卡片"} · {item.title || "未命名"}</p>
+                              <p className="text-vr-caption text-vrtext-tertiary">
+                                {item.layout === "banner" ? "通栏横幅" : item.layout === "grid" ? "快捷入口" : "卡片"} · {item.title || "未命名"}
+                              </p>
                             </div>
                           </div>
                           <div className="flex items-center gap-1">
@@ -1105,44 +1489,63 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
                             </button>
                           </div>
                         </div>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                          <Field label="标题" desc="可留空，留空后 C 端不展示标题。">
-                            <TextInput value={item.title} onChange={(e) => updateModule(item.id, { title: e.target.value })} maxLength={50} />
-                          </Field>
-                          <Field label="布局样式">
-                            <select value={item.layout} onChange={(e) => updateModule(item.id, { layout: e.target.value as "card" | "banner" })}
-                              className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary">
-                              <option value="card">卡片式</option>
-                              <option value="banner">通栏横幅</option>
-                            </select>
-                          </Field>
-                          <Field label="正文内容">
-                            <TextArea rows={3} value={item.content} onChange={(e) => updateModule(item.id, { content: e.target.value })} maxLength={500} />
-                          </Field>
-                          <ImageUploadField label="配图（可选）" imageUrl={item.imageUrl}
-                            uploading={uploadingModuleId === item.id}
-                            onUpload={(f) => uploadModuleImage(f, item.id)}
-                            onRemove={() => updateModule(item.id, { imageUrl: "" })} />
-                          <VideoUploadField
-                            label="本地视频（可选）"
-                            videoUrl={item.videoUrl}
-                            uploading={uploadingModuleVideoId === item.id}
-                            onUpload={(f) => uploadModuleVideo(f, item.id)}
-                            onRemove={() => updateModule(item.id, { videoUrl: "" })}
-                            desc="建议上传 MP4/WebM，最大 300MB。视频存在时会优先显示视频。"
-                          />
-                          <Field label="视频直链（可选）" desc="必须是可直接播放的视频文件地址，例如 https://.../video.mp4；普通网页链接无法播放。">
-                            <TextInput value={item.videoUrl} onChange={(e) => updateModule(item.id, { videoUrl: e.target.value })} placeholder="https://.../video.mp4" />
-                          </Field>
-                          <Field label="跳转链接（可选）">
-                            <LinkUrlInput value={item.linkUrl} onChange={(v) => updateModule(item.id, { linkUrl: v })} placeholder="/recharge 或 https://..." />
-                          </Field>
-                          {item.linkUrl && (
-                            <Field label="按钮文案">
-                              <TextInput value={item.buttonText} onChange={(e) => updateModule(item.id, { buttonText: e.target.value })} maxLength={20} />
+                        {item.layout === "grid" ? (
+                          <div className="grid grid-cols-1 gap-4">
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                              <Field label="标题" desc="可留空，留空后 C 端不展示标题。">
+                                <TextInput value={item.title} onChange={(e) => updateModule(item.id, { title: e.target.value })} maxLength={50} />
+                              </Field>
+                              <Field label="布局样式">
+                                <select value={item.layout} onChange={(e) => updateModule(item.id, { layout: e.target.value as "card" | "banner" | "grid" })}
+                                  className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary">
+                                  <option value="card">卡片式</option>
+                                  <option value="banner">通栏横幅</option>
+                                  <option value="grid">快捷入口</option>
+                                </select>
+                              </Field>
+                            </div>
+                            <GridItemsEditor moduleId={item.id} items={item.items} onChange={(fn) => updateModuleItems(item.id, fn)} />
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <Field label="标题" desc="可留空，留空后 C 端不展示标题。">
+                              <TextInput value={item.title} onChange={(e) => updateModule(item.id, { title: e.target.value })} maxLength={50} />
                             </Field>
-                          )}
-                        </div>
+                            <Field label="布局样式">
+                              <select value={item.layout} onChange={(e) => updateModule(item.id, { layout: e.target.value as "card" | "banner" | "grid" })}
+                                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary">
+                                <option value="card">卡片式</option>
+                                <option value="banner">通栏横幅</option>
+                                <option value="grid">快捷入口</option>
+                              </select>
+                            </Field>
+                            <Field label="正文内容">
+                              <TextArea rows={3} value={item.content} onChange={(e) => updateModule(item.id, { content: e.target.value })} maxLength={500} />
+                            </Field>
+                            <ImageUploadField label="配图（可选）" imageUrl={item.imageUrl}
+                              onUpload={(f) => uploadModuleImage(f, item.id)}
+                              onRemove={() => updateModule(item.id, { imageUrl: "" })} />
+                            <VideoUploadField
+                              label="本地视频（可选）"
+                              videoUrl={item.videoUrl}
+                              uploading={uploadingModuleVideoId === item.id}
+                              onUpload={(f) => uploadModuleVideo(f, item.id)}
+                              onRemove={() => updateModule(item.id, { videoUrl: "" })}
+                              desc="建议上传 MP4/WebM，最大 300MB。视频存在时会优先显示视频。"
+                            />
+                            <Field label="视频直链（可选）" desc="必须是可直接播放的视频文件地址，例如 https://.../video.mp4；普通网页链接无法播放。">
+                              <TextInput value={item.videoUrl} onChange={(e) => updateModule(item.id, { videoUrl: e.target.value })} placeholder="https://.../video.mp4" />
+                            </Field>
+                            <Field label="跳转链接（可选）">
+                              <LinkUrlInput value={item.linkUrl} onChange={(v) => updateModule(item.id, { linkUrl: v })} placeholder="/recharge 或 https://..." />
+                            </Field>
+                            {item.linkUrl && (
+                              <Field label="按钮文案">
+                                <TextInput value={item.buttonText} onChange={(e) => updateModule(item.id, { buttonText: e.target.value })} maxLength={20} />
+                              </Field>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                     <button onClick={addModule} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-vrborder-subtle text-vr-body-sm text-vrtext-secondary hover:border-vraccent-primary hover:text-vraccent-primary transition-colors">
@@ -1358,8 +1761,10 @@ export function CustomerPageSettings({ settings }: { settings?: RawSettings }) {
           </div>
         </div>
 
-        <div className="hidden xl:block w-[320px] shrink-0 overflow-hidden">
-          <PreviewCard form={form} />
+        <div className="relative hidden xl:block w-[500px] shrink-0">
+          <div className="fixed right-8 top-[170px] max-h-[calc(100vh-186px)] w-[500px] overflow-y-auto">
+            <PreviewCard form={form} />
+          </div>
         </div>
       </div>
 

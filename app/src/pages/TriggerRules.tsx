@@ -5,6 +5,7 @@ import { Plus, Pencil, Trash2, Zap, ChevronLeft, ChevronRight, Loader2, X } from
 import Layout from '@/components/Layout'
 import { cn } from '@/lib/utils'
 import { Switch } from '@/components/ui/switch'
+import { NumberFieldInput } from '@/components/ui/number-field'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -315,12 +316,12 @@ function RuleModal({ open, onClose, rule, onSubmit, isPending }: RuleModalProps)
                   {form.event === 'BIRTHDAY' && (
                     <div>
                       <label className="block text-vr-caption text-vrtext-tertiary mb-1">提前天数 <span className="text-vrerror">*</span></label>
-                      <input
-                        type="number"
-                        value={form.conditionForm.birthdayAdvanceDays}
-                        onChange={(e) => setForm((p) => ({ ...p, conditionForm: { ...p.conditionForm, birthdayAdvanceDays: e.target.value } }))}
+                      <NumberFieldInput
+                        value={form.conditionForm.birthdayAdvanceDays ? Number(form.conditionForm.birthdayAdvanceDays) : undefined}
+                        minValue={1}
                         placeholder="如 7"
-                        className="w-full h-9 px-3 bg-vrbg-card border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
+                        onChange={(value) => setForm((p) => ({ ...p, conditionForm: { ...p.conditionForm, birthdayAdvanceDays: String(value) } }))}
+                        required
                       />
                     </div>
                   )}
@@ -354,12 +355,12 @@ function RuleModal({ open, onClose, rule, onSubmit, isPending }: RuleModalProps)
                   {form.actionForm.type === 'GIFT_POINTS' && (
                     <div>
                       <label className="block text-vr-caption text-vrtext-tertiary mb-1">积分数 <span className="text-vrerror">*</span></label>
-                      <input
-                        type="number"
-                        value={form.actionForm.points}
-                        onChange={(e) => setForm((p) => ({ ...p, actionForm: { ...p.actionForm, points: e.target.value } }))}
+                      <NumberFieldInput
+                        value={form.actionForm.points ? Number(form.actionForm.points) : undefined}
+                        minValue={1}
                         placeholder="如 100"
-                        className="w-full h-9 px-3 bg-vrbg-card border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
+                        onChange={(value) => setForm((p) => ({ ...p, actionForm: { ...p.actionForm, points: String(value) } }))}
+                        required
                       />
                     </div>
                   )}
@@ -389,12 +390,11 @@ function RuleModal({ open, onClose, rule, onSubmit, isPending }: RuleModalProps)
                         </div>
                         <div>
                           <label className="block text-vr-caption text-vrtext-tertiary mb-1">有效期（天）</label>
-                          <input
-                            type="number"
-                            value={form.actionForm.couponValidDays}
-                            onChange={(e) => setForm((p) => ({ ...p, actionForm: { ...p.actionForm, couponValidDays: e.target.value } }))}
+                          <NumberFieldInput
+                            value={form.actionForm.couponValidDays ? Number(form.actionForm.couponValidDays) : undefined}
+                            minValue={1}
                             placeholder="如 30"
-                            className="w-full h-9 px-3 bg-vrbg-card border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
+                            onChange={(value) => setForm((p) => ({ ...p, actionForm: { ...p.actionForm, couponValidDays: String(value) } }))}
                           />
                         </div>
                       </div>

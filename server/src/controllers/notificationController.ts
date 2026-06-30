@@ -35,16 +35,22 @@ function mapTypeToSceneKey(type: string): string | null {
     BOOKING_REMIND: 'scene_booking_remind',
     BOOKING_VERIFY: 'scene_booking_remind',
     BOOKING_URGENT: 'scene_booking_remind',
+    BOOKING_LATE: 'scene_booking_late',
     BOOKING_CANCEL: 'scene_booking_cancel',
     PAY_SUCCESS: 'scene_pay_success',
     MARKETING: 'scene_marketing',
     POINTS_GIFT: 'scene_points_gift',
     COUPON_GIFT: 'scene_coupon_gift',
     NO_SHOW: 'scene_no_show',
+    VENUE_MAINTENANCE: 'scene_venue_maintenance',
+    ORDER_REFUND: 'scene_order_refund',
+    ORDER_COMPLETED: 'scene_order_completed',
     ADMIN_PRODUCT_SOLD: 'scene_admin_product_sold',
     ADMIN_LOW_STOCK: 'scene_admin_low_stock',
     ADMIN_NEW_ORDER: 'scene_admin_new_order',
     ADMIN_REFUND_REQUEST: 'scene_admin_refund_request',
+    SYSTEM_ALERT: 'scene_system_alert',
+    RECON_ALERT: 'scene_recon_alert',
   }
   return map[type] || null
 }
@@ -97,7 +103,8 @@ export async function list(req: AuthenticatedRequest, res: Response) {
     const unreadOnly = req.query.unreadOnly === 'true'
     const admin = isAdmin(req)
 
-    const where: any = admin ? {} : { userId }
+    // 所有用户（含管理员）只返回发给自己的通知，避免管理员看到普通用户的"您..."通知
+    const where: any = { userId }
     if (unreadOnly) where.read = false
 
     const [data, total] = await Promise.all([

@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Loader2,
   Smartphone,
+  Ticket,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -20,6 +21,19 @@ interface PaymentMethodModalProps {
   customer?: string
   amount: number
   onSelect: (method: PaymentMethod) => void
+  couponCode?: string
+  couponName?: string
+  couponSource?: string
+  couponDiscount?: number
+  couponError?: string | null
+  couponLoading?: boolean
+  lockedCouponName?: string
+  lockedCouponSource?: string
+  lockedCouponDiscount?: number
+  couponLockedMessage?: string | null
+  onCouponCodeChange?: (value: string) => void
+  onLookupCoupon?: () => void
+  onScanCoupon?: () => void
 }
 
 const methods: {
@@ -81,8 +95,33 @@ export function PaymentMethodModal({
   customer,
   amount,
   onSelect,
+  couponCode = '',
+  couponName,
+  couponSource,
+  couponDiscount = 0,
+  couponError,
+  couponLoading,
+  lockedCouponName,
+  lockedCouponSource,
+  lockedCouponDiscount = 0,
+  couponLockedMessage,
+  onCouponCodeChange,
+  onLookupCoupon,
+  onScanCoupon,
 }: PaymentMethodModalProps) {
   if (!open) return null
+  const payableAmount = Math.max(0, amount - couponDiscount)
+  const sourceLabelMap: Record<string, string> = {
+    MEITUAN: '美团',
+    DOUYIN: '抖音',
+    DIANPING: '大众点评',
+  }
+  const couponTitle = couponName
+    ? `${couponSource ? `${sourceLabelMap[couponSource] || couponSource} · ` : ''}${couponName}`
+    : ''
+  const lockedCouponTitle = lockedCouponName
+    ? `${lockedCouponSource ? `${sourceLabelMap[lockedCouponSource] || lockedCouponSource} · ` : ''}${lockedCouponName}`
+    : ''
 
   return (
     <AnimatePresence>
@@ -133,9 +172,78 @@ export function PaymentMethodModal({
                 <div className="flex items-center justify-between">
                   <span className="text-vr-caption text-vrtext-muted">应收金额</span>
                   <span className="text-vr-h2 text-vraccent-primary font-bold">
-                    ¥{amount.toFixed(2)}
+                    ¥{payableAmount.toFixed(2)}
                   </span>
                 </div>
+                {couponDiscount > 0 && (
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-vr-caption text-vrtext-muted">本次平台券抵扣</span>
+                    <span className="text-vr-body-sm text-vrsuccess font-medium">-¥{couponDiscount.toFixed(2)}</span>
+                  </div>
+                )}
+                {lockedCouponDiscount > 0 && (
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-vr-caption text-vrtext-muted">已用平台券抵扣</span>
+                    <span className="text-vr-body-sm text-vrsuccess font-medium">-¥{lockedCouponDiscount.toFixed(2)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 pb-3">
+              <div className="rounded-xl border border-vrborder-subtle bg-vrbg-elevated p-3 space-y-2">
+                <div className="flex items-center gap-2 text-vr-body-sm font-medium text-vrtext-primary">
+                  <Ticket className="w-4 h-4 text-vraccent-primary" />
+                  第三方券抵扣
+                </div>
+                {lockedCouponName ? (
+                  <div className="rounded-xl border border-vrsuccess/25 bg-vrsuccess/10 px-3 py-2">
+                    <p className="text-vr-body-sm text-vrtext-primary font-medium">{lockedCouponTitle}</p>
+                    <p className="text-vr-caption text-vrsuccess mt-1">
+                      已抵扣 ¥{lockedCouponDiscount.toFixed(2)}。平台优惠券已使用，不能再使用第二张。
+                    </p>
+                  </div>
+                ) : couponLockedMessage ? (
+                  <div className="rounded-xl border border-vrwarning/25 bg-vrwarning/10 px-3 py-2 text-vr-caption text-vrwarning">
+                    {couponLockedMessage}
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex gap-2">
+                      <input
+                        value={couponCode}
+                        onChange={(e) => onCouponCodeChange?.(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') onLookupCoupon?.()
+                        }}
+                        placeholder="扫码或输入券码"
+                        className="soft-input flex-1 h-9 px-3 text-vr-body-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={onScanCoupon}
+                        className="h-9 w-9 rounded-xl border border-vrborder-subtle text-vrtext-secondary hover:text-vraccent-primary hover:border-vraccent-primary transition-colors flex items-center justify-center"
+                        title="扫码识别"
+                      >
+                        <ScanLine className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onLookupCoupon}
+                        disabled={couponLoading || !couponCode.trim()}
+                        className="h-9 px-3 rounded-xl bg-vraccent-primary text-white text-xs font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
+                      >
+                        {couponLoading ? '识别中' : '验券'}
+                      </button>
+                    </div>
+                    {couponName && (
+                      <p className="text-vr-caption text-vrsuccess">{couponTitle} 已抵扣 ¥{couponDiscount.toFixed(2)}</p>
+                    )}
+                  </>
+                )}
+                {couponError && (
+                  <p className="text-vr-caption text-vrerror">{couponError}</p>
+                )}
               </div>
             </div>
 

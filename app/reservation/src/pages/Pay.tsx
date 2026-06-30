@@ -2,8 +2,10 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronLeft, MapPin, Clock, Users, AlertCircle, CreditCard, XCircle, Timer, Store } from 'lucide-react'
+import { ChevronLeft, MapPin, Clock, Users, AlertCircle, CreditCard, XCircle, Timer, Store, Ticket, Check } from 'lucide-react'
 import { getOrder, payOrder, cancelOrder } from '@/api/orders'
+import { getMyCoupons, type ThirdPartyCoupon } from '@/api/coupons'
+import { getPlatformConfig, type PlatformConfigMap } from '@/api/settings'
 import { useAuth } from '@/providers/AuthProvider'
 import { cn } from '@/lib/utils'
 import { getImageUrl } from '@/lib/imageUrl'
@@ -12,6 +14,14 @@ const payMethodMap: Record<string, { label: string; method: string }> = {
   wechat: { label: '微信支付', method: 'WECHAT' },
   alipay: { label: '支付宝', method: 'ALIPAY' },
   balance: { label: '余额支付', method: 'BALANCE' },
+}
+
+const preferredThirdPartyCouponCodeKey = 'preferredThirdPartyCouponCode'
+
+const sourceLabelMap: Record<string, string> = {
+  MEITUAN: '美团',
+  DOUYIN: '抖音',
+  DIANPING: '大众点评',
 }
 
 /* ─── Countdown hook ─── */
@@ -55,6 +65,7 @@ export default function Pay() {
   const [paymentMethod, setPaymentMethod] = useState<'wechat' | 'alipay' | 'balance'>('wechat')
   const [errorMsg, setErrorMsg] = useState('')
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const [selectedPlatformCoupon, setSelectedPlatformCoupon] = useState<ThirdPartyCoupon | null>(null)
   const paymentInitRef = useRef(false)
 
   const { data: order, isLoading } = useQuery({
@@ -63,6 +74,63 @@ export default function Pay() {
     enabled: !!id,
     refetchInterval: 5000,
   })
+
+  const existingThirdPartyCoupon = order?.metadata?.thirdPartyCoupon as
+    | { id?: string; code?: string; source?: string; name?: string; discountAmount?: number; minOrderAmount?: number }
+    | undefined
+  const orderHasAnyCoupon =
+    !!existingThirdPartyCoupon ||
+    !!order?.userCouponId ||
+    ((order?.couponDiscount || 0) > 0 && !existingThirdPartyCoupon)
+
+  const { data: platformCoupons } = useQuery({
+    queryKey: ['my-coupons'],
+    queryFn: getMyCoupons,
+    enabled: isLoggedIn && !!order && order.status === 'PENDING' && !orderHasAnyCoupon,
+    staleTime: 30 * 1000,
+  })
+
+  const { data: platformConfig } = useQuery({
+    queryKey: ['platform-config'],
+    queryFn: getPlatformConfig,
+    staleTime: 60 * 1000,
+  })
+
+  const isPlatformEnabled = (source: string) => {
+    if (!platformConfig) return true
+    return platformConfig[source as keyof PlatformConfigMap]?.enabled ?? true
+  }
+
+  const availablePlatformCoupons = useMemo(
+    () =>
+      (platformCoupons || []).filter(
+        (coupon) =>
+          coupon.status === 'UNUSED' &&
+          isPlatformEnabled(coupon.source) &&
+          (order?.amount || 0) >= coupon.minOrderAmount,
+      ),
+    [order?.amount, platformCoupons, platformConfig],
+  )
+
+  useEffect(() => {
+    if (orderHasAnyCoupon || !availablePlatformCoupons.length) {
+      setSelectedPlatformCoupon(null)
+      return
+    }
+    if (
+      selectedPlatformCoupon &&
+      !availablePlatformCoupons.some((coupon) => coupon.id === selectedPlatformCoupon.id)
+    ) {
+      setSelectedPlatformCoupon(null)
+      return
+    }
+    const preferredCode = sessionStorage.getItem(preferredThirdPartyCouponCodeKey)
+    if (!preferredCode || selectedPlatformCoupon) return
+    const matched = availablePlatformCoupons.find((coupon) => coupon.code === preferredCode)
+    if (matched) {
+      setSelectedPlatformCoupon(matched)
+    }
+  }, [availablePlatformCoupons, orderHasAnyCoupon, selectedPlatformCoupon])
 
   const countdownMs = useCountdown(order?.expireAt)
   const isExpired = countdownMs <= 0 && !!order?.expireAt
@@ -74,9 +142,14 @@ export default function Pay() {
     }
   }, [id, isExpired, order?.status, queryClient])
 
-  const amountYuan = ((order?.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const selectedPlatformDiscount = selectedPlatformCoupon
+    ? Math.min(order?.amount || 0, selectedPlatformCoupon.discountAmount)
+    : 0
+  const payableAmount = Math.max(0, (order?.amount || 0) - selectedPlatformDiscount)
+  const amountYuan = (payableAmount / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const orderAmountYuan = ((order?.amount || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const balance = (user?.principalBalance || 0) + (user?.bonusBalance || 0)
-  const balanceDisabled = !isLoggedIn || balance < (order?.amount || 0)
+  const balanceDisabled = !isLoggedIn || balance < payableAmount
 
   // 切换订单时重置默认支付方式
   useEffect(() => {
@@ -87,21 +160,23 @@ export default function Pay() {
   useEffect(() => {
     if (!order || paymentInitRef.current) return
     paymentInitRef.current = true
-    if (isLoggedIn && user && balance >= (order.amount || 0)) {
+    if (isLoggedIn && user && balance >= payableAmount) {
       setPaymentMethod('balance')
     } else {
       setPaymentMethod('wechat')
-      if (isLoggedIn && user && (order.amount || 0) > 0) {
+      if (isLoggedIn && user && payableAmount > 0) {
         setErrorMsg('余额不足，请先充值')
       }
     }
-  }, [order, user, isLoggedIn, balance])
+  }, [order, user, isLoggedIn, balance, payableAmount])
 
   const payMutation = useMutation({
-    mutationFn: () => payOrder(id!, payMethodMap[paymentMethod].method),
+    mutationFn: () => payOrder(id!, payMethodMap[paymentMethod].method, selectedPlatformCoupon?.code),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders'] })
       queryClient.invalidateQueries({ queryKey: ['order', id] })
+      queryClient.invalidateQueries({ queryKey: ['my-coupons'] })
+      sessionStorage.removeItem(preferredThirdPartyCouponCodeKey)
       refreshUser()
 
       // 支付成功后统一回到「我的订单 → 全部」
@@ -165,6 +240,10 @@ export default function Pay() {
     }
     if (paymentMethod === 'balance' && balanceDisabled) {
       setErrorMsg('余额不足，请先充值')
+      return
+    }
+    if (selectedPlatformCoupon && selectedPlatformDiscount <= 0) {
+      setErrorMsg('该平台优惠券当前订单不可用')
       return
     }
     setErrorMsg('')
@@ -333,11 +412,113 @@ export default function Pay() {
             )}
           </div>
 
-          <div className="border-t border-[var(--border-subtle)] pt-3 flex items-center justify-between">
-            <span className="text-sm text-[var(--text-secondary)]">订单金额</span>
-            <span className="text-xl font-bold text-[var(--error)]">¥{amountYuan}</span>
+          <div className="border-t border-[var(--border-subtle)] pt-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-[var(--text-secondary)]">订单金额</span>
+              <span className="text-base font-semibold text-[var(--text-primary)]">¥{orderAmountYuan}</span>
+            </div>
+            {existingThirdPartyCoupon && (order?.couponDiscount || 0) > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[var(--text-secondary)]">
+                  已用平台券（{sourceLabelMap[existingThirdPartyCoupon.source || ''] || existingThirdPartyCoupon.source || '平台'}）
+                </span>
+                <span className="text-sm font-semibold text-[var(--success)]">
+                  -¥{((existingThirdPartyCoupon.discountAmount || order?.couponDiscount || 0) / 100).toFixed(2)}
+                </span>
+              </div>
+            )}
+            {selectedPlatformCoupon && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-[var(--text-secondary)]">
+                  平台券抵扣（{sourceLabelMap[selectedPlatformCoupon.source]}）
+                </span>
+                <span className="text-sm font-semibold text-[var(--success)]">
+                  -¥{(selectedPlatformDiscount / 100).toFixed(2)}
+                </span>
+              </div>
+            )}
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-sm text-[var(--text-secondary)]">待支付</span>
+              <span className="text-xl font-bold text-[var(--error)]">¥{amountYuan}</span>
+            </div>
           </div>
         </div>
+
+        {/* Platform coupons */}
+        {order.orderKind !== 'FEE' && (
+          <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4">
+            <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3 flex items-center gap-2">
+              <Ticket className="w-4 h-4 text-[var(--accent-primary)]" />
+              平台优惠券
+            </h3>
+            {existingThirdPartyCoupon ? (
+              <div className="rounded-xl border border-[var(--success)]/20 bg-[var(--success)]/10 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-[var(--text-primary)]">
+                      {sourceLabelMap[existingThirdPartyCoupon.source || ''] || existingThirdPartyCoupon.source || '平台'} · {existingThirdPartyCoupon.name || '平台优惠券'}
+                    </p>
+                    <p className="mt-1 text-xs text-[var(--success)]">已绑定此订单，不能再使用第二张优惠券</p>
+                  </div>
+                  <Check className="w-5 h-5 text-[var(--success)] shrink-0" />
+                </div>
+              </div>
+            ) : order.userCouponId || ((order.couponDiscount || 0) > 0 && !existingThirdPartyCoupon) ? (
+              <p className="text-xs text-[var(--text-muted)]">该订单已使用系统优惠券，不能叠加平台优惠券。</p>
+            ) : availablePlatformCoupons.length > 0 ? (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedPlatformCoupon(null)}
+                  className={cn(
+                    'w-full rounded-xl border p-3 text-left transition-all',
+                    !selectedPlatformCoupon
+                      ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/5'
+                      : 'border-[var(--border-subtle)] hover:border-[var(--border-hover)]',
+                  )}
+                >
+                  <p className="text-sm font-medium text-[var(--text-primary)]">不使用平台优惠券</p>
+                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">按原订单金额支付</p>
+                </button>
+                {availablePlatformCoupons.map((coupon) => {
+                  const selected = selectedPlatformCoupon?.id === coupon.id
+                  return (
+                    <button
+                      key={coupon.id}
+                      type="button"
+                      onClick={() => setSelectedPlatformCoupon(coupon)}
+                      className={cn(
+                        'w-full rounded-xl border p-3 text-left transition-all',
+                        selected
+                          ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/5'
+                          : 'border-[var(--border-subtle)] hover:border-[var(--border-hover)]',
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-[var(--text-primary)]">
+                            {sourceLabelMap[coupon.source]} · {coupon.name}
+                          </p>
+                          <p className="mt-1 text-xs text-[var(--text-muted)]">
+                            满¥{(coupon.minOrderAmount / 100).toFixed(0)}可用，支付成功后自动标记已使用
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-base font-bold text-[var(--accent-primary)]">
+                            -¥{(coupon.discountAmount / 100).toFixed(2)}
+                          </p>
+                          {selected && <p className="mt-1 text-[10px] text-[var(--success)]">已选择</p>}
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-[var(--text-muted)]">暂无满足当前订单金额的平台优惠券。</p>
+            )}
+          </div>
+        )}
 
         {/* Payment method */}
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4">

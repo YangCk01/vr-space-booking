@@ -9,6 +9,11 @@ export interface Order {
   venueId: string
   venueName: string
   amount: number
+  originalAmount?: number
+  couponDiscount?: number
+  userCouponId?: string | null
+  userCoupon?: { name: string; type: string; discountRate?: number | null; source?: string | null } | null
+  metadata?: Record<string, any> | null
   status: string
   payMethod: string | null
   paidAt: string | null
@@ -37,6 +42,17 @@ export interface Order {
     game?: { id: string; title: string; duration?: number | null; coverImage?: string | null } | null
     venues: { id: string; name: string; address?: string | null; openTime?: string | null; closeTime?: string | null; phone?: string | null; image?: string | null; status?: string | null; maintenanceStartDate?: string | null; maintenanceEndDate?: string | null; maintenanceStartTime?: string | null; maintenanceEndTime?: string | null }[]
   } | null
+  booking?: {
+    id: string
+    date?: string
+    startTime?: string
+    endTime?: string
+    personName?: string
+    personPhone?: string
+    personCount?: number
+    venue?: { id: string; name: string; address?: string | null; image?: string | null } | null
+    game?: { id: string; title: string; duration?: number | null; coverImage?: string | null } | null
+  } | null
 }
 
 export interface OrderInput {
@@ -53,6 +69,7 @@ export interface OrderInput {
   userCouponId?: string
   groupBuyPackageId?: string
   quantity?: number
+  thirdPartyCouponCode?: string
 }
 
 export async function getOrders(params?: {
@@ -75,8 +92,8 @@ export async function createOrder(input: OrderInput) {
   return res.data.data
 }
 
-export async function payOrder(id: string, method?: string) {
-  const res = await apiClient.put(`/orders/${id}/pay`, { method })
+export async function payOrder(id: string, method?: string, thirdPartyCouponCode?: string) {
+  const res = await apiClient.put(`/orders/${id}/pay`, { method, thirdPartyCouponCode })
   return res.data.data
 }
 

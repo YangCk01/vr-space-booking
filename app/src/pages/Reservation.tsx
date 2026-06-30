@@ -16,6 +16,7 @@ import {
   Bell,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { NumberFieldInput } from '@/components/ui/number-field'
 import { getImageUrl } from '@/lib/imageUrl'
 import { getVenues } from '@/api/venues'
 import { getBookings, createBooking, checkConflict } from '@/api/bookings'
@@ -698,13 +699,11 @@ function StepConfirmOrder({
           </div>
           <div>
             <label className="text-vr-caption text-vrtext-tertiary block mb-1">人数</label>
-            <input
-              type="number"
-              min={1}
-              max={venue.capacity}
+            <NumberFieldInput
               value={personCount}
-              onChange={(e) => onUpdateField('personCount', parseInt(e.target.value) || 1)}
-              className="w-full h-10 px-3 rounded-lg bg-vrbg-base border border-vrborder-subtle text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary transition-colors"
+              minValue={1}
+              maxValue={venue.capacity}
+              onChange={(value) => onUpdateField('personCount', value)}
             />
           </div>
           <div>

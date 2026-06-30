@@ -12,9 +12,12 @@ import {
   Wrench,
   CalendarDays,
   Clock,
+  ScanLine,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
 import { cn } from '@/lib/utils'
+import { NumberFieldInput } from '@/components/ui/number-field'
+import ScanModal from '@/components/ScanModal'
 import { getVenues } from '@/api/venues'
 import type { Venue } from '@/api/venues'
 import { getGames } from '@/api/games'
@@ -25,6 +28,7 @@ import { getSystemConfigs } from '@/api/systemConfig'
 import { getBookings, createBooking, checkConflict } from '@/api/bookings'
 import type { Booking } from '@/api/bookings'
 import { createOrder } from '@/api/orders'
+import { lookupThirdPartyCoupon, type ThirdPartyCoupon } from '@/api/coupons'
 import { buildMemberLevelsFromConfig } from '@/lib/memberLevels'
 import { useAuthStore } from '@/stores/authStore'
 import { hasPermission } from '@/lib/permissions'
@@ -378,6 +382,11 @@ export default function Booking() {
   const [createError, setCreateError] = useState<string | null>(null)
   const [matchedUser, setMatchedUser] = useState<User | null>(null)
   const [useBalancePay, setUseBalancePay] = useState(false)
+  const [thirdPartyCouponCode, setThirdPartyCouponCode] = useState('')
+  const [thirdPartyCoupon, setThirdPartyCoupon] = useState<ThirdPartyCoupon | null>(null)
+  const [thirdPartyCouponError, setThirdPartyCouponError] = useState<string | null>(null)
+  const [thirdPartyCouponLoading, setThirdPartyCouponLoading] = useState(false)
+  const [couponScanOpen, setCouponScanOpen] = useState(false)
   const [isSearchingUser, setIsSearchingUser] = useState(false)
   const [slotStatus, setSlotStatus] = useState<{ status: string; currentCount: number; remainingCount: number; maxCount: number } | null>(null)
 
@@ -610,6 +619,10 @@ export default function Booking() {
     })
     setMatchedUser(null)
     setUseBalancePay(false)
+    setThirdPartyCouponCode('')
+    setThirdPartyCoupon(null)
+    setThirdPartyCouponError(null)
+    setCouponScanOpen(false)
     setShowModal(true)
   }
 
@@ -620,6 +633,10 @@ export default function Booking() {
     setCreateError(null)
     setMatchedUser(null)
     setUseBalancePay(false)
+    setThirdPartyCouponCode('')
+    setThirdPartyCoupon(null)
+    setThirdPartyCouponError(null)
+    setCouponScanOpen(false)
   }
 
   /* ─── Stats ─── */
@@ -634,6 +651,38 @@ export default function Booking() {
     if (!selectedGame) return 0
     return Math.round(selectedGame.price * bookingForm.count * discountRate / 100)
   }, [selectedGame, bookingForm.count, discountRate])
+
+  const thirdPartyDiscountAmount = useMemo(() => {
+    if (!thirdPartyCoupon) return 0
+    if (estimatedAmountRaw < thirdPartyCoupon.minOrderAmount) return 0
+    return Math.min(thirdPartyCoupon.discountAmount, estimatedAmountRaw)
+  }, [thirdPartyCoupon, estimatedAmountRaw])
+
+  const estimatedPayableRaw = Math.max(0, estimatedAmountRaw - thirdPartyDiscountAmount)
+
+  const handleLookupThirdPartyCoupon = useCallback(async (input?: string) => {
+    const code = (input ?? thirdPartyCouponCode).trim()
+    if (!code) {
+      setThirdPartyCoupon(null)
+      setThirdPartyCouponError('请输入或扫码识别第三方券码')
+      return
+    }
+    setThirdPartyCouponLoading(true)
+    setThirdPartyCouponError(null)
+    try {
+      const coupon = await lookupThirdPartyCoupon(code)
+      setThirdPartyCoupon(coupon)
+      setThirdPartyCouponCode(coupon.code)
+      if (estimatedAmountRaw > 0 && estimatedAmountRaw < coupon.minOrderAmount) {
+        setThirdPartyCouponError(`当前金额未满 ¥${(coupon.minOrderAmount / 100).toFixed(2)}，暂不可用`)
+      }
+    } catch (err: any) {
+      setThirdPartyCoupon(null)
+      setThirdPartyCouponError(err?.response?.data?.message || '第三方券识别失败')
+    } finally {
+      setThirdPartyCouponLoading(false)
+    }
+  }, [estimatedAmountRaw, thirdPartyCouponCode])
 
   /* ─── Stats ─── */
   const stats = useMemo(() => {
@@ -827,6 +876,7 @@ export default function Booking() {
               whileTap={isPastDate ? undefined : { scale: 0.97 }}
               onClick={() => !isPastDate && openNewBooking()}
               disabled={isPastDate}
+              data-testid="booking-new-button"
               className={cn(
                 'flex items-center gap-2 h-10 px-5 text-white text-vr-body-sm font-medium rounded-lg transition-colors',
                 isPastDate
@@ -1450,6 +1500,7 @@ export default function Booking() {
                       onChange={(e) =>
                         setBookingForm((prev) => ({ ...prev, venue: e.target.value }))
                       }
+                      data-testid="booking-venue-select"
                       className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vr-blue cursor-pointer"
                     >
                       {venues.map((v) => {
@@ -1468,6 +1519,7 @@ export default function Booking() {
                     </label>
                     <input
                       type="date"
+                      data-testid="booking-date-input"
                       min={format(new Date(), 'yyyy-MM-dd')}
                       value={bookingDate}
                       onChange={(e) => {
@@ -1498,6 +1550,7 @@ export default function Booking() {
                   <select
                     value={modalTime}
                     onChange={(e) => setModalTime(e.target.value)}
+                    data-testid="booking-time-select"
                     className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vr-blue cursor-pointer"
                   >
                     {(() => {
@@ -1553,6 +1606,7 @@ export default function Booking() {
                       onChange={(e) =>
                         setBookingForm((prev) => ({ ...prev, gameId: e.target.value }))
                       }
+                      data-testid="booking-game-select"
                       className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vr-blue cursor-pointer"
                     >
                       <option value="">请选择游戏</option>
@@ -1606,6 +1660,7 @@ export default function Booking() {
                     </label>
                     <input
                       type="text"
+                      data-testid="booking-person-input"
                       placeholder={bookingForm.type === 'corporate' ? '请输入企业名称' : '请输入预约人姓名'}
                       value={bookingForm.person}
                       onChange={(e) =>
@@ -1618,15 +1673,12 @@ export default function Booking() {
                     <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">
                       人数 <span className="text-vr-red">*</span>
                     </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={slotStatus?.remainingCount || slotStatus?.maxCount || 20}
+                    <NumberFieldInput
                       value={bookingForm.count}
-                      onChange={(e) =>
-                        setBookingForm((prev) => ({ ...prev, count: Number(e.target.value) }))
-                      }
-                      className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all"
+                      minValue={1}
+                      maxValue={slotStatus?.remainingCount || slotStatus?.maxCount || 20}
+                      onChange={(value) => setBookingForm((prev) => ({ ...prev, count: value }))}
+                      required
                     />
                   </div>
                 </motion.div>
@@ -1642,6 +1694,7 @@ export default function Booking() {
                   </label>
                   <input
                     type="tel"
+                    data-testid="booking-phone-input"
                     placeholder="请输入手机号码"
                     value={bookingForm.phone}
                     onChange={(e) =>
@@ -1717,13 +1770,79 @@ export default function Booking() {
                         <span className="text-vr-body-sm text-vrtext-primary">余额支付</span>
                       </label>
                     </div>
-                    {useBalancePay && realBalance < estimatedAmountRaw && (
+                    {useBalancePay && realBalance < estimatedPayableRaw && (
                       <p className="text-vr-caption text-vr-error mt-1.5">
-                        ⚠️ 余额不足（当前余额 ¥{(realBalance / 100).toLocaleString()}，还需 ¥{((estimatedAmountRaw - realBalance) / 100).toLocaleString()}）
+                        ⚠️ 余额不足（当前余额 ¥{(realBalance / 100).toLocaleString()}，还需 ¥{((estimatedPayableRaw - realBalance) / 100).toLocaleString()}）
                       </p>
                     )}
                   </motion.div>
                 )}
+
+                {/* Third-party coupon */}
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.285, duration: 0.3 }}
+                  className="space-y-2"
+                >
+                  <label className="block text-vr-body-sm text-vrtext-secondary">第三方优惠券</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="扫码或输入美团/抖音/点评券码"
+                      value={thirdPartyCouponCode}
+                      onChange={(e) => {
+                        setThirdPartyCouponCode(e.target.value)
+                        setThirdPartyCoupon(null)
+                        setThirdPartyCouponError(null)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          handleLookupThirdPartyCoupon()
+                        }
+                      }}
+                      className="flex-1 h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setCouponScanOpen(true)}
+                      className="h-10 w-10 rounded-lg border border-vrborder-DEFAULT text-vrtext-secondary hover:text-vraccent-primary hover:border-vraccent-primary transition-colors flex items-center justify-center"
+                      title="扫码识别第三方券"
+                    >
+                      <ScanLine className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleLookupThirdPartyCoupon()}
+                      disabled={thirdPartyCouponLoading || !thirdPartyCouponCode.trim()}
+                      className="h-10 px-4 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
+                    >
+                      {thirdPartyCouponLoading ? '识别中' : '验券'}
+                    </button>
+                  </div>
+                  {thirdPartyCoupon && (
+                    <div className="rounded-lg border border-vrsuccess/20 bg-vrsuccess/10 px-3 py-2 text-vr-body-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-medium text-vrtext-primary">{thirdPartyCoupon.name}</p>
+                          <p className="text-vr-caption text-vrtext-secondary">
+                            {thirdPartyCoupon.user?.name || thirdPartyCoupon.user?.phone || '顾客'} · 满¥{(thirdPartyCoupon.minOrderAmount / 100).toFixed(2)}减¥{(thirdPartyCoupon.discountAmount / 100).toFixed(2)}
+                          </p>
+                        </div>
+                        <span className="text-vrsuccess font-semibold">-¥{(thirdPartyDiscountAmount / 100).toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
+                  {thirdPartyCouponError && (
+                    <p className="text-vr-caption text-vr-error">{thirdPartyCouponError}</p>
+                  )}
+                  {thirdPartyDiscountAmount > 0 && (
+                    <p className="text-vr-caption text-vrtext-secondary">
+                      券后应收 ¥{(estimatedPayableRaw / 100).toLocaleString()}，最终金额以后端核算为准
+                    </p>
+                  )}
+                </motion.div>
 
                 {/* Note */}
                 <motion.div
@@ -1789,10 +1908,18 @@ export default function Booking() {
                       setCreateError(`该时段场地正在维护中（${selectedVenue?.maintenanceStartTime}-${selectedVenue?.maintenanceEndTime}），请选择其他场次`)
                       return
                     }
+                    if (thirdPartyCouponCode.trim() && !thirdPartyCoupon) {
+                      setCreateError('请先点击验券确认第三方券有效')
+                      return
+                    }
+                    if (thirdPartyCoupon && thirdPartyDiscountAmount <= 0) {
+                      setCreateError(thirdPartyCouponError || '第三方券当前不可用')
+                      return
+                    }
                     // 余额支付校验
                     if (useBalancePay && matchedUser) {
-                      if (realBalance < estimatedAmountRaw) {
-                        setCreateError(`余额不足，当前余额 ¥${(realBalance / 100).toLocaleString()}，还需 ¥${((estimatedAmountRaw - realBalance) / 100).toLocaleString()}`)
+                      if (realBalance < estimatedPayableRaw) {
+                        setCreateError(`余额不足，当前余额 ¥${(realBalance / 100).toLocaleString()}，还需 ¥${((estimatedPayableRaw - realBalance) / 100).toLocaleString()}`)
                         return
                       }
                     }
@@ -1826,6 +1953,7 @@ export default function Booking() {
                           source: 'OFFLINE',
                           userId: matchedUser?.id,
                           payMethod: useBalancePay ? 'BALANCE' : undefined,
+                          thirdPartyCouponCode: thirdPartyCoupon?.code,
                         })
                         queryClient.invalidateQueries({ queryKey: ['orders'] })
                         queryClient.invalidateQueries({ queryKey: ['dashboard'] })
@@ -1838,7 +1966,8 @@ export default function Booking() {
                       setCreateError(err?.response?.data?.message || err?.message || '预约创建失败，请重试')
                     }
                   }}
-                  disabled={createMutation.isPending || !bookingForm.venue || !modalTime || !bookingForm.gameId || slotStatus?.status === 'full' || slotStatus?.status === 'occupied_by_other_game' || (useBalancePay && !!matchedUser && realBalance < estimatedAmountRaw)}
+                  disabled={createMutation.isPending || !bookingForm.venue || !modalTime || !bookingForm.gameId || slotStatus?.status === 'full' || slotStatus?.status === 'occupied_by_other_game' || (useBalancePay && !!matchedUser && realBalance < estimatedPayableRaw)}
+                  data-testid="booking-submit-button"
                   className="h-10 px-5 bg-vraccent-primary text-white text-vr-body-sm font-medium rounded-lg hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
                 >
                   {createMutation.isPending ? '提交中...' : useBalancePay ? '余额支付' : '确定预约'}
@@ -1848,6 +1977,15 @@ export default function Booking() {
           </motion.div>
         )}
       </AnimatePresence>
+      <ScanModal
+        open={couponScanOpen}
+        onClose={() => setCouponScanOpen(false)}
+        onScan={(code) => {
+          setThirdPartyCouponCode(code)
+          handleLookupThirdPartyCoupon(code)
+        }}
+        title="扫码识别第三方券"
+      />
     </Layout>
   )
 }

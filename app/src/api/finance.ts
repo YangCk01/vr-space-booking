@@ -61,6 +61,105 @@ export async function getFinanceRefunds(params?: {
   return res.data
 }
 
+export interface FinanceAuditConfig {
+  taxRate: number
+  paymentFeeRates: Record<string, number>
+  platformFeeRates: Record<string, number>
+  settlementCycles: Record<string, string>
+}
+
+export interface FinanceAuditVoucher {
+  subject: string
+  debit: number
+  credit: number
+  summary: string
+}
+
+export interface FinanceAuditRecord {
+  id: string
+  sourceId: string
+  sourceType: 'ORDER' | 'RECHARGE'
+  store: string
+  operator: string
+  channel: string
+  paymentMethod: string
+  payMethod: string
+  type: string
+  consumeStatus: 'consumed' | 'unconsumed' | 'recharge' | 'refunded'
+  originalPrice: number
+  discountBreakdown: Array<{ name: string; amount: number }>
+  platformFee: number
+  gatewayFee: number
+  expectedRecv: number
+  actualRecv: number
+  settlementCycle: string
+  bankStatus: 'arrived' | 'in_transit' | 'internal' | string
+  assetChange?: Record<string, unknown> | null
+  invoice: { status: string; amount: number; taxRate: number }
+  orderTime: string
+  reconTime: string
+  remark?: string
+  relatedOrderId?: string | null
+  userName?: string
+  userPhone?: string
+  status: 'matched' | 'short' | 'over' | 'refunded'
+  vouchers: FinanceAuditVoucher[]
+  auditLog: Array<{ id: string; action: string; actionName: string; reason: string; createdAt: string; operatorName: string }>
+  forceMatched?: boolean
+  forceMatchReason?: string
+}
+
+export interface FinanceAuditSummary {
+  total: number
+  matched: number
+  exceptions: number
+  expectedRecv: number
+  actualRecv: number
+  diff: number
+  stores: string[]
+}
+
+export interface FinanceAuditRecordResponse {
+  data: FinanceAuditRecord[]
+  meta: { page: number; pageSize: number; total: number; totalPages: number }
+  summary: FinanceAuditSummary
+  config: FinanceAuditConfig
+}
+
+export async function getFinanceAuditRecords(params?: {
+  startDate?: string
+  endDate?: string
+  venueId?: string
+  store?: string
+  status?: string
+  search?: string
+  page?: number
+  pageSize?: number
+}) {
+  const res = await apiClient.get('/finance/audit/records', { params })
+  return res.data.data as FinanceAuditRecordResponse
+}
+
+export async function getFinanceAuditRecord(id: string) {
+  const res = await apiClient.get(`/finance/audit/records/${encodeURIComponent(id)}`)
+  return res.data.data as FinanceAuditRecord
+}
+
+export async function getFinanceAuditConfig() {
+  const res = await apiClient.get('/finance/audit/config')
+  return res.data.data as FinanceAuditConfig
+}
+
+export async function updateFinanceAuditConfig(config: FinanceAuditConfig) {
+  const res = await apiClient.put('/finance/audit/config', config)
+  return res.data.data as FinanceAuditConfig
+}
+
+export async function forceMatchFinanceAuditRecord(id: string, payload: { reason: string; approver?: string }) {
+  const res = await apiClient.post(`/finance/audit/records/${encodeURIComponent(id)}/force-match`, payload)
+  return res.data.data as { id: string; status: string }
+}
+
 export interface DailyReport {
   date: string
   generated?: boolean

@@ -14,7 +14,7 @@ export default function Layout({ children, breadcrumb }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
-    <div className="min-h-[100dvh] bg-vrbg-base">
+    <div className="min-h-[100dvh] bg-vrbg-base relative">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div

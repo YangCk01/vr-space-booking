@@ -31,10 +31,8 @@ import {
   completeRefundOrder,
   batchVerifyOrders,
   batchRefundOrders,
-  markNoShow,
   activateOrder,
 } from "@/api/orders";
-import { checkInBooking } from "@/api/bookings";
 import {
   createNoShowRefundApproval,
   createOrderRefundApproval,
@@ -50,6 +48,7 @@ import { VerifyScanModal } from "@/components/VerifyModal";
 import ScanModal from "@/components/ScanModal";
 import GroupRedeemModal from "@/components/GroupRedeemModal";
 import { apiClient } from "@/api/client";
+import { lookupThirdPartyCoupon, type ThirdPartyCoupon } from "@/api/coupons";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 import { hasPermission } from "@/lib/permissions";
@@ -133,6 +132,7 @@ interface Order {
   }[];
   refundAmount?: number | null;
   quantity?: number | null;
+  metadata?: Record<string, any> | null;
   // 前端按份数展开时的辅助字段
   _displayIndex?: number;
   _displayTotal?: number;
@@ -211,6 +211,25 @@ const payMethodLabelMap: Record<string, string> = {
   ALIPAY: "支付宝",
   CASH: "现金",
 };
+
+const platformLabelMap: Record<string, string> = {
+  MEITUAN: "美团",
+  DOUYIN: "抖音",
+  DIANPING: "大众点评",
+};
+
+function getThirdPartyCouponMeta(order?: Order | null) {
+  const coupon = order?.metadata?.thirdPartyCoupon;
+  if (!coupon || typeof coupon !== "object") return null;
+  return coupon as {
+    id?: string;
+    code?: string;
+    source?: string;
+    name?: string;
+    discountAmount?: number;
+    minOrderAmount?: number;
+  };
+}
 
 const statusConfig: Record<
   string,
@@ -408,8 +427,6 @@ function OrderDetailSheet({
   onCancel,
   onRefund,
   onVerify,
-  onCheckIn,
-  onMarkNoShow,
   onActivate,
   onCompleteRefund,
   onDelete,
@@ -426,8 +443,6 @@ function OrderDetailSheet({
   cancelPending,
   refundPending,
   verifyPending,
-  checkInPending,
-  markNoShowPending,
   activatePending,
   completeRefundPending,
   deletePending,
@@ -439,8 +454,6 @@ function OrderDetailSheet({
   onCancel: (order: Order) => void;
   onRefund: (order: Order) => void;
   onVerify: () => void;
-  onCheckIn: (bookingId: string) => void;
-  onMarkNoShow: (order: Order) => void;
   onActivate: (order: Order) => void;
   onCompleteRefund: (id: string) => void;
   onDelete: (id: string) => void;
@@ -457,8 +470,6 @@ function OrderDetailSheet({
   cancelPending: boolean;
   refundPending: boolean;
   verifyPending: boolean;
-  checkInPending: boolean;
-  markNoShowPending: boolean;
   activatePending: boolean;
   completeRefundPending: boolean;
   deletePending: boolean;
@@ -660,8 +671,12 @@ function OrderDetailSheet({
                 ...(order.couponDiscount && order.couponDiscount > 0
                   ? [
                       {
-                        label: "优惠券抵扣",
-                        value: `-¥${(order.couponDiscount / 100).toFixed(2)} ${order.userCoupon ? "(" + order.userCoupon.name + ")" : ""}${order.userCoupon?.source === "MANUAL_GIFT" ? " [管理员赠送]" : ""}`,
+                        label: getThirdPartyCouponMeta(order)
+                          ? `平台券抵扣（${platformLabelMap[getThirdPartyCouponMeta(order)!.source || ""] || getThirdPartyCouponMeta(order)!.source || "第三方平台"}）`
+                          : "优惠券抵扣",
+                        value: getThirdPartyCouponMeta(order)
+                          ? `-¥${(order.couponDiscount / 100).toFixed(2)} (${getThirdPartyCouponMeta(order)!.name || "平台优惠券"})`
+                          : `-¥${(order.couponDiscount / 100).toFixed(2)} ${order.userCoupon ? "(" + order.userCoupon.name + ")" : ""}${order.userCoupon?.source === "MANUAL_GIFT" ? " [管理员赠送]" : ""}`,
                         icon: <Receipt className="w-4 h-4 text-vrtext-muted" />,
                       },
                     ]
@@ -989,29 +1004,6 @@ function OrderDetailSheet({
                         : "申请退款"}
                   </button>
                 )}
-                {canVerify && (
-                  <button
-                    onClick={() => onMarkNoShow(order)}
-                    disabled={markNoShowPending}
-                    className="flex-1 h-10 rounded-lg border border-vrwarning text-vrwarning text-vr-body-sm font-medium hover:bg-vrwarning/10 transition-colors disabled:opacity-50"
-                  >
-                    {markNoShowPending ? "处理中..." : "标记爽约"}
-                  </button>
-                )}
-                {canVerify && statusLower === "ready_to_verify" &&
-                  !["checked_in", "playing", "completed", "no_show"].includes(
-                    order.booking?.status?.toLowerCase?.() || "",
-                  ) && (
-                    <button
-                      onClick={() =>
-                        order.booking?.id && onCheckIn(order.booking.id)
-                      }
-                      disabled={checkInPending}
-                      className="flex-1 h-10 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50"
-                    >
-                      {checkInPending ? "签到中..." : "签到"}
-                    </button>
-                  )}
                 {canVerify && statusLower === "ready_to_verify" && (
                   <button
                     onClick={() => onVerify()}
@@ -1024,20 +1016,9 @@ function OrderDetailSheet({
               </>
             )}
             {statusLower === "playing" && (
-              <>
-                {canVerify && (
-                  <button
-                    onClick={() => onMarkNoShow(order)}
-                    disabled={markNoShowPending}
-                    className="flex-1 h-10 rounded-lg border border-vrwarning text-vrwarning text-vr-body-sm font-medium hover:bg-vrwarning/10 transition-colors disabled:opacity-50"
-                  >
-                    {markNoShowPending ? "处理中..." : "标记爽约"}
-                  </button>
-                )}
-                <button className="flex-1 h-10 rounded-lg bg-emerald-500/20 text-emerald-500 text-vr-body-sm font-medium cursor-default">
-                  游戏中
-                </button>
-              </>
+              <button className="flex-1 h-10 rounded-lg bg-emerald-500/20 text-emerald-500 text-vr-body-sm font-medium cursor-default">
+                游戏中
+              </button>
             )}
             {["completed", "no_show"].includes(statusLower) && (
               <>
@@ -1145,6 +1126,15 @@ export default function Orders() {
   const [paymentTargetOrder, setPaymentTargetOrder] = useState<Order | null>(
     null,
   );
+  const [paymentCouponCode, setPaymentCouponCode] = useState("");
+  const [paymentCoupon, setPaymentCoupon] = useState<ThirdPartyCoupon | null>(
+    null,
+  );
+  const [paymentCouponError, setPaymentCouponError] = useState<string | null>(
+    null,
+  );
+  const [paymentCouponLoading, setPaymentCouponLoading] = useState(false);
+  const [paymentCouponScanOpen, setPaymentCouponScanOpen] = useState(false);
 
   // 核销扫码弹窗状态
   const [verifyScanOpen, setVerifyScanOpen] = useState(false);
@@ -1295,15 +1285,78 @@ export default function Orders() {
   const canRescheduleOrders = hasPermission(currentUser, "order:reschedule");
   const canHandleNoShowRefund = canRefundOrders;
 
+  const paymentLockedCoupon = getThirdPartyCouponMeta(paymentTargetOrder);
+  const paymentHasAnyCoupon =
+    !!paymentLockedCoupon ||
+    !!paymentTargetOrder?.userCouponId ||
+    ((paymentTargetOrder?.couponDiscount || 0) > 0 && !paymentLockedCoupon);
+  const paymentCouponDiscount =
+    paymentTargetOrder &&
+    !paymentHasAnyCoupon &&
+    paymentCoupon &&
+    paymentTargetOrder.amount >= paymentCoupon.minOrderAmount
+      ? Math.min(paymentTargetOrder.amount, paymentCoupon.discountAmount)
+      : 0;
+
+  const resetPaymentCoupon = () => {
+    setPaymentCouponCode("");
+    setPaymentCoupon(null);
+    setPaymentCouponError(null);
+    setPaymentCouponLoading(false);
+    setPaymentCouponScanOpen(false);
+  };
+
+  const lookupPaymentCoupon = async (input?: string) => {
+    if (paymentLockedCoupon) {
+      setPaymentCoupon(null);
+      setPaymentCouponError("平台优惠券已使用，不能再使用第二张优惠券");
+      return;
+    }
+    if (paymentTargetOrder?.userCouponId || ((paymentTargetOrder?.couponDiscount || 0) > 0 && !paymentLockedCoupon)) {
+      setPaymentCoupon(null);
+      setPaymentCouponError("该订单已使用优惠券，不能再使用平台优惠券");
+      return;
+    }
+    const code = (input ?? paymentCouponCode).trim();
+    if (!code) {
+      setPaymentCoupon(null);
+      setPaymentCouponError("请输入或扫码识别第三方券码");
+      return;
+    }
+    setPaymentCouponLoading(true);
+    setPaymentCouponError(null);
+    try {
+      const coupon = await lookupThirdPartyCoupon(code);
+      setPaymentCoupon(coupon);
+      setPaymentCouponCode(coupon.code);
+      if (paymentTargetOrder && paymentTargetOrder.amount < coupon.minOrderAmount) {
+        setPaymentCouponError(`当前订单未满 ¥${(coupon.minOrderAmount / 100).toFixed(2)}，暂不可用`);
+      }
+    } catch (err: any) {
+      setPaymentCoupon(null);
+      setPaymentCouponError(err?.response?.data?.message || "第三方券识别失败");
+    } finally {
+      setPaymentCouponLoading(false);
+    }
+  };
+
   const payMutation = useMutation({
-    mutationFn: ({ id, method }: { id: string; method?: string }) =>
-      payOrder(id, method || "CASH"),
+    mutationFn: ({
+      id,
+      method,
+      thirdPartyCouponCode,
+    }: {
+      id: string;
+      method?: string;
+      thirdPartyCouponCode?: string;
+    }) => payOrder(id, method || "CASH", thirdPartyCouponCode),
     onSuccess: () => {
       invalidateAll();
       setDrawerOpen(false);
       setPaymentModalOpen(false);
       setScanBoxOpen(false);
       setPaymentTargetOrder(null);
+      resetPaymentCoupon();
     },
   });
 
@@ -1424,7 +1477,14 @@ export default function Orders() {
       const res = await getOrders({ search: trimmed, pageSize: 1 });
       const order = res?.data?.[0];
       if (!order) {
-        alert("未找到订单，请检查二维码或券码是否正确");
+        try {
+          const coupon = await lookupThirdPartyCoupon(trimmed);
+          alert(
+            `第三方券可用：${coupon.name}\n顾客：${coupon.user?.name || coupon.user?.phone || "未登记"}\n满¥${(coupon.minOrderAmount / 100).toFixed(2)}减¥${(coupon.discountAmount / 100).toFixed(2)}\n请在订单收款弹窗中扫码/输入该券码进行抵扣。`,
+          );
+        } catch (err: any) {
+          alert(err?.response?.data?.message || "未找到订单或第三方券，请检查二维码或券码是否正确");
+        }
         return;
       }
       // 团购券在右侧抽屉中完成核销
@@ -1452,33 +1512,6 @@ export default function Orders() {
       setScanOpen(false);
     }
   };
-
-  const checkInMutation = useMutation({
-    mutationFn: checkInBooking,
-    onSuccess: () => {
-      invalidateAll();
-    },
-    onError: (error: any) => {
-      alert(
-        "签到失败: " +
-          (error?.response?.data?.message || error?.message || "未知错误"),
-      );
-    },
-  });
-
-  const markNoShowMutation = useMutation({
-    mutationFn: (order: Order) => markNoShow(order.id, "manual"),
-    onSuccess: () => {
-      invalidateAll();
-      setDrawerOpen(false);
-    },
-    onError: (error: any) => {
-      alert(
-        "标记爽约失败: " +
-          (error?.response?.data?.message || error?.message || "未知错误"),
-      );
-    },
-  });
 
   const openRestoreDialog = (order: Order) => {
     setRestoreTarget(order);
@@ -1728,18 +1761,38 @@ export default function Orders() {
   };
 
   const handleCollect = (order: Order) => {
+    setDrawerOpen(false);
+    setSelectedOrder(null);
     setPaymentTargetOrder(order);
+    resetPaymentCoupon();
     setPaymentModalOpen(true);
   };
 
   const handleSelectPaymentMethod = (method: PaymentMethod) => {
+    if (paymentHasAnyCoupon && paymentCoupon) {
+      setPaymentCoupon(null);
+      setPaymentCouponError("该订单已使用优惠券，不能再使用第二张优惠券");
+      return;
+    }
+    if (paymentCouponCode.trim() && !paymentCoupon) {
+      setPaymentCouponError("请先验券确认第三方券有效");
+      return;
+    }
+    if (paymentCoupon && paymentCouponDiscount <= 0) {
+      setPaymentCouponError(paymentCouponError || "第三方券当前不可用");
+      return;
+    }
     setPaymentMethod(method);
     setPaymentModalOpen(false);
 
     if (method === "CASH") {
       // 现金直接收款，不走扫码流程
       if (paymentTargetOrder) {
-        payMutation.mutate({ id: paymentTargetOrder.id, method: "CASH" });
+        payMutation.mutate({
+          id: paymentTargetOrder.id,
+          method: "CASH",
+          thirdPartyCouponCode: paymentCoupon?.code,
+        });
       }
       return;
     }
@@ -1755,6 +1808,7 @@ export default function Orders() {
       payMutation.mutate({
         id: paymentTargetOrder.id,
         method: paymentMethod === "SCANBOX" ? undefined : paymentMethod,
+        thirdPartyCouponCode: paymentCoupon?.code,
       });
     }
   };
@@ -2485,7 +2539,10 @@ export default function Orders() {
         order={selectedOrder}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
-        onPay={(id) => payMutation.mutate({ id, method: "CASH" })}
+        onPay={(id) => {
+          const order = selectedOrder?.id === id ? selectedOrder : apiOrders.find((item) => item.id === id) || null;
+          if (order) handleCollect(order);
+        }}
         onCancel={(o) => cancelMutation.mutate(o)}
         onRefund={openRefundDialog}
         onVerify={() => {
@@ -2493,8 +2550,6 @@ export default function Orders() {
           setDrawerOpen(false);
           setScanOpen(true);
         }}
-        onCheckIn={(bookingId) => checkInMutation.mutate(bookingId)}
-        onMarkNoShow={(o) => markNoShowMutation.mutate(o)}
         onActivate={openRestoreDialog}
         onCompleteRefund={(id) => completeRefundMutation.mutate(id)}
         onDelete={(id) => deleteMutation.mutate(id)}
@@ -2526,8 +2581,6 @@ export default function Orders() {
         cancelPending={cancelMutation.isPending}
         refundPending={refundMutation.isPending}
         verifyPending={verifyMutation.isPending}
-        checkInPending={checkInMutation.isPending}
-        markNoShowPending={markNoShowMutation.isPending}
         activatePending={activateMutation.isPending}
         completeRefundPending={completeRefundMutation.isPending}
         deletePending={deleteMutation.isPending}
@@ -2539,6 +2592,7 @@ export default function Orders() {
         onClose={() => {
           setPaymentModalOpen(false);
           setPaymentTargetOrder(null);
+          resetPaymentCoupon();
         }}
         orderNo={paymentTargetOrder?.orderNo || ""}
         customer={
@@ -2547,6 +2601,29 @@ export default function Orders() {
           paymentTargetOrder?.booking?.personName
         }
         amount={(paymentTargetOrder?.amount || 0) / 100}
+        couponCode={paymentCouponCode}
+        couponName={paymentCoupon?.name}
+        couponSource={paymentCoupon?.source}
+        couponDiscount={paymentCouponDiscount / 100}
+        couponError={paymentCouponError}
+        couponLoading={paymentCouponLoading}
+        lockedCouponName={paymentLockedCoupon?.name}
+        lockedCouponSource={paymentLockedCoupon?.source}
+        lockedCouponDiscount={(paymentLockedCoupon?.discountAmount || 0) / 100}
+        couponLockedMessage={
+          paymentLockedCoupon
+            ? "平台优惠券已使用，不能再使用第二张优惠券"
+            : paymentTargetOrder?.userCouponId || ((paymentTargetOrder?.couponDiscount || 0) > 0 && !paymentLockedCoupon)
+              ? "该订单已使用优惠券，不能再使用平台优惠券"
+              : null
+        }
+        onCouponCodeChange={(value) => {
+          setPaymentCouponCode(value);
+          setPaymentCoupon(null);
+          setPaymentCouponError(null);
+        }}
+        onLookupCoupon={() => lookupPaymentCoupon()}
+        onScanCoupon={() => setPaymentCouponScanOpen(true)}
         onSelect={handleSelectPaymentMethod}
       />
 
@@ -2557,10 +2634,11 @@ export default function Orders() {
           setScanBoxOpen(false);
           setPaymentMethod(null);
           setPaymentTargetOrder(null);
+          resetPaymentCoupon();
         }}
         method={paymentMethod || "SCANBOX"}
         orderNo={paymentTargetOrder?.orderNo || ""}
-        amount={(paymentTargetOrder?.amount || 0) / 100}
+        amount={Math.max(0, ((paymentTargetOrder?.amount || 0) - paymentCouponDiscount) / 100)}
         onSuccess={handleScanBoxSuccess}
       />
 
@@ -2601,6 +2679,16 @@ export default function Orders() {
         }}
         onScan={handleScanVerify}
         title="扫码识别订单"
+      />
+
+      <ScanModal
+        open={paymentCouponScanOpen}
+        onClose={() => setPaymentCouponScanOpen(false)}
+        onScan={(code) => {
+          setPaymentCouponCode(code);
+          lookupPaymentCoupon(code);
+        }}
+        title="扫码识别第三方券"
       />
 
       {/* 团购券核销抽屉 */}

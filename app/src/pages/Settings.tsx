@@ -10,12 +10,10 @@ import {
   Bell,
   Shield,
   FileText,
-  Link,
   Check,
   Save,
   Plus,
   RotateCcw,
-  TestTube,
   ChevronRight,
   Search,
   CalendarDays,
@@ -26,20 +24,19 @@ import {
   Home,
   Package,
   Bookmark,
-  Trash2,
-  Gift,
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
+import { NumberFieldInput } from '@/components/ui/number-field'
 import Layout from '@/components/Layout'
 import { cn } from '@/lib/utils'
 import { getSettings, bulkSaveSettings } from '@/api/settings'
-import { uploadFile } from '@/api/upload'
 import { getLogs, getLogTypes } from '@/api/logs'
+import { playNotificationSound, speakNotification, SOUND_TYPE_LABELS, SOUND_MODE_LABELS } from '@/lib/notificationSound'
 import type { OperationLog } from '@/api/logs'
-import { getImageUrl } from '@/lib/imageUrl'
 import { RolePermissionPanel } from '@/components/RolePermissionPanel'
 import { CustomerPageSettings } from '@/components/settings/CustomerPageSettings'
 import { AdminPageSettings } from '@/components/settings/AdminPageSettings'
+import { PaymentApiSettings } from '@/components/settings/PaymentApiSettings'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -221,155 +218,176 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
   }
 
   return (
-    <div>
-      <h2 className="text-vr-h2 text-vrtext-primary mb-6">预约设置</h2>
-      <motion.div className="space-y-5 max-w-xl" variants={staggerContainer} initial="initial" animate="animate">
-        {[
-          { label: '可提前预约天数', key: 'advanceDays', desc: '用户可提前多少天预约' },
-          { label: '取消预约时限（小时）', key: 'cancelHours', desc: `开场前${values.cancelHours}小时内不可取消，超过后按阶梯规则退款` },
-        ].map((f) => (
-          <motion.div key={f.key} {...fadeInUp}>
-            <label className="block text-vr-caption text-vrtext-secondary mb-1">{f.label}</label>
-            <input
-              type="number"
-              value={values[f.key as keyof typeof values] as number}
-              onChange={(e) => update(f.key, Number(e.target.value))}
-              className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
-            />
-            <p className="mt-1 text-vr-caption text-vrtext-tertiary">{f.desc}</p>
-          </motion.div>
-        ))}
-        {/* 阶梯式退款规则 */}
-        <motion.div {...fadeInUp}>
-          <label className="block text-vr-body-sm text-vrtext-primary mb-2">阶梯式退款规则</label>
-          <p className="text-vr-caption text-vrtext-tertiary mb-3">按距开场时间配置不同退款比例，时间越近比例越低</p>
-          <div className="space-y-2">
-            {[...tiers].sort((a, b) => b.hours - a.hours).map((tier, idx, arr) => {
-              const originalIdx = tiers.findIndex((t) => t === tier)
-              const nextHours = arr[idx + 1]?.hours ?? 0
-              const rangeText = nextHours > 0 ? `${nextHours}~${tier.hours}小时` : `<${tier.hours}小时`
-              return (
-                <div key={originalIdx} className="flex items-center gap-2 bg-vrbg-elevated rounded-lg p-3">
-                  <div className="flex-1">
-                    <p className="text-vr-caption text-vrtext-secondary mb-1">距开场时间 ≥ {tier.hours} 小时</p>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={0}
-                        value={tier.hours}
-                        onChange={(e) => updateTier(originalIdx, 'hours', e.target.value)}
-                        className="w-20 h-8 px-2 bg-vrbg-surface border border-vrborder-subtle rounded text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
-                      />
-                      <span className="text-vr-caption text-vrtext-tertiary">小时</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={tier.rate}
-                        onChange={(e) => updateTier(originalIdx, 'rate', e.target.value)}
-                        className="w-20 h-8 px-2 bg-vrbg-surface border border-vrborder-subtle rounded text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
-                      />
-                      <span className="text-vr-caption text-vrtext-tertiary">%</span>
-                      <input
-                        type="text"
-                        value={tier.label}
-                        onChange={(e) => updateTier(originalIdx, 'label', e.target.value)}
-                        placeholder="说明标签"
-                        className="flex-1 h-8 px-2 bg-vrbg-surface border border-vrborder-subtle rounded text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
-                      />
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => removeTier(originalIdx)}
-                    className="px-2 py-1 text-vr-caption text-vrerror hover:bg-vrerror/10 rounded transition-colors"
-                  >
-                    删除
-                  </button>
-                </div>
-              )
-            })}
-            {/* 不可取消档位（由 cancelHours 决定） */}
-            <div className="flex items-center gap-2 bg-vrbg-elevated/50 rounded-lg p-3 border border-dashed border-vrborder-subtle">
-              <div className="flex-1">
-                <p className="text-vr-caption text-vrtext-secondary mb-1">距开场时间 &lt; {values.cancelHours} 小时</p>
-                <div className="flex items-center gap-2">
-                  <span className="w-20 h-8 flex items-center px-2 bg-vrbg-surface/50 border border-vrborder-subtle rounded text-vr-body-sm text-vrtext-muted">
-                    {values.cancelHours}
-                  </span>
-                  <span className="text-vr-caption text-vrtext-tertiary">小时</span>
-                  <span className="w-20 h-8 flex items-center px-2 bg-vrbg-surface/50 border border-vrborder-subtle rounded text-vr-body-sm text-vrtext-muted">
-                    0
-                  </span>
-                  <span className="text-vr-caption text-vrtext-tertiary">%</span>
-                  <span className="flex-1 h-8 flex items-center px-2 text-vr-body-sm text-vrtext-muted">
-                    不可取消（由「取消预约时限」控制）
-                  </span>
-                </div>
-              </div>
-            </div>
+    <div className="space-y-6">
+      <h2 className="text-vr-h2 text-vrtext-primary">预约设置</h2>
+
+      {/* 基础规则 */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-vrbg-elevated rounded-xl p-5">
+        <h4 className="text-vr-h4 text-vrtext-primary mb-4">基础规则</h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {[
+            { label: '可提前预约天数', key: 'advanceDays', desc: '用户可提前多少天预约', min: 1, step: 1 },
+            { label: '取消预约时限（小时）', key: 'cancelHours', desc: `开场前${values.cancelHours}小时内不可取消，超过后按阶梯规则退款`, min: 0, step: 0.5 },
+          ].map((f: any) => (
+            <motion.div key={f.key} {...fadeInUp}>
+              <label className="block text-vr-caption text-vrtext-secondary mb-1">{f.label}</label>
+              <NumberFieldInput
+                value={values[f.key as keyof typeof values] as number}
+                minValue={f.min}
+                step={f.step}
+                onChange={(value) => update(f.key, value)}
+              />
+              <p className="mt-1 text-vr-caption text-vrtext-tertiary">{f.desc}</p>
+            </motion.div>
+          ))}
+        </div>
+      </motion.div>
+
+      {/* 阶梯式退款规则 */}
+      <motion.div {...fadeInUp} className="bg-vrbg-elevated rounded-xl p-5">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <label className="block text-vr-body-sm text-vrtext-primary">阶梯式退款规则</label>
+            <p className="text-vr-caption text-vrtext-tertiary">按距开场时间配置不同退款比例，时间越近比例越低</p>
           </div>
           <button
             onClick={addTier}
-            className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-vr-caption text-vraccent-primary border border-vraccent-primary/30 hover:bg-vraccent-primary/10 transition-colors"
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-vr-caption text-vraccent-primary border border-vraccent-primary/30 hover:bg-vraccent-primary/10 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
             添加档位
           </button>
-        </motion.div>
-        <motion.div {...fadeInUp} className="flex items-center justify-between py-2">
-          <div>
-            <label className="block text-vr-body-sm text-vrtext-primary">允许延长游戏时间</label>
-            <p className="text-vr-caption text-vrtext-tertiary">游戏达到标准时长后，是否允许顾客继续体验</p>
-          </div>
-          <Switch checked={values.allowOvertime} onCheckedChange={(v) => update('allowOvertime', v)} />
-        </motion.div>
-        {values.allowOvertime && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.3, ease }}>
-            <label className="block text-vr-caption text-vrtext-secondary mb-1">可延长时长（分钟）</label>
-            <input
-              type="number"
-              value={values.overtimeMinutes}
-              onChange={(e) => update('overtimeMinutes', Number(e.target.value))}
-              className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
-            />
-          </motion.div>
-        )}
-        {/* ── 入场与核销设置 ── */}
-        <motion.div {...fadeInUp}>
-          <h3 className="text-vr-body-sm font-medium text-vrtext-primary mb-3 pt-2">入场与核销设置</h3>
-          <div className="space-y-4">
-            {[
-              { label: '开场前进入待核销（分钟）', key: 'verifyAdvanceMinutes', desc: '开场前多少分钟订单状态变为「待核销」，顾客可开始入场' },
-              { label: '迟到宽限期（分钟）', key: 'lateBufferMinutes', desc: '开场后多少分钟内仍可入场，超过后标记为爽约' },
-              { label: '最大缓冲期 / 自动作废（分钟）', key: 'noShowDeadlineMinutes', desc: '开场后超过此时间未到场，系统自动标记为「已作废/爽约」' },
-            ].map((f) => (
-              <div key={f.key}>
-                <label className="block text-vr-caption text-vrtext-secondary mb-1">{f.label}</label>
-                <input
-                  type="number"
-                  value={values[f.key as keyof typeof values] as number}
-                  onChange={(e) => update(f.key, Number(e.target.value))}
-                  className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
-                />
-                <p className="mt-1 text-vr-caption text-vrtext-tertiary">{f.desc}</p>
+        </div>
+        <div className="space-y-2">
+          {[...tiers].sort((a, b) => b.hours - a.hours).map((tier) => {
+            const originalIdx = tiers.findIndex((t) => t === tier)
+            return (
+              <div key={originalIdx} className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-center bg-vrbg-surface rounded-lg p-3 border border-vrborder-subtle">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <p className="text-vr-caption text-vrtext-secondary mb-1">距开场时间 ≥ {tier.hours} 小时</p>
+                    <div className="flex items-center gap-2">
+                      <NumberFieldInput
+                        value={tier.hours}
+                        minValue={0}
+                        step={0.5}
+                        className="w-full"
+                        onChange={(value) => updateTier(originalIdx, 'hours', String(value))}
+                      />
+                      <span className="text-vr-caption text-vrtext-tertiary shrink-0">小时</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-vr-caption text-vrtext-secondary mb-1">退款比例</p>
+                    <div className="flex items-center gap-2">
+                      <NumberFieldInput
+                        value={tier.rate}
+                        minValue={0}
+                        maxValue={100}
+                        className="w-full"
+                        onChange={(value) => updateTier(originalIdx, 'rate', String(value))}
+                      />
+                      <span className="text-vr-caption text-vrtext-tertiary shrink-0">%</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-vr-caption text-vrtext-secondary mb-1">说明标签</p>
+                    <input
+                      type="text"
+                      value={tier.label}
+                      onChange={(e) => updateTier(originalIdx, 'label', e.target.value)}
+                      placeholder="说明标签"
+                      className="w-full h-8 px-2 bg-vrbg-surface border border-vrborder-subtle rounded text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={() => removeTier(originalIdx)}
+                  className="px-3 py-2 text-vr-caption text-vrerror hover:bg-vrerror/10 rounded transition-colors justify-self-start md:justify-self-end"
+                >
+                  删除
+                </button>
               </div>
-            ))}
-            <div>
-              <label className="block text-vr-caption text-vrtext-secondary mb-1">爽约违约金比例（%）</label>
-              <div className="flex items-center gap-4">
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={values.noShowPenaltyRate}
-                  onChange={(e) => update('noShowPenaltyRate', Number(e.target.value))}
-                  className="flex-1 accent-[#3B82F6]"
-                />
-                <span className="text-vr-body-sm text-vrtext-primary w-12 text-right">{values.noShowPenaltyRate}%</span>
+            )
+          })}
+          {/* 不可取消档位（由 cancelHours 决定） */}
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-center bg-vrbg-elevated/50 rounded-lg p-3 border border-dashed border-vrborder-subtle">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div>
+                <p className="text-vr-caption text-vrtext-secondary mb-1">距开场时间 &lt; {values.cancelHours} 小时</p>
+                <div className="flex items-center gap-2">
+                  <NumberFieldInput
+                    value={values.cancelHours}
+                    minValue={0}
+                    step={0.5}
+                    className="w-full"
+                    disabled
+                  />
+                  <span className="text-vr-caption text-vrtext-tertiary shrink-0">小时</span>
+                </div>
               </div>
-              <p className="mt-1 text-vr-caption text-vrtext-tertiary">顾客超时未到场时扣除的比例，100%表示不退款</p>
+              <div>
+                <p className="text-vr-caption text-vrtext-secondary mb-1">退款比例</p>
+                <div className="flex items-center gap-2">
+                  <NumberFieldInput
+                    value={0}
+                    minValue={0}
+                    maxValue={100}
+                    className="w-full"
+                    disabled
+                  />
+                  <span className="text-vr-caption text-vrtext-tertiary shrink-0">%</span>
+                </div>
+              </div>
+              <div>
+                <p className="text-vr-caption text-vrtext-secondary mb-1">说明</p>
+                <span className="flex h-8 items-center px-2 text-vr-body-sm text-vrtext-muted">
+                  不可取消（由「取消预约时限」控制）
+                </span>
+              </div>
             </div>
-            <div className="flex items-center justify-between py-1">
+          </div>
+        </div>
+      </motion.div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* 入场与核销设置 */}
+        <motion.div {...fadeInUp} className="bg-vrbg-elevated rounded-xl p-5">
+          <h3 className="text-vr-body-sm font-medium text-vrtext-primary mb-4">入场与核销设置</h3>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[
+                { label: '开场前进入待核销（分钟）', key: 'verifyAdvanceMinutes', desc: '开场前多少分钟订单状态变为「待核销」，顾客可开始入场' },
+                { label: '迟到宽限期（分钟）', key: 'lateBufferMinutes', desc: '开场后多少分钟内仍可入场，超过后标记为爽约' },
+                { label: '最大缓冲期 / 自动作废（分钟）', key: 'noShowDeadlineMinutes', desc: '开场后超过此时间未到场，系统自动标记为「已作废/爽约」' },
+              ].map((f: any) => (
+                <div key={f.key}>
+                  <label className="block text-vr-caption text-vrtext-secondary mb-1">{f.label}</label>
+                  <NumberFieldInput
+                    value={values[f.key as keyof typeof values] as number}
+                    minValue={0}
+                    onChange={(value) => update(f.key, value)}
+                  />
+                  <p className="mt-1 text-vr-caption text-vrtext-tertiary">{f.desc}</p>
+                </div>
+              ))}
+              <div>
+                <label className="block text-vr-caption text-vrtext-secondary mb-1">爽约违约金比例（%）</label>
+                <div className="flex items-center gap-4">
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={values.noShowPenaltyRate}
+                    onChange={(e) => update('noShowPenaltyRate', Number(e.target.value))}
+                    className="flex-1 accent-[#3B82F6]"
+                  />
+                  <span className="text-vr-body-sm text-vrtext-primary w-12 text-right">{values.noShowPenaltyRate}%</span>
+                </div>
+                <p className="mt-1 text-vr-caption text-vrtext-tertiary">顾客超时未到场时扣除的比例，100%表示不退款</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between py-2">
               <div>
                 <label className="block text-vr-body-sm text-vrtext-primary">自动标记爽约</label>
                 <p className="text-vr-caption text-vrtext-tertiary">超过最大缓冲期后系统自动将订单标记为作废</p>
@@ -378,9 +396,10 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
             </div>
           </div>
         </motion.div>
-        {/* ── 改签设置 ── */}
-        <motion.div {...fadeInUp}>
-          <h3 className="text-vr-body-sm font-medium text-vrtext-primary mb-3 pt-2">改签设置</h3>
+
+        {/* 改签设置 */}
+        <motion.div {...fadeInUp} className="bg-vrbg-elevated rounded-xl p-5">
+          <h3 className="text-vr-body-sm font-medium text-vrtext-primary mb-4">改签设置</h3>
           <div className="space-y-4">
             <div className="flex items-center justify-between py-1">
               <div>
@@ -392,322 +411,80 @@ function BookingSettings({ settings }: { settings?: Record<string, any> }) {
             {values.rescheduleAllowAfterStart && (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.3, ease }}>
                 <label className="block text-vr-caption text-vrtext-secondary mb-1">开场后可改签时长（分钟）</label>
-                <input
-                  type="number"
-                  min={0}
+                <NumberFieldInput
                   value={values.rescheduleAfterStartMinutes}
-                  onChange={(e) => update('rescheduleAfterStartMinutes', Number(e.target.value))}
-                  className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                  minValue={0}
+                  onChange={(value) => update('rescheduleAfterStartMinutes', value)}
                 />
                 <p className="mt-1 text-vr-caption text-vrtext-tertiary">开场后多少分钟内仍可改签，超过后不可改签</p>
               </motion.div>
             )}
             <div>
               <label className="block text-vr-caption text-vrtext-secondary mb-1">最大改签次数</label>
-              <input
-                type="number"
-                min={0}
+              <NumberFieldInput
                 value={values.rescheduleMaxCount}
-                onChange={(e) => update('rescheduleMaxCount', Number(e.target.value))}
-                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                minValue={0}
+                onChange={(value) => update('rescheduleMaxCount', value)}
               />
               <p className="mt-1 text-vr-caption text-vrtext-tertiary">每个订单最多允许改签次数，0 表示不限制</p>
             </div>
           </div>
         </motion.div>
-        {error && (
-          <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="text-vr-body-sm text-vrerror">
-            {error}
-          </motion.div>
-        )}
-        <motion.div {...fadeInUp} className="pt-4">
-          <button
-            onClick={handleSave}
-            disabled={mutation.isPending}
-            className={cn(
-              'inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-vr-body-sm font-medium transition-all duration-200',
-              saved
-                ? 'bg-vrsuccess/20 text-vrsuccess'
-                : mutation.isPending
-                  ? 'bg-vraccent-primary/50 text-white cursor-not-allowed'
-                  : 'bg-vraccent-primary text-white hover:bg-vraccent-primary-hover'
-            )}
-          >
-            {mutation.isPending ? (
-              <><RotateCcw className="w-4 h-4 animate-spin" />保存中...</>
-            ) : saved ? (
-              <><Check className="w-4 h-4" />已保存</>
-            ) : (
-              <><Save className="w-4 h-4" />保存设置</>
-            )}
-          </button>
-        </motion.div>
-      </motion.div>
-    </div>
-  )
-}
+      </div>
 
-
-/* ---- Payment & API Settings (merged) ---- */
-function PaymentApiSettings({ settings }: { settings?: Record<string, any> }) {
-  const s = settings || {}
-  const queryClient = useQueryClient()
-
-  const [methods, setMethods] = useState([
-    { name: '微信支付', key: 'payment_wechat', enabled: s.payment_wechat?.value ?? true, rate: s.payment_wechat_rate?.value ?? 0.6 },
-    { name: '支付宝', key: 'payment_alipay', enabled: s.payment_alipay?.value ?? true, rate: s.payment_alipay_rate?.value ?? 0.6 },
-    { name: '现金支付', key: 'payment_cash', enabled: s.payment_cash?.value ?? true, rate: 0 },
-  ])
-
-  const [refund, setRefund] = useState({
-    enabled: true,
-    fullHours: s.payment_full_refund_hours?.value ?? 24,
-    partialPercent: s.payment_partial_refund_rate?.value ?? 50,
-  })
-
-  const [apis, setApis] = useState([
-    { name: '微信支付API', status: s.wechat_mchid?.value ? 'configured' : 'unconfigured', testing: false },
-    { name: '支付宝API', status: s.alipay_appid?.value ? 'configured' : 'unconfigured', testing: false },
-    { name: '短信服务（阿里云）', status: s.sms_access_key?.value ? 'configured' : 'unconfigured', testing: false },
-    { name: '微信小程序', status: s.wxmini_appid?.value ? 'configured' : 'unconfigured', testing: false },
-  ])
-
-  const [form, setForm] = useState({
-    wechatMchid: s.wechat_mchid?.value ?? '',
-    wechatApiKey: s.wechat_api_key?.value ?? '',
-    alipayAppid: s.alipay_appid?.value ?? '',
-    alipayPrivateKey: s.alipay_private_key?.value ?? '',
-    smsAccessKey: s.sms_access_key?.value ?? '',
-    smsSecret: s.sms_secret?.value ?? '',
-    wxminiAppid: s.wxmini_appid?.value ?? '',
-  })
-
-  const [saved, setSaved] = useState(false)
-
-  useEffect(() => {
-    if (!settings) return
-    const s = settings
-    setMethods([
-      { name: '微信支付', key: 'payment_wechat', enabled: s.payment_wechat?.value ?? true, rate: s.payment_wechat_rate?.value ?? 0.6 },
-      { name: '支付宝', key: 'payment_alipay', enabled: s.payment_alipay?.value ?? true, rate: s.payment_alipay_rate?.value ?? 0.6 },
-      { name: '现金支付', key: 'payment_cash', enabled: s.payment_cash?.value ?? true, rate: 0 },
-    ])
-    setRefund({
-      enabled: true,
-      fullHours: s.payment_full_refund_hours?.value ?? 24,
-      partialPercent: s.payment_partial_refund_rate?.value ?? 50,
-    })
-    setApis([
-      { name: '微信支付API', status: s.wechat_mchid?.value ? 'configured' : 'unconfigured', testing: false },
-      { name: '支付宝API', status: s.alipay_appid?.value ? 'configured' : 'unconfigured', testing: false },
-      { name: '短信服务（阿里云）', status: s.sms_access_key?.value ? 'configured' : 'unconfigured', testing: false },
-      { name: '微信小程序', status: s.wxmini_appid?.value ? 'configured' : 'unconfigured', testing: false },
-    ])
-    setForm({
-      wechatMchid: s.wechat_mchid?.value ?? '',
-      wechatApiKey: s.wechat_api_key?.value ?? '',
-      alipayAppid: s.alipay_appid?.value ?? '',
-      alipayPrivateKey: s.alipay_private_key?.value ?? '',
-      smsAccessKey: s.sms_access_key?.value ?? '',
-      smsSecret: s.sms_secret?.value ?? '',
-      wxminiAppid: s.wxmini_appid?.value ?? '',
-    })
-  }, [settings])
-
-  const mutation = useMutation({
-    mutationFn: bulkSaveSettings,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    },
-  })
-
-  const toggleMethod = (idx: number) => {
-    setMethods((p) => p.map((m, i) => (i === idx ? { ...m, enabled: !m.enabled } : m)))
-  }
-
-  const testApi = (idx: number) => {
-    setApis((p) => p.map((a, i) => (i === idx ? { ...a, testing: true } : a)))
-    setTimeout(() => {
-      setApis((p) => p.map((a, i) => (i === idx ? { ...a, testing: false, status: a.status === 'unconfigured' ? 'unconfigured' : 'configured' } : a)))
-    }, 1500)
-  }
-
-  const handleSave = () => {
-    mutation.mutate([
-      { key: 'payment_wechat', value: methods[0].enabled, category: 'payment' },
-      { key: 'payment_alipay', value: methods[1].enabled, category: 'payment' },
-      { key: 'payment_cash', value: methods[2].enabled, category: 'payment' },
-      { key: 'payment_wechat_rate', value: methods[0].rate, category: 'payment' },
-      { key: 'payment_alipay_rate', value: methods[1].rate, category: 'payment' },
-      { key: 'payment_full_refund_hours', value: refund.fullHours, category: 'payment' },
-      { key: 'payment_partial_refund_rate', value: refund.partialPercent, category: 'payment' },
-      { key: 'wechat_mchid', value: form.wechatMchid, category: 'payment' },
-      { key: 'wechat_api_key', value: form.wechatApiKey, category: 'payment' },
-      { key: 'alipay_appid', value: form.alipayAppid, category: 'payment' },
-      { key: 'alipay_private_key', value: form.alipayPrivateKey, category: 'payment' },
-      { key: 'sms_access_key', value: form.smsAccessKey, category: 'payment' },
-      { key: 'sms_secret', value: form.smsSecret, category: 'payment' },
-      { key: 'wxmini_appid', value: form.wxminiAppid, category: 'payment' },
-    ])
-  }
-
-  return (
-    <div>
-      <h2 className="text-vr-h2 text-vrtext-primary mb-6">支付与接口</h2>
-
-      {/* Payment Methods */}
-      <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-3 max-w-xl">
-        {methods.map((m, i) => (
-          <motion.div key={m.name} {...fadeInUp} className="flex items-center justify-between p-4 bg-vrbg-elevated rounded-lg">
-            <div className="flex items-center gap-3">
-              <CreditCard className="w-5 h-5 text-vrtext-secondary" />
-              <div>
-                <p className="text-vr-body-sm text-vrtext-primary">{m.name}</p>
-                {m.enabled && m.rate > 0 && <p className="text-vr-caption text-vrtext-tertiary">费率 {m.rate}%</p>}
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              {m.enabled && m.rate > 0 && (
-                <input
-                  type="number"
-                  step={0.1}
-                  value={m.rate}
-                  onChange={(e) => {
-                    const v = Number(e.target.value)
-                    setMethods((p) => p.map((x, j) => (j === i ? { ...x, rate: v } : x)))
-                  }}
-                  className="w-16 h-8 px-2 bg-vrbg-surface border border-vrborder-subtle rounded text-vr-caption text-vrtext-primary text-center focus:outline-none focus:border-vraccent-primary"
-                />
-              )}
-              <Switch checked={m.enabled} onCheckedChange={() => toggleMethod(i)} />
-            </div>
-          </motion.div>
-        ))}
-      </motion.div>
-
-      {/* Refund Rules */}
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="mt-8">
-        <h4 className="text-vr-h4 text-vrtext-primary mb-4">退款规则</h4>
-        <div className="space-y-4 max-w-xl">
-          <div className="flex items-center justify-between">
-            <span className="text-vr-body-sm text-vrtext-primary">是否支持退款</span>
-            <Switch checked={refund.enabled} onCheckedChange={(v) => setRefund((p) => ({ ...p, enabled: v }))} />
+      {/* 延长游戏时间 */}
+      <motion.div {...fadeInUp} className="bg-vrbg-elevated rounded-xl p-5">
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <label className="block text-vr-body-sm text-vrtext-primary">允许延长游戏时间</label>
+            <p className="text-vr-caption text-vrtext-tertiary">游戏达到标准时长后，是否允许顾客继续体验</p>
           </div>
-          {refund.enabled && (
-            <>
-              <div>
-                <label className="block text-vr-caption text-vrtext-secondary mb-1">开场前X小时可全额退款</label>
-                <input
-                  type="number"
-                  value={refund.fullHours}
-                  onChange={(e) => setRefund((p) => ({ ...p, fullHours: Number(e.target.value) }))}
-                  className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
-                />
-              </div>
-              <div>
-                <label className="block text-vr-caption text-vrtext-secondary mb-1">开场前X小时内退款比例(%)</label>
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={refund.partialPercent}
-                    onChange={(e) => setRefund((p) => ({ ...p, partialPercent: Number(e.target.value) }))}
-                    className="flex-1 accent-[#3B82F6]"
-                  />
-                  <span className="text-vr-body-sm text-vrtext-primary w-12 text-right">{refund.partialPercent}%</span>
-                </div>
-              </div>
-            </>
-          )}
+          <Switch checked={values.allowOvertime} onCheckedChange={(v) => update('allowOvertime', v)} />
         </div>
-      </motion.div>
-
-      {/* API Config */}
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="mt-8">
-        <h4 className="text-vr-h4 text-vrtext-primary mb-4">第三方接口状态</h4>
-        <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-3 max-w-xl">
-          {apis.map((a, i) => (
-            <motion.div key={a.name} {...fadeInUp} className="flex items-center justify-between p-4 bg-vrbg-elevated rounded-lg">
-              <div className="flex items-center gap-3">
-                <Link className="w-5 h-5 text-vrtext-secondary" />
-                <div>
-                  <p className="text-vr-body-sm text-vrtext-primary">{a.name}</p>
-                  <p className={cn('text-vr-caption', a.status === 'configured' ? 'text-vrsuccess' : 'text-vrtext-muted')}>
-                    {a.status === 'configured' ? '已配置' : '未配置'}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button className="px-3 py-1.5 rounded-md text-vr-caption text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors">
-                  {a.status === 'configured' ? '编辑' : '配置'}
-                </button>
-                {a.status === 'configured' && (
-                  <button
-                    onClick={() => testApi(i)}
-                    disabled={a.testing}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-vr-caption text-vraccent-primary hover:bg-vraccent-primary/10 transition-colors disabled:opacity-50"
-                  >
-                    {a.testing ? <RotateCcw className="w-3 h-3 animate-spin" /> : <TestTube className="w-3 h-3" />}
-                    {a.testing ? '测试中' : '测试'}
-                  </button>
-                )}
-              </div>
-            </motion.div>
-          ))}
-        </motion.div>
-      </motion.div>
-
-      {/* API Keys Form */}
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }} className="mt-8 max-w-xl space-y-5">
-        <h4 className="text-vr-h4 text-vrtext-primary mb-2">接口密钥配置</h4>
-        {[
-          { label: '微信支付商户号', key: 'wechatMchid', type: 'text' },
-          { label: '微信支付 API Key', key: 'wechatApiKey', type: 'password' },
-          { label: '支付宝 AppID', key: 'alipayAppid', type: 'text' },
-          { label: '支付宝私钥', key: 'alipayPrivateKey', type: 'password' },
-          { label: '短信服务 AccessKey', key: 'smsAccessKey', type: 'text' },
-          { label: '短信服务 Secret', key: 'smsSecret', type: 'password' },
-          { label: '微信小程序 AppID', key: 'wxminiAppid', type: 'text' },
-        ].map((f) => (
-          <motion.div key={f.key} {...fadeInUp}>
-            <label className="block text-vr-caption text-vrtext-secondary mb-1">{f.label}</label>
-            <input
-              type={f.type}
-              value={form[f.key as keyof typeof form]}
-              onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}
-              className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+        {values.allowOvertime && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.3, ease }} className="mt-4 max-w-md">
+            <label className="block text-vr-caption text-vrtext-secondary mb-1">可延长时长（分钟）</label>
+            <NumberFieldInput
+              value={values.overtimeMinutes}
+              minValue={0}
+              onChange={(value) => update('overtimeMinutes', value)}
             />
           </motion.div>
-        ))}
-        <motion.div {...fadeInUp} className="pt-2">
-          <button
-            onClick={handleSave}
-            disabled={mutation.isPending}
-            className={cn(
-              'inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-vr-body-sm font-medium transition-all duration-200',
-              saved
-                ? 'bg-vrsuccess/20 text-vrsuccess'
-                : mutation.isPending
-                  ? 'bg-vraccent-primary/50 text-white cursor-not-allowed'
-                  : 'bg-vraccent-primary text-white hover:bg-vraccent-primary-hover'
-            )}
-          >
-            {mutation.isPending ? (
-              <><RotateCcw className="w-4 h-4 animate-spin" />保存中...</>
-            ) : saved ? (
-              <><Check className="w-4 h-4" />已保存</>
-            ) : (
-              <><Save className="w-4 h-4" />保存设置</>
-            )}
-          </button>
+        )}
+      </motion.div>
+
+      {error && (
+        <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="text-vr-body-sm text-vrerror">
+          {error}
         </motion.div>
+      )}
+      <motion.div {...fadeInUp} className="pt-2">
+        <button
+          onClick={handleSave}
+          disabled={mutation.isPending}
+          className={cn(
+            'inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-vr-body-sm font-medium transition-all duration-200',
+            saved
+              ? 'bg-vrsuccess/20 text-vrsuccess'
+              : mutation.isPending
+                ? 'bg-vraccent-primary/50 text-white cursor-not-allowed'
+                : 'bg-vraccent-primary text-white hover:bg-vraccent-primary-hover'
+          )}
+        >
+          {mutation.isPending ? (
+            <><RotateCcw className="w-4 h-4 animate-spin" />保存中...</>
+          ) : saved ? (
+            <><Check className="w-4 h-4" />已保存</>
+          ) : (
+            <><Save className="w-4 h-4" />保存设置</>
+          )}
+        </button>
       </motion.div>
     </div>
   )
 }
+
+
 
 /* ---- Notification Settings ---- */
 function NotificationSettings({ settings }: { settings?: Record<string, any> }) {
@@ -717,10 +494,15 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
   const [userScenes, setUserScenes] = useState([
     { label: '预约成功通知', key: 'scene_booking_success', checked: s.scene_booking_success?.value ?? true },
     { label: '预约提醒（开场前）', key: 'scene_booking_remind', checked: s.scene_booking_remind?.value ?? true },
+    { label: '迟到提醒（开场后）', key: 'scene_booking_late', checked: s.scene_booking_late?.value ?? true },
     { label: '预约取消通知', key: 'scene_booking_cancel', checked: s.scene_booking_cancel?.value ?? true },
     { label: '支付成功通知', key: 'scene_pay_success', checked: s.scene_pay_success?.value ?? true },
+    { label: '订单退款通知', key: 'scene_order_refund', checked: s.scene_order_refund?.value ?? true },
+    { label: '订单完成/核销通知', key: 'scene_order_completed', checked: s.scene_order_completed?.value ?? true },
     { label: '积分赠送通知', key: 'scene_points_gift', checked: s.scene_points_gift?.value ?? true },
     { label: '优惠券赠送通知', key: 'scene_coupon_gift', checked: s.scene_coupon_gift?.value ?? true },
+    { label: '场地维护影响预约', key: 'scene_venue_maintenance', checked: s.scene_venue_maintenance?.value ?? true },
+    { label: '爽约通知', key: 'scene_no_show', checked: s.scene_no_show?.value ?? true },
     { label: '营销推送（可选）', key: 'scene_marketing', checked: s.scene_marketing?.value ?? false },
   ])
 
@@ -729,7 +511,15 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
     { label: '库存不足提醒', key: 'scene_admin_low_stock', checked: s.scene_admin_low_stock?.value ?? true },
     { label: '新订单提醒', key: 'scene_admin_new_order', checked: s.scene_admin_new_order?.value ?? true },
     { label: '退款申请提醒', key: 'scene_admin_refund_request', checked: s.scene_admin_refund_request?.value ?? true },
+    { label: '系统告警', key: 'scene_system_alert', checked: s.scene_system_alert?.value ?? true },
+    { label: '对账异常告警', key: 'scene_recon_alert', checked: s.scene_recon_alert?.value ?? true },
   ])
+
+  const [soundEnabled, setSoundEnabled] = useState(s.notification_sound_enabled?.value ?? true)
+  const [soundMode, setSoundMode] = useState(s.notification_sound_mode?.value ?? 'voice')
+  const [soundType, setSoundType] = useState(s.notification_sound_type?.value ?? 'default')
+  const [soundUrl, setSoundUrl] = useState(s.notification_sound_url?.value ?? '')
+  const [voiceText, setVoiceText] = useState(s.notification_voice_text?.value ?? '您有新的订单，请及时查看')
 
   const [saved, setSaved] = useState(false)
 
@@ -739,10 +529,15 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
     setUserScenes([
       { label: '预约成功通知', key: 'scene_booking_success', checked: s.scene_booking_success?.value ?? true },
       { label: '预约提醒（开场前）', key: 'scene_booking_remind', checked: s.scene_booking_remind?.value ?? true },
+      { label: '迟到提醒（开场后）', key: 'scene_booking_late', checked: s.scene_booking_late?.value ?? true },
       { label: '预约取消通知', key: 'scene_booking_cancel', checked: s.scene_booking_cancel?.value ?? true },
       { label: '支付成功通知', key: 'scene_pay_success', checked: s.scene_pay_success?.value ?? true },
+      { label: '订单退款通知', key: 'scene_order_refund', checked: s.scene_order_refund?.value ?? true },
+      { label: '订单完成/核销通知', key: 'scene_order_completed', checked: s.scene_order_completed?.value ?? true },
       { label: '积分赠送通知', key: 'scene_points_gift', checked: s.scene_points_gift?.value ?? true },
       { label: '优惠券赠送通知', key: 'scene_coupon_gift', checked: s.scene_coupon_gift?.value ?? true },
+      { label: '场地维护影响预约', key: 'scene_venue_maintenance', checked: s.scene_venue_maintenance?.value ?? true },
+      { label: '爽约通知', key: 'scene_no_show', checked: s.scene_no_show?.value ?? true },
       { label: '营销推送（可选）', key: 'scene_marketing', checked: s.scene_marketing?.value ?? false },
     ])
     setAdminScenes([
@@ -750,7 +545,14 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
       { label: '库存不足提醒', key: 'scene_admin_low_stock', checked: s.scene_admin_low_stock?.value ?? true },
       { label: '新订单提醒', key: 'scene_admin_new_order', checked: s.scene_admin_new_order?.value ?? true },
       { label: '退款申请提醒', key: 'scene_admin_refund_request', checked: s.scene_admin_refund_request?.value ?? true },
+      { label: '系统告警', key: 'scene_system_alert', checked: s.scene_system_alert?.value ?? true },
+      { label: '对账异常告警', key: 'scene_recon_alert', checked: s.scene_recon_alert?.value ?? true },
     ])
+    setSoundEnabled(s.notification_sound_enabled?.value ?? true)
+    setSoundMode(s.notification_sound_mode?.value ?? 'voice')
+    setSoundType(s.notification_sound_type?.value ?? 'default')
+    setSoundUrl(s.notification_sound_url?.value ?? '')
+    setVoiceText(s.notification_voice_text?.value ?? '您有新的订单，请及时查看')
   }, [settings])
 
   const mutation = useMutation({
@@ -766,60 +568,173 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
     const payload = [
       ...userScenes.map((s) => ({ key: s.key, value: s.checked, category: 'notification' })),
       ...adminScenes.map((s) => ({ key: s.key, value: s.checked, category: 'notification' })),
+      { key: 'notification_sound_enabled', value: soundEnabled, category: 'notification' },
+      { key: 'notification_sound_mode', value: soundMode, category: 'notification' },
+      { key: 'notification_sound_type', value: soundType, category: 'notification' },
+      { key: 'notification_sound_url', value: soundUrl.trim(), category: 'notification' },
+      { key: 'notification_voice_text', value: voiceText.trim(), category: 'notification' },
     ]
     mutation.mutate(payload)
   }
 
   return (
-    <div>
-      <h2 className="text-vr-h2 text-vrtext-primary mb-6">通知设置</h2>
+    <div className="space-y-6">
+      <h2 className="text-vr-h2 text-vrtext-primary">通知设置</h2>
 
-      {/* 用户端通知 */}
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-        <h4 className="text-vr-h4 text-vrtext-primary mb-2">用户端通知</h4>
-        <p className="text-vr-caption text-vrtext-tertiary mb-4">
-          勾选后，对应场景会在用户端（C端）产生消息通知
-        </p>
-        <div className="space-y-2 mb-6">
-          {userScenes.map((s, i) => (
-            <label key={s.key} className="flex items-center gap-3 py-2 cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={s.checked}
-                onChange={() => setUserScenes((p) => p.map((x, j) => (j === i ? { ...x, checked: !x.checked } : x)))}
-                className="w-4 h-4 rounded border-vrborder-hover bg-vrbg-surface text-vraccent-primary accent-[#3B82F6]"
-              />
-              <span className="text-vr-body-sm text-vrtext-primary group-hover:text-vrtext-secondary transition-colors">
-                {s.label}
-              </span>
-            </label>
-          ))}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-vrbg-elevated rounded-xl p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-vr-h4 text-vrtext-primary mb-1">通知声音提醒</h4>
+            <p className="text-vr-caption text-vrtext-tertiary">
+              收到新通知时播放提示音（部分浏览器需要用户先点击过页面才能出声）
+            </p>
+          </div>
+          <Switch checked={soundEnabled} onCheckedChange={setSoundEnabled} />
         </div>
+
+        {soundEnabled && (
+          <div className="pt-3 border-t border-vrborder-subtle space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-vr-body-sm text-vrtext-secondary">提醒方式：</span>
+              {Object.entries(SOUND_MODE_LABELS).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-1.5 cursor-pointer group">
+                  <input
+                    type="radio"
+                    name="soundMode"
+                    value={key}
+                    checked={soundMode === key}
+                    onChange={() => setSoundMode(key)}
+                    className="h-4 w-4 border-vrborder-hover text-vraccent-primary accent-[#3B82F6]"
+                  />
+                  <span className={cn('text-vr-body-sm group-hover:text-vrtext-secondary transition-colors', soundMode === key ? 'text-vrtext-primary' : 'text-vrtext-secondary')}>
+                    {label}
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {soundMode === 'sound' && (
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-vr-body-sm text-vrtext-secondary">提示音：</span>
+                {Object.entries(SOUND_TYPE_LABELS).map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-1.5 cursor-pointer group">
+                    <input
+                      type="radio"
+                      name="soundType"
+                      value={key}
+                      checked={soundType === key}
+                      onChange={() => setSoundType(key)}
+                      className="h-4 w-4 border-vrborder-hover text-vraccent-primary accent-[#3B82F6]"
+                    />
+                    <span className={cn('text-vr-body-sm group-hover:text-vrtext-secondary transition-colors', soundType === key ? 'text-vrtext-primary' : 'text-vrtext-secondary')}>
+                      {label}
+                    </span>
+                  </label>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => playNotificationSound(soundType)}
+                  className="ml-auto text-xs px-3 py-1.5 rounded-full bg-vrbg-card border border-vrborder-subtle text-vrtext-secondary hover:text-vraccent-primary hover:border-vraccent-primary transition-colors"
+                >
+                  试听
+                </button>
+              </div>
+            )}
+
+            {soundMode === 'voice' && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <input
+                    type="text"
+                    value={voiceText}
+                    onChange={(e) => setVoiceText(e.target.value)}
+                    placeholder="请输入语音播报内容"
+                    className="soft-input flex-1 h-9 px-3 text-vr-body-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => speakNotification(voiceText)}
+                    className="text-xs px-3 py-1.5 rounded-full bg-vrbg-card border border-vrborder-subtle text-vrtext-secondary hover:text-vraccent-primary hover:border-vraccent-primary transition-colors"
+                  >
+                    试听
+                  </button>
+                </div>
+                <p className="text-vr-caption text-vrtext-tertiary">
+                  会根据通知类型自动匹配文案，未匹配类型时使用上方自定义内容
+                </p>
+              </div>
+            )}
+
+            {soundMode === 'custom' && (
+              <div className="flex items-center gap-3">
+                <input
+                  type="text"
+                  value={soundUrl}
+                  onChange={(e) => setSoundUrl(e.target.value)}
+                  placeholder="请输入音频文件 URL（如 /sounds/notify.mp3）"
+                  className="soft-input flex-1 h-9 px-3 text-vr-body-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => playNotificationSound('custom', soundUrl)}
+                  className="text-xs px-3 py-1.5 rounded-full bg-vrbg-card border border-vrborder-subtle text-vrtext-secondary hover:text-vraccent-primary hover:border-vraccent-primary transition-colors"
+                >
+                  试听
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </motion.div>
 
-      {/* 管理员端通知 */}
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
-        <h4 className="text-vr-h4 text-vrtext-primary mb-2">管理员通知</h4>
-        <p className="text-vr-caption text-vrtext-tertiary mb-4">
-          勾选后，对应场景会在管理后台产生系统通知（推送给所有管理员）
-        </p>
-        <div className="space-y-2 mb-6">
-          {adminScenes.map((s, i) => (
-            <label key={s.key} className="flex items-center gap-3 py-2 cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={s.checked}
-                onChange={() => setAdminScenes((p) => p.map((x, j) => (j === i ? { ...x, checked: !x.checked } : x)))}
-                className="w-4 h-4 rounded border-vrborder-hover bg-vrbg-surface text-vraccent-primary accent-[#3B82F6]"
-              />
-              <span className="text-vr-body-sm text-vrtext-primary group-hover:text-vrtext-secondary transition-colors">
-                {s.label}
-              </span>
-            </label>
-          ))}
-        </div>
-      </motion.div>
-      <motion.div {...fadeInUp} className="pt-6 max-w-xl">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* 用户端通知 */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-vrbg-elevated rounded-xl p-5">
+          <h4 className="text-vr-h4 text-vrtext-primary mb-2">用户端通知</h4>
+          <p className="text-vr-caption text-vrtext-tertiary mb-4">
+            勾选后，对应场景会在用户端（C端）产生消息通知
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {userScenes.map((s, i) => (
+              <label key={s.key} className="flex items-center gap-3 py-2 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={s.checked}
+                  onChange={() => setUserScenes((p) => p.map((x, j) => (j === i ? { ...x, checked: !x.checked } : x)))}
+                  className="w-4 h-4 rounded border-vrborder-hover bg-vrbg-surface text-vraccent-primary accent-[#3B82F6]"
+                />
+                <span className="text-vr-body-sm text-vrtext-primary group-hover:text-vrtext-secondary transition-colors">
+                  {s.label}
+                </span>
+              </label>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* 管理员端通知 */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="bg-vrbg-elevated rounded-xl p-5">
+          <h4 className="text-vr-h4 text-vrtext-primary mb-2">管理员通知</h4>
+          <p className="text-vr-caption text-vrtext-tertiary mb-4">
+            勾选后，对应场景会在管理后台产生系统通知（推送给所有管理员）
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {adminScenes.map((s, i) => (
+              <label key={s.key} className="flex items-center gap-3 py-2 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={s.checked}
+                  onChange={() => setAdminScenes((p) => p.map((x, j) => (j === i ? { ...x, checked: !x.checked } : x)))}
+                  className="w-4 h-4 rounded border-vrborder-hover bg-vrbg-surface text-vraccent-primary accent-[#3B82F6]"
+                />
+                <span className="text-vr-body-sm text-vrtext-primary group-hover:text-vrtext-secondary transition-colors">
+                  {s.label}
+                </span>
+              </label>
+            ))}
+          </div>
+        </motion.div>
+      </div>
+      <motion.div {...fadeInUp} className="pt-2">
         <button
           onClick={handleSave}
           disabled={mutation.isPending}

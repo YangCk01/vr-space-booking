@@ -1,18 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { Search, X, Gamepad2, Clock, MapPin, Bell, Zap, Rocket, Ghost, Users, ChevronRight, LocateFixed, XCircle } from 'lucide-react'
+import { Search, X, Gamepad2, Clock, MapPin, Zap, Rocket, Ghost, Users, ChevronRight, LocateFixed, XCircle, Crown } from 'lucide-react'
 import { getGames } from '@/api/games'
 import { getPublicVenues, type Venue } from '@/api/venues'
 import { getPublicGroupBuys } from '@/api/groupBuys'
 import { getPagePublicSettings } from '@/api/settings'
 import { getImageUrl } from '@/lib/imageUrl'
+import { useAuth } from '@/providers/AuthProvider'
 import { getBookingTargetPath, saveSelectedVenue } from '@/lib/selectedVenue'
 import { useSelectedVenue } from '@/hooks/useSelectedVenue'
 import { cn } from '@/lib/utils'
-import { getNotifications, getUnreadCount, markAllRead, clearAllNotifications } from '@/api/notifications'
+import { getNotifications, getUnreadCount, markAllRead, markRead, clearAllNotifications } from '@/api/notifications'
+import { NotificationPopover } from '@/components/ui/notification-popover'
 import LanguageSelect from '@/components/LanguageSelect'
+import PresetAvatar from '@/components/PresetAvatar'
 
 function getDistanceKm(
   from: { latitude: number; longitude: number } | null,
@@ -43,6 +46,26 @@ export default function Home() {
   const bannerRef = useRef<HTMLDivElement>(null)
   const notifyWrapRef = useRef<HTMLDivElement>(null)
   const [activeBanner, setActiveBanner] = useState(0)
+  const moduleCarouselRef = useRef<HTMLDivElement>(null)
+  const [activeModule, setActiveModule] = useState(0)
+  const [videoAspectRatios, setVideoAspectRatios] = useState<Record<string, number>>({})
+  const { user } = useAuth()
+
+  const avatarUrl = user?.avatar ? getImageUrl(user.avatar) : null
+
+  const getTimeGreeting = () => {
+    const hour = new Date().getHours()
+    if (hour < 12) return '上午好'
+    if (hour < 18) return '下午好'
+    return '晚上好'
+  }
+  const maskPhone = (phone?: string | null) => {
+    if (!phone || phone.length < 7) return phone || ''
+    return phone.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2')
+  }
+  const greetingTitle = user
+    ? `${getTimeGreeting()}，${user.name || maskPhone(user.phone)}`
+    : '访客用户'
 
   const { data: games, isLoading } = useQuery({
     queryKey: ['games', selectedVenue?.id || 'all'],
@@ -61,16 +84,20 @@ export default function Home() {
     staleTime: 60000,
   })
 
+  const greetingSubtitle = user
+    ? (pageSettings?.cHomeGreetingSubtitle || '欢迎回到 VR大空间')
+    : '登录 / 注册'
+
   const { data: unreadCount = 0 } = useQuery({
     queryKey: ['notifications', 'unread'],
     queryFn: getUnreadCount,
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   })
 
   const { data: notifyData } = useQuery({
     queryKey: ['notifications', 'list'],
     queryFn: () => getNotifications({ pageSize: 20 }),
-    enabled: showNotify,
+    refetchInterval: 5000,
   })
   const notifications = notifyData?.data || []
 
@@ -83,6 +110,13 @@ export default function Home() {
 
   const clearAllMutation = useMutation({
     mutationFn: clearAllNotifications,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] })
+    },
+  })
+
+  const markReadMutation = useMutation({
+    mutationFn: markRead,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] })
     },
@@ -119,6 +153,8 @@ export default function Home() {
     return game.title || 'VR体验'
   }
   const customModules = (pageSettings?.cHomeCustomModules || []).filter((module) => module.enabled !== false)
+  const gridModules = customModules.filter((m) => m.layout === 'grid')
+  const carouselModules = customModules.filter((m) => m.layout !== 'grid')
   const sectionOrder = useMemo(() => {
     const defaults = [
       { key: "search", enabled: true },
@@ -138,7 +174,8 @@ export default function Home() {
     }
     return valid as { key: string; enabled: boolean }[]
   }, [pageSettings?.cHomeSectionOrder])
-  const searchInHeader = sectionOrder[0]?.key === "search" && sectionOrder[0]?.enabled
+  const searchEnabled = sectionOrder.find((s: any) => s.key === 'search')?.enabled !== false
+  const bannerEnabled = sectionOrder.find((s: any) => s.key === 'banner')?.enabled !== false && pageSettings?.cHomeBannerEnabled !== false
   const tagStylePool = [
     { icon: Gamepad2, color: 'text-blue-500', bg: 'bg-blue-50' },
     { icon: Rocket, color: 'text-violet-500', bg: 'bg-violet-50' },
@@ -212,24 +249,124 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handler)
   }, [showNotify])
 
-  useEffect(() => {
+  const bannerTimerRef = useRef<number | null>(null)
+
+  const startBannerAutoScroll = useCallback(() => {
     if (bannerItems.length <= 1) return
-    const id = window.setInterval(() => {
-      setActiveBanner((current) => {
-        const next = (current + 1) % bannerItems.length
-        const el = bannerRef.current
-        if (el) el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
-        return next
-      })
+    if (bannerTimerRef.current) window.clearInterval(bannerTimerRef.current)
+    bannerTimerRef.current = window.setInterval(() => {
+      const el = bannerRef.current
+      if (!el) return
+      const current = Math.round(el.scrollLeft / el.clientWidth)
+      const next = (current + 1) % bannerItems.length
+      el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
     }, 3500)
-    return () => window.clearInterval(id)
   }, [bannerItems.length])
+
+  const stopBannerAutoScroll = useCallback(() => {
+    if (bannerTimerRef.current) window.clearInterval(bannerTimerRef.current)
+    bannerTimerRef.current = null
+  }, [])
+
+  const resetBannerAutoScroll = useCallback(() => {
+    stopBannerAutoScroll()
+    startBannerAutoScroll()
+  }, [startBannerAutoScroll, stopBannerAutoScroll])
+
+  useEffect(() => {
+    startBannerAutoScroll()
+    const onVisibility = () => {
+      if (document.hidden) stopBannerAutoScroll()
+      else startBannerAutoScroll()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      stopBannerAutoScroll()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [startBannerAutoScroll, stopBannerAutoScroll])
 
   const handleBannerScroll = () => {
     const el = bannerRef.current
     if (!el || el.clientWidth === 0) return
     setActiveBanner(Math.round(el.scrollLeft / el.clientWidth))
   }
+
+  const moduleTimerRef = useRef<number | null>(null)
+  const videoRefs = useRef<Map<string, HTMLVideoElement>>(new Map())
+
+  const scrollModuleTo = useCallback((index: number) => {
+    const el = moduleCarouselRef.current
+    if (!el) return
+    el.scrollTo({ left: index * el.clientWidth, behavior: 'smooth' })
+  }, [])
+
+  const scrollModuleNext = useCallback(() => {
+    const el = moduleCarouselRef.current
+    if (!el) return
+    const current = Math.round(el.scrollLeft / el.clientWidth)
+    const next = (current + 1) % carouselModules.length
+    el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
+  }, [carouselModules.length])
+
+  const startModuleAutoScroll = useCallback(() => {
+    if (carouselModules.length <= 1) return
+    if (moduleTimerRef.current) window.clearInterval(moduleTimerRef.current)
+    moduleTimerRef.current = window.setInterval(() => {
+      const el = moduleCarouselRef.current
+      if (!el) return
+      const current = Math.round(el.scrollLeft / el.clientWidth)
+      const currentModule = carouselModules[current]
+      if (currentModule?.videoUrl) {
+        const video = videoRefs.current.get(currentModule.id)
+        if (video && !video.paused && !video.ended && video.currentTime > 0) {
+          return
+        }
+      }
+      const next = (current + 1) % carouselModules.length
+      el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
+    }, 4000)
+  }, [carouselModules])
+
+  const stopModuleAutoScroll = useCallback(() => {
+    if (moduleTimerRef.current) window.clearInterval(moduleTimerRef.current)
+    moduleTimerRef.current = null
+  }, [])
+
+  const resetModuleAutoScroll = useCallback(() => {
+    stopModuleAutoScroll()
+    startModuleAutoScroll()
+  }, [startModuleAutoScroll, stopModuleAutoScroll])
+
+  useEffect(() => {
+    startModuleAutoScroll()
+    const onVisibility = () => {
+      if (document.hidden) stopModuleAutoScroll()
+      else startModuleAutoScroll()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      stopModuleAutoScroll()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [startModuleAutoScroll, stopModuleAutoScroll])
+
+  const handleModuleScroll = () => {
+    const el = moduleCarouselRef.current
+    if (!el || el.clientWidth === 0) return
+    setActiveModule(Math.round(el.scrollLeft / el.clientWidth))
+  }
+
+  const handleModuleVideoEnded = useCallback(() => {
+    scrollModuleNext()
+    resetModuleAutoScroll()
+  }, [scrollModuleNext, resetModuleAutoScroll])
+
+  const handleVideoLoadedMetadata = useCallback((moduleId: string, video: HTMLVideoElement) => {
+    if (video.videoWidth && video.videoHeight) {
+      setVideoAspectRatios((prev) => ({ ...prev, [moduleId]: video.videoWidth / video.videoHeight }))
+    }
+  }, [])
 
   const openConfiguredLink = (url?: string) => {
     if (!url) return
@@ -247,114 +384,151 @@ export default function Home() {
       exit={{ opacity: 0 }}
       className="pb-nav"
     >
-      <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-[var(--border-subtle)]">
-        <div className="max-w-lg mx-auto px-4 pt-4 pb-3">
-          <div className="flex items-center justify-between mb-3">
-            <button
-              onClick={() => setVenuePickerOpen(true)}
-              className="flex items-center gap-1.5 text-[var(--text-primary)]"
-            >
-              <MapPin className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span className="text-sm font-semibold">{selectedVenue?.name || '未定位'}</span>
-              <ChevronRight className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-            </button>
+      {/* 顶部区域 */}
+      {bannerEnabled ? (
+        <div className="relative h-[360px]">
+          {/* Banner 背景 */}
+          <div className="absolute inset-0 bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600 overflow-hidden z-0">
+            {bannerItems[activeBanner]?.coverImage && (
+              <img
+                src={getImageUrl(bannerItems[activeBanner].coverImage)}
+                alt=""
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-black/20 to-transparent" />
+            {/* 星光装饰 */}
+            <div className="absolute inset-0 opacity-30">
+              <div className="absolute top-10 left-10 w-1 h-1 bg-white rounded-full"></div>
+              <div className="absolute top-20 left-32 w-1.5 h-1.5 bg-white rounded-full"></div>
+              <div className="absolute top-16 left-64 w-1 h-1 bg-white rounded-full"></div>
+              <div className="absolute top-32 left-48 w-1 h-1 bg-white rounded-full"></div>
+              <div className="absolute top-40 left-20 w-1 h-1 bg-white rounded-full"></div>
+              <div className="absolute top-24 left-80 w-1 h-1 bg-white rounded-full"></div>
+            </div>
+            {/* 光效 */}
+            <div className="absolute top-0 right-0 w-64 h-64 bg-purple-400/30 rounded-full blur-3xl"></div>
+            <div className="absolute bottom-0 left-0 w-48 h-48 bg-blue-400/30 rounded-full blur-3xl"></div>
+          </div>
 
-            <div className="flex items-center gap-2">
-              <LanguageSelect />
-
-              {/* Notification bell */}
-              <div className="relative" ref={notifyWrapRef}>
+          {/* Banner 轮播内容 */}
+          <div
+            ref={bannerRef}
+            onScroll={handleBannerScroll}
+            onTouchStart={resetBannerAutoScroll}
+            onMouseDown={resetBannerAutoScroll}
+            className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory scrollbar-hide z-10"
+          >
+            {(bannerItems.length > 0 ? bannerItems : [{ id: 'fallback', title: '饮尽凡尘\n觉醒斩神', subtitle: '沉浸式 VR 大空间体验', badge: 'VR SPACE × 斩神II' }]).filter(Boolean).map((game: any) => (
+              <div
+                key={game!.id}
+                onClick={() => { if (game.linkUrl) openConfiguredLink(game.linkUrl) }}
+                className={cn("relative w-full h-full shrink-0 snap-start flex flex-col justify-end pb-16 px-5 text-left", game.linkUrl && "cursor-pointer")}
+              >
+                <p className="text-xs font-semibold text-cyan-300 mb-2 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-300" />
+                  {game!.badge || pageSettings?.cHomeBannerBadge || '限时特惠'}
+                </p>
+                <h2 className="text-3xl font-black text-white leading-tight italic whitespace-pre-line">
+                  {getBannerTitle(game!)}
+                </h2>
+                <p className="text-sm text-white/80 mt-2">
+                  {game!.subtitle || pageSettings?.cHomeBannerSubtitle || '全场体验项目最高 30% OFF'}
+                </p>
                 <button
-                  onClick={() => setShowNotify((v) => !v)}
-                  className="relative w-9 h-9 rounded-full bg-[var(--bg-elevated)] text-[var(--accent-primary)] flex items-center justify-center active:scale-95 transition-all"
+                  className="mt-5 self-start px-5 py-2 rounded-full bg-white text-violet-600 text-sm font-semibold shadow-lg hover:bg-white/90 active:scale-95 transition-all"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (game.linkUrl) openConfiguredLink(game.linkUrl)
+                    else navigate('/games')
+                  }}
                 >
-                  <Bell className="w-4 h-4" />
-                  {unreadCount > 0 && (
-                    <span className="absolute top-0 right-0 min-w-[14px] h-[14px] px-0.5 bg-[#EF4444] text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                      {unreadCount > 99 ? '99+' : unreadCount}
-                    </span>
-                  )}
+                  立即预约
                 </button>
+              </div>
+            ))}
+          </div>
 
-                <AnimatePresence>
-                  {showNotify && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -8, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -8, scale: 0.95 }}
-                      transition={{ duration: 0.15 }}
-                      className="absolute right-0 top-full mt-2 w-80 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl shadow-xl z-50 overflow-hidden"
-                      style={{ maxHeight: '70vh' }}
-                    >
-                    <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between">
-                      <p className="text-sm text-[var(--text-primary)] font-semibold">消息通知</p>
-                      <div className="flex items-center gap-3">
-                        {unreadCount > 0 && (
-                          <button
-                            onClick={() => markAllReadMutation.mutate()}
-                            className="text-xs text-[var(--accent-primary)] hover:underline"
-                          >
-                            全部已读
-                          </button>
-                        )}
-                        {notifications.length > 0 && (
-                          <button
-                            onClick={() => clearAllMutation.mutate()}
-                            className="text-xs text-[#EF4444] hover:underline"
-                          >
-                            清除
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="overflow-y-auto" style={{ maxHeight: '320px' }}>
-                      {notifications.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-10 text-[var(--text-muted)]">
-                          <Bell className="w-8 h-8 mb-2 opacity-30" />
-                          <p className="text-sm">暂无通知</p>
-                        </div>
-                      ) : (
-                        notifications.map((n: any) => (
-                          <div
-                            key={n.id}
-                            className={`px-4 py-3 border-b border-[var(--border-subtle)] last:border-0 ${
-                              n.read ? 'opacity-60' : ''
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-sm text-[var(--text-primary)] font-medium flex-1">{n.title}</p>
-                              {!n.read && <span className="w-2 h-2 bg-[#EF4444] rounded-full shrink-0 mt-1" />}
-                            </div>
-                            <p className="text-xs text-[var(--text-secondary)] mt-1">{n.content}</p>
-                            <p className="text-[10px] text-[var(--text-muted)] mt-1">
-                              {n.createdAt ? new Date(n.createdAt).toLocaleString('zh-CN') : ''}
-                            </p>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    </motion.div>
+          {bannerItems.length > 1 && (
+            <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-1.5 z-20">
+              {bannerItems.map((item, index) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    const el = bannerRef.current
+                    if (el) el.scrollTo({ left: index * el.clientWidth, behavior: 'smooth' })
+                    resetBannerAutoScroll()
+                  }}
+                  className={cn(
+                    'h-1.5 rounded-full transition-all',
+                    activeBanner === index ? 'w-5 bg-white' : 'w-1.5 bg-white/50'
                   )}
-                </AnimatePresence>
+                  aria-label={`切换到第 ${index + 1} 张 Banner`}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* 顶部导航栏 */}
+          <div className="relative z-30 px-4 pt-3 pb-3">
+            <div className="flex items-center justify-between text-white">
+              <button
+                onClick={() => setVenuePickerOpen(true)}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-white/15 backdrop-blur hover:bg-white/25 active:scale-95 transition-all"
+              >
+                <MapPin className="w-4 h-4" />
+                <span className="text-sm font-medium">{selectedVenue?.name || '未定位'}</span>
+                <ChevronRight className="w-3.5 h-3.5 opacity-70" />
+              </button>
+
+              <div className="flex items-center gap-2">
+                <LanguageSelect buttonClassName="bg-white/15 backdrop-blur text-white hover:bg-white/25" />
+
+                {/* Notification bell */}
+                <div className="relative" ref={notifyWrapRef}>
+                  <NotificationPopover
+                    open={showNotify}
+                    onOpenChange={setShowNotify}
+                    notifications={notifications.map((n: any) => ({
+                      id: String(n.id),
+                      title: n.title,
+                      description: n.content,
+                      timestamp: new Date(n.createdAt),
+                      read: n.read,
+                    }))}
+                    onMarkAllAsRead={() => markAllReadMutation.mutate()}
+                    onMarkAsRead={(id) => markReadMutation.mutate(id)}
+                    onClearAll={() => clearAllMutation.mutate()}
+                    title="消息通知"
+                    emptyText="暂无通知"
+                    buttonClassName="w-9 h-9 rounded-full bg-white/15 backdrop-blur text-white hover:bg-white/25 active:scale-95 transition-all"
+                    popoverClassName="bg-[var(--bg-card)] border border-[var(--border-subtle)] shadow-xl"
+                    textColor="text-[var(--text-primary)]"
+                    hoverBgColor="hover:bg-[var(--bg-hover)]"
+                    dividerColor="divide-[var(--border-subtle)]"
+                    headerBorderColor="border-[var(--border-subtle)]"
+                  />
+                </div>
               </div>
             </div>
           </div>
 
-          {searchInHeader && (
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
+          {searchEnabled && (
+            <div className="relative z-20 px-4 pt-4 pb-2">
+              <Search className="absolute left-7 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 z-20" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={pageSettings?.cHomeSearchPlaceholder || '搜索 VR 体验项目...'}
-                className="w-full h-10 pl-9 pr-9 rounded-full bg-[var(--bg-elevated)] border border-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)] focus:bg-white transition-colors"
+                className="w-full h-10 pl-9 pr-9 rounded-full bg-white/90 backdrop-blur text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:bg-white transition-colors"
               />
               {search && (
                 <button
                   type="button"
                   onClick={() => setSearch('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full bg-[var(--text-muted)]/10 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  className="absolute right-7 top-1/2 -translate-y-1/2 p-0.5 rounded-full bg-gray-400/20 text-gray-500 hover:text-gray-700 z-20"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -362,6 +536,116 @@ export default function Home() {
             </div>
           )}
         </div>
+      ) : (
+        <div className="relative bg-white shadow-sm">
+          {/* 顶部导航栏 */}
+          <div className="relative z-30 px-4 pt-3 pb-3">
+            <div className="flex items-center justify-between text-gray-900">
+              <button
+                onClick={() => setVenuePickerOpen(true)}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all"
+              >
+                <MapPin className="w-4 h-4" />
+                <span className="text-sm font-medium">{selectedVenue?.name || '未定位'}</span>
+                <ChevronRight className="w-3.5 h-3.5 opacity-70" />
+              </button>
+
+              <div className="flex items-center gap-2">
+                <LanguageSelect buttonClassName="bg-gray-100 text-gray-900 hover:bg-gray-200" />
+
+                {/* Notification bell */}
+                <div className="relative" ref={notifyWrapRef}>
+                  <NotificationPopover
+                    open={showNotify}
+                    onOpenChange={setShowNotify}
+                    notifications={notifications.map((n: any) => ({
+                      id: String(n.id),
+                      title: n.title,
+                      description: n.content,
+                      timestamp: new Date(n.createdAt),
+                      read: n.read,
+                    }))}
+                    onMarkAllAsRead={() => markAllReadMutation.mutate()}
+                    onMarkAsRead={(id) => markReadMutation.mutate(id)}
+                    onClearAll={() => clearAllMutation.mutate()}
+                    title="消息通知"
+                    emptyText="暂无通知"
+                    buttonClassName="w-9 h-9 rounded-full bg-gray-100 text-gray-900 hover:bg-gray-200 active:scale-95 transition-all"
+                    popoverClassName="bg-[var(--bg-card)] border border-[var(--border-subtle)] shadow-xl"
+                    textColor="text-[var(--text-primary)]"
+                    hoverBgColor="hover:bg-[var(--bg-hover)]"
+                    dividerColor="divide-[var(--border-subtle)]"
+                    headerBorderColor="border-[var(--border-subtle)]"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {searchEnabled && (
+            <div className="relative z-20 px-4 pt-2 pb-3">
+              <Search className="absolute left-7 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 z-20" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={pageSettings?.cHomeSearchPlaceholder || '搜索 VR 体验项目...'}
+                className="w-full h-10 pl-9 pr-9 rounded-full bg-gray-100 text-sm text-gray-900 placeholder:text-gray-500 focus:outline-none focus:bg-white transition-colors"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute right-7 top-1/2 -translate-y-1/2 p-0.5 rounded-full bg-gray-400/20 text-gray-500 hover:text-gray-700 z-20"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 问候 + VIP 卡片 */}
+      <div className={cn(
+        "mx-4 relative z-20 rounded-2xl p-3.5 flex items-center justify-between transition-colors",
+        bannerEnabled
+          ? "-mt-10 border border-white/20 bg-white/14 text-white shadow-[0_18px_42px_rgba(15,23,42,0.22)] backdrop-blur-xl"
+          : "mt-4 border border-[var(--border-subtle)] bg-white text-gray-900 shadow-[0_10px_28px_rgba(15,23,42,0.08)]"
+      )}>
+        <div
+          className={cn("flex items-center gap-3", !user && "cursor-pointer")}
+          onClick={() => { if (!user) navigate('/login') }}
+        >
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt=""
+              className="w-10 h-10 rounded-full object-cover border-2 border-white/80 shadow-sm bg-gradient-to-br from-violet-500 to-blue-500"
+            />
+          ) : (
+            <PresetAvatar seed={user?.id} className="w-10 h-10 border-2 border-white/80 shadow-sm" />
+          )}
+          <div>
+            <p className={cn("text-xs", bannerEnabled ? "text-white/70" : "text-gray-500")}>{greetingTitle}</p>
+            <p className={cn("text-sm font-bold", bannerEnabled ? "text-white" : "text-gray-900")}>{greetingSubtitle}</p>
+          </div>
+        </div>
+        {user && pageSettings?.cHomeVipEnabled !== false && (
+          <button
+            onClick={() => navigate('/recharge')}
+            className={cn(
+              "flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold active:scale-95 transition-all",
+              bannerEnabled
+                ? "bg-white text-violet-700 shadow-sm"
+                : "bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-sm"
+            )}
+          >
+            <Crown className={cn("w-3.5 h-3.5", bannerEnabled ? "text-violet-500" : "text-yellow-300")} />
+            {pageSettings?.cHomeVipButton || '开通VIP'}
+            <ChevronRight className={cn("w-3 h-3", bannerEnabled ? "text-violet-500" : "text-white/80")} />
+          </button>
+        )}
       </div>
 
       <div className="max-w-lg mx-auto px-4 pt-4 space-y-5">
@@ -376,12 +660,12 @@ export default function Home() {
           </div>
         ) : (
           <div className="space-y-5">
-            {sectionOrder.filter((s) => s.enabled).map((section) => {
+            {sectionOrder.filter((s) => s.enabled && !['search', 'banner', 'vip'].includes(s.key)).map((section) => {
               // 搜索时只保留搜索框和搜索结果，隐藏 banner/分类/VIP/团购推荐等其他模块
               if (search.trim() !== '' && section.key !== 'search' && section.key !== 'hot') return null
               return (
               <div key={section.key}>
-                {section.key === 'search' && !searchInHeader && (
+                {section.key === 'search' && !searchEnabled && (
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
                     <input
@@ -491,57 +775,207 @@ export default function Home() {
 
                 {section.key === 'customModules' && customModules.length > 0 && (
                   <div className="space-y-3">
-                    {customModules.map((module) => {
-                      const hasContent = !!(module.title?.trim() || module.content?.trim() || module.linkUrl)
-                      return (
+                    {gridModules.map((module) => (
+                      <div
+                        key={module.id}
+                        className="bg-white rounded-2xl border border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)] overflow-hidden p-5"
+                      >
+                        {module.title?.trim() && (
+                          <div className="flex items-center gap-2 mb-5">
+                            <div className="w-1 h-4 rounded-full bg-[var(--accent-primary)]" />
+                            <h3 className="text-base font-black text-[var(--text-primary)]">{module.title}</h3>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-4 gap-x-2 gap-y-5">
+                          {module.items.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                if (!item.linkUrl) return
+                                if (item.linkUrl.startsWith('http')) window.open(item.linkUrl, '_blank')
+                                else navigate(item.linkUrl)
+                              }}
+                              className="group flex flex-col items-center gap-2.5"
+                            >
+                              {item.imageUrl ? (
+                                <div className="w-14 h-14 rounded-2xl bg-slate-100 overflow-hidden shadow-sm group-active:scale-95 transition-transform">
+                                  <img src={getImageUrl(item.imageUrl)} alt={item.title} className="w-full h-full object-cover" />
+                                </div>
+                              ) : (
+                                <div className="w-14 h-14 rounded-2xl bg-slate-100 shadow-sm group-active:scale-95 transition-transform" />
+                              )}
+                              <span className="text-xs font-medium text-[var(--text-primary)] text-center line-clamp-1">{item.title}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {carouselModules.length > 0 && (
+                      <div className="relative">
                         <div
-                          key={module.id}
-                          className="bg-white rounded-2xl border border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)] overflow-hidden"
+                          ref={moduleCarouselRef}
+                          onScroll={handleModuleScroll}
+                          onTouchStart={resetModuleAutoScroll}
+                          onMouseDown={resetModuleAutoScroll}
+                          className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide -mx-5"
                         >
-                          {module.videoUrl ? (
-                            <div className="w-full bg-black flex justify-center">
-                              <video
-                                src={getImageUrl(module.videoUrl)}
-                                controls
-                                autoPlay
-                                muted
-                                loop
-                                playsInline
-                                preload="metadata"
-                                className="w-full h-auto"
-                              />
-                            </div>
-                          ) : module.imageUrl ? (
-                            <img src={getImageUrl(module.imageUrl)} alt={module.title || '活动图片'} className="w-full h-36 object-cover" />
-                          ) : null}
-                          {hasContent && (
-                            <div className="p-4">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  {module.title?.trim() && (
-                                    <h3 className="text-sm font-black text-[var(--text-primary)]">{module.title}</h3>
-                                  )}
-                                  {module.content?.trim() && (
-                                    <p className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed line-clamp-3">{module.content}</p>
+                          {carouselModules.map((module) => {
+                            const hasTextContent = !!(module.title?.trim() || module.content?.trim())
+                            const showButton = !!(module.linkUrl?.trim() && module.buttonText?.trim())
+                            const hasContent = hasTextContent || showButton
+                            return (
+                              <div
+                                key={module.id}
+                                className="w-full shrink-0 snap-start px-5"
+                              >
+                                <div className="bg-white rounded-2xl border border-[var(--border-subtle)] shadow-[0_8px_22px_rgba(15,23,42,0.07)] overflow-hidden">
+                                  {module.videoUrl ? (
+                                    <>
+                                      <div
+                                        className="w-full bg-black flex justify-center overflow-hidden"
+                                        style={{ aspectRatio: videoAspectRatios[module.id] ? `${videoAspectRatios[module.id]}` : '16/9' }}
+                                      >
+                                        <video
+                                          ref={(el) => {
+                                            if (el) videoRefs.current.set(module.id, el)
+                                            else videoRefs.current.delete(module.id)
+                                          }}
+                                          src={getImageUrl(module.videoUrl)}
+                                          controls
+                                          autoPlay
+                                          muted
+                                          playsInline
+                                          preload="metadata"
+                                          onLoadedMetadata={(e) => handleVideoLoadedMetadata(module.id, e.currentTarget)}
+                                          onEnded={handleModuleVideoEnded}
+                                          className="w-full h-full object-contain block"
+                                        />
+                                      </div>
+                                      {hasContent && (
+                                        <div className="p-4">
+                                          {hasTextContent && (
+                                            <div className="flex items-start justify-between gap-3">
+                                              <div className="min-w-0">
+                                                {module.title?.trim() && (
+                                                  <h3 className="text-sm font-black text-[var(--text-primary)]">{module.title}</h3>
+                                                )}
+                                                {module.content?.trim() && (
+                                                  <p className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed line-clamp-3">{module.content}</p>
+                                                )}
+                                              </div>
+                                            </div>
+                                          )}
+                                          {showButton && (
+                                            <button
+                                              onClick={() => {
+                                                if (module.linkUrl.startsWith('http')) window.open(module.linkUrl, '_blank')
+                                                else navigate(module.linkUrl)
+                                              }}
+                                              className={cn(
+                                                'px-3 py-1.5 rounded-full bg-[var(--bg-active)] text-[var(--accent-primary)] text-xs font-bold',
+                                                hasTextContent && 'mt-3'
+                                              )}
+                                            >
+                                              {module.buttonText.trim()}
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : module.imageUrl ? (
+                                    <div className="relative">
+                                      <div className="w-full bg-slate-100 flex items-center justify-center aspect-video overflow-hidden">
+                                        <img
+                                          src={getImageUrl(module.imageUrl)}
+                                          alt={module.title || '活动图片'}
+                                          className="w-full h-full object-cover block"
+                                        />
+                                      </div>
+                                      {showButton && (
+                                        <button
+                                          onClick={() => {
+                                            if (module.linkUrl.startsWith('http')) window.open(module.linkUrl, '_blank')
+                                            else navigate(module.linkUrl)
+                                          }}
+                                          className="absolute bottom-3 left-4 px-3 py-1.5 rounded-full bg-white/90 text-[var(--accent-primary)] text-xs font-bold shadow-md backdrop-blur-sm"
+                                        >
+                                          {module.buttonText.trim()}
+                                        </button>
+                                      )}
+                                      {hasTextContent && (
+                                        <div className="p-4">
+                                          <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                              {module.title?.trim() && (
+                                                <h3 className="text-sm font-black text-[var(--text-primary)]">{module.title}</h3>
+                                              )}
+                                              {module.content?.trim() && (
+                                                <p className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed line-clamp-3">{module.content}</p>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    hasContent && (
+                                      <div className="p-4">
+                                        {hasTextContent && (
+                                          <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                              {module.title?.trim() && (
+                                                <h3 className="text-sm font-black text-[var(--text-primary)]">{module.title}</h3>
+                                              )}
+                                              {module.content?.trim() && (
+                                                <p className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed line-clamp-3">{module.content}</p>
+                                              )}
+                                            </div>
+                                          </div>
+                                        )}
+                                        {showButton && (
+                                          <button
+                                            onClick={() => {
+                                              if (module.linkUrl.startsWith('http')) window.open(module.linkUrl, '_blank')
+                                              else navigate(module.linkUrl)
+                                            }}
+                                            className={cn(
+                                              'px-3 py-1.5 rounded-full bg-[var(--bg-active)] text-[var(--accent-primary)] text-xs font-bold',
+                                              hasTextContent && 'mt-3'
+                                            )}
+                                          >
+                                            {module.buttonText.trim()}
+                                          </button>
+                                        )}
+                                      </div>
+                                    )
                                   )}
                                 </div>
                               </div>
-                              {module.linkUrl && (
-                                <button
-                                  onClick={() => {
-                                    if (module.linkUrl.startsWith('http')) window.open(module.linkUrl, '_blank')
-                                    else navigate(module.linkUrl)
-                                  }}
-                                  className="mt-3 px-3 py-1.5 rounded-full bg-[var(--bg-active)] text-[var(--accent-primary)] text-xs font-bold"
-                                >
-                                  {module.buttonText || '查看详情'}
-                                </button>
-                              )}
-                            </div>
-                          )}
+                            )
+                          })}
                         </div>
-                      )
-                    })}
+                        {carouselModules.length > 1 && (
+                          <div className="flex justify-center gap-1.5 mt-3">
+                            {carouselModules.map((item, index) => (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => {
+                                  scrollModuleTo(index)
+                                  resetModuleAutoScroll()
+                                }}
+                                className={cn(
+                                  'h-1.5 rounded-full transition-all',
+                                  activeModule === index ? 'w-5 bg-[var(--accent-primary)]' : 'w-1.5 bg-[var(--border-subtle)]'
+                                )}
+                                aria-label={`切换到第 ${index + 1} 个模块`}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

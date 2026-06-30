@@ -17,6 +17,8 @@ import { processBookingLifecycle } from '../jobs/bookingLifecycleJob'
 import { onCouponUsed } from '../services/campaignRewardService'
 import { releaseEquipment } from '../services/equipmentService'
 import { executeRescheduleInTx } from './bookingController'
+import { normalizeThirdPartyCouponCode } from '../utils/thirdPartyCoupon'
+import { isPlatformEnabled } from '../utils/platformConfig'
 
 export const createValidators = [
   body('venueId').if(body('groupBuyPackageId').not().exists()).notEmpty().withMessage('场地不能为空'),
@@ -53,6 +55,48 @@ function timeToMinutes(t: string): number {
 
 function generateVerifyCode(): string {
   return `VR${format(new Date(), 'yyyyMMdd')}${Math.floor(Math.random() * 900000) + 100000}`
+}
+
+function readOrderMetadata(metadata: Prisma.JsonValue | null | undefined): Record<string, any> {
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata as Record<string, any> : {}
+}
+
+async function getUsableThirdPartyCoupon(codeInput: unknown, amountBeforeCoupon: number) {
+  const code = normalizeThirdPartyCouponCode(codeInput)
+  if (!code) return null
+
+  const coupon = await prisma.thirdPartyCoupon.findUnique({ where: { code } })
+  if (!coupon) throw new Error('第三方券不存在，请先让顾客在 C 端兑换绑定')
+  if (coupon.status !== 'UNUSED') throw new Error('平台优惠券已使用，不能重复抵扣')
+  if (!isPlatformEnabled(coupon.source)) {
+    throw new Error('该平台已停用，无法使用第三方券')
+  }
+  if (coupon.minOrderAmount > amountBeforeCoupon) {
+    throw new Error(`第三方券需满 ¥${(coupon.minOrderAmount / 100).toFixed(2)} 可用`)
+  }
+
+  const discount = Math.min(coupon.discountAmount, amountBeforeCoupon)
+  return {
+    coupon,
+    discount,
+    metadata: {
+      id: coupon.id,
+      code: coupon.code,
+      source: coupon.source,
+      name: coupon.name,
+      discountAmount: discount,
+      minOrderAmount: coupon.minOrderAmount,
+    },
+  }
+}
+
+async function restoreThirdPartyCouponFromMetadata(tx: Prisma.TransactionClient, metadata: Prisma.JsonValue | null | undefined) {
+  const thirdPartyCoupon = readOrderMetadata(metadata).thirdPartyCoupon
+  if (!thirdPartyCoupon?.id) return
+  await tx.thirdPartyCoupon.updateMany({
+    where: { id: String(thirdPartyCoupon.id), status: 'USED' },
+    data: { status: 'UNUSED', usedAt: null },
+  })
 }
 
 function getLocalBookingStartTime(date: Date, startTime: string): Date {
@@ -274,7 +318,8 @@ export async function list(req: AuthenticatedRequest, res: Response) {
       prisma.order.count({ where: countAllWhere }),
       prisma.order.groupBy({
         by: ['status'],
-        where: countWhere,
+        // 状态标签仅统计主订单（NORMAL），改签费/团购父订单不计入各状态角标
+        where: { ...countWhere, orderKind: 'NORMAL' },
         _count: { status: true },
       }),
       prisma.order.groupBy({
@@ -389,7 +434,7 @@ export async function create(req: AuthenticatedRequest, res: Response) {
   }
 
   try {
-    const { bookingId, venueId, venueName, amount, bookingTime, userId, source, payMethod, userCouponId, groupBuyPackageId } = req.body
+    const { bookingId, venueId, venueName, amount, bookingTime, userId, source, payMethod, userCouponId, groupBuyPackageId, thirdPartyCouponCode } = req.body
     const currentUserId = userId || req.user?.id
 
     // 团购套餐订单：套餐价已是最终价，不打折、不用券
@@ -517,6 +562,10 @@ export async function create(req: AuthenticatedRequest, res: Response) {
     let finalUserCouponId: string | null = null
     let couponType: string | null = null
 
+    if (userCouponId && normalizeThirdPartyCouponCode(thirdPartyCouponCode)) {
+      return error(res, '一个订单只能使用一张优惠券，不能同时使用系统优惠券和平台优惠券', 400)
+    }
+
     if (userCouponId && currentUserId && !isGroupBuy) {
       const coupon = await prisma.userCoupon.findUnique({ where: { id: userCouponId } })
       if (!coupon) throw new Error('优惠券不存在')
@@ -552,13 +601,21 @@ export async function create(req: AuthenticatedRequest, res: Response) {
       finalAmount = Math.round(parsedAmount * discount / 100)
     }
 
+    const systemCouponDiscount = couponDiscount
+    const thirdPartyCoupon = await getUsableThirdPartyCoupon(thirdPartyCouponCode, finalAmount)
+    if (thirdPartyCoupon) {
+      finalAmount = Math.max(0, finalAmount - thirdPartyCoupon.discount)
+      couponDiscount += thirdPartyCoupon.discount
+    }
+
     const pointsConfig = await getPointsConfig()
     const remainingAmount = finalAmount
+    const orderMetadata = thirdPartyCoupon ? { thirdPartyCoupon: thirdPartyCoupon.metadata } : undefined
 
     // discountAmount：会员优惠金额（基于实际打折基数）
     let discountBase = parsedAmount
     if (couponType === 'EXPERIENCE_FREE') {
-      discountBase = Math.max(0, parsedAmount - couponDiscount)
+      discountBase = Math.max(0, parsedAmount - systemCouponDiscount)
     }
     const discountAmount = discountBase - Math.round(discountBase * discount / 100)
 
@@ -611,6 +668,7 @@ export async function create(req: AuthenticatedRequest, res: Response) {
             payMethod: 'BALANCE',
             paidAt: new Date(),
             bookingTime,
+            ...(orderMetadata ? { metadata: orderMetadata } : {}),
           },
           include: {
             user: { select: { id: true, name: true, phone: true } },
@@ -624,6 +682,13 @@ export async function create(req: AuthenticatedRequest, res: Response) {
             where: { id: finalUserCouponId },
             data: { status: 'USED', usedAt: new Date(), usedOrderId: order.id },
           })
+        }
+        if (thirdPartyCoupon) {
+          const updatedCoupon = await tx.thirdPartyCoupon.updateMany({
+            where: { id: thirdPartyCoupon.coupon.id, status: 'UNUSED' },
+            data: { status: 'USED', usedAt: new Date() },
+          })
+          if (updatedCoupon.count !== 1) throw new Error('第三方券已被使用')
         }
 
         // 记录余额变动流水（拆分记录）
@@ -680,39 +745,52 @@ export async function create(req: AuthenticatedRequest, res: Response) {
     }
 
     // 普通订单创建（待支付）—— 在线支付也享受折扣
-    // 优惠券不在创建时预占，待支付成功后再扣减
+    // 平台券在订单创建时锁定，避免同一券码被多个未付款订单重复占用。
     const expireAt = new Date(Date.now() + 30 * 60 * 1000)
-    const order = await prisma.order.create({
-      data: {
-        orderNo: await generateOrderNo(groupBuyPackageId ? 'group' : 'normal'),
-        bookingId: bookingId || null,
-        userId: currentUserId || null,
-        venueId,
-        venueName: finalVenueName,
-        groupBuyPackageId: groupBuyPackageId || null,
-        originalAmount: parsedAmount,
-        amount: remainingAmount,
-        discountRate: discount,
-        discountAmount,
-        couponDiscount,
-        userCouponId: finalUserCouponId,
-        pointsUsed: 0,
-        pointsDeduction: 0,
-        status: 'PENDING',
-        source: source === 'ONLINE' ? 'ONLINE' : 'OFFLINE',
-        bookingTime,
-        expireAt,
-      },
-      include: {
-        user: { select: { id: true, name: true, phone: true } },
-        booking: true,
-      },
+    const order = await prisma.$transaction(async (tx) => {
+      const createdOrder = await tx.order.create({
+        data: {
+          orderNo: await generateOrderNo(groupBuyPackageId ? 'group' : 'normal', tx),
+          bookingId: bookingId || null,
+          userId: currentUserId || null,
+          venueId,
+          venueName: finalVenueName,
+          groupBuyPackageId: groupBuyPackageId || null,
+          originalAmount: parsedAmount,
+          amount: remainingAmount,
+          discountRate: discount,
+          discountAmount,
+          couponDiscount,
+          userCouponId: finalUserCouponId,
+          pointsUsed: 0,
+          pointsDeduction: 0,
+          status: 'PENDING',
+          source: source === 'ONLINE' ? 'ONLINE' : 'OFFLINE',
+          bookingTime,
+          expireAt,
+          ...(orderMetadata ? { metadata: orderMetadata } : {}),
+        },
+        include: {
+          user: { select: { id: true, name: true, phone: true } },
+          booking: true,
+        },
+      })
+
+      if (thirdPartyCoupon) {
+        const updatedCoupon = await tx.thirdPartyCoupon.updateMany({
+          where: { id: thirdPartyCoupon.coupon.id, status: 'UNUSED' },
+          data: { status: 'USED', usedAt: new Date() },
+        })
+        if (updatedCoupon.count !== 1) throw new Error('平台优惠券已使用，不能重复抵扣')
+      }
+
+      return createdOrder
     })
 
     return success(res, order, '订单创建成功', 201)
   } catch (err) {
     const msg = (err as Error).message
-    if (msg === '余额不足') return error(res, msg, 400)
+    if (msg === '余额不足' || msg.includes('优惠券') || msg.includes('第三方券')) return error(res, msg, 400)
     return error(res, msg, 500)
   }
 }
@@ -744,6 +822,12 @@ export async function updateStatus(req: AuthenticatedRequest, res: Response) {
       where: { id },
       data,
     })
+
+    if (status === 'CANCELLED') {
+      await prisma.$transaction(async (tx) => {
+        await restoreThirdPartyCouponFromMetadata(tx, existing.metadata)
+      })
+    }
 
     // 同步更新关联排场状态
     if (order.bookingId) {
@@ -810,6 +894,7 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
 
     const id = req.params.id as string
     const method = req.body?.method
+    const thirdPartyCouponCode = req.body?.thirdPartyCouponCode
 
     // 支持通过 orderNo 或 id 查询
     const order = await prisma.order.findFirst({
@@ -843,13 +928,32 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
       return await payRescheduleFeeOrder(req, res, order, method)
     }
 
+    const existingMetadata = readOrderMetadata(order.metadata)
+    const existingThirdPartyCoupon = existingMetadata.thirdPartyCoupon
+    const normalizedThirdPartyCouponCode = normalizeThirdPartyCouponCode(thirdPartyCouponCode)
+    if (normalizedThirdPartyCouponCode && existingThirdPartyCoupon) {
+      return error(res, '平台优惠券已使用，不能再使用第二张优惠券', 400)
+    }
+    if (normalizedThirdPartyCouponCode && order.userCouponId) {
+      return error(res, '该订单已使用系统优惠券，不能再使用平台优惠券', 400)
+    }
+    if (normalizedThirdPartyCouponCode && order.couponDiscount > 0 && !existingThirdPartyCoupon) {
+      return error(res, '该订单已有优惠抵扣，不能再使用平台优惠券', 400)
+    }
+    const thirdPartyCoupon = normalizedThirdPartyCouponCode
+      ? await getUsableThirdPartyCoupon(normalizedThirdPartyCouponCode, order.amount)
+      : null
+    const payableAmount = thirdPartyCoupon
+      ? Math.max(0, order.amount - thirdPartyCoupon.discount)
+      : order.amount
+
     // 余额支付检查
     if (method === 'BALANCE' && order.userId) {
       const user = await prisma.user.findUnique({ where: { id: order.userId } })
       if (!user) return error(res, '用户不存在', 400)
       const wallet = { principal: user.principalBalance, bonus: user.bonusBalance }
       const { getUserWallet, hasEnoughBalance, deductProportional } = await import('../utils/wallet')
-      if (!hasEnoughBalance(wallet, order.amount)) {
+      if (!hasEnoughBalance(wallet, payableAmount)) {
         return error(res, `余额不足，当前余额 ¥${(wallet.principal + wallet.bonus) / 100}`, 400)
       }
     }
@@ -875,7 +979,7 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
         if (freshUser) {
           const { hasEnoughBalance, deductProportional } = await import('../utils/wallet')
           const wallet = { principal: freshUser.principalBalance, bonus: freshUser.bonusBalance }
-          const result = deductProportional(wallet, order.amount)
+          const result = deductProportional(wallet, payableAmount)
           principalDeduction = result.principalDeduction
           bonusDeduction = result.bonusDeduction
           await tx.user.update({
@@ -889,10 +993,10 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
             data: {
               userId: order.userId,
               type: 'DEDUCT',
-              amount: order.amount,
+              amount: payableAmount,
               principalAmount: -principalDeduction,
               bonusAmount: -bonusDeduction,
-              totalAmount: -order.amount,
+              totalAmount: -payableAmount,
               orderId: order.id,
               remark: `订单消费 ${order.venueName}（本金¥${principalDeduction / 100}+赠送¥${bonusDeduction / 100}）`,
             },
@@ -905,6 +1009,14 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
         }
       }
 
+      if (thirdPartyCoupon) {
+        const updatedCoupon = await tx.thirdPartyCoupon.updateMany({
+          where: { id: thirdPartyCoupon.coupon.id, status: 'UNUSED' },
+          data: { status: 'USED', usedAt: new Date() },
+        })
+        if (updatedCoupon.count !== 1) throw new Error('第三方券已被使用')
+      }
+
       // 3. 更新订单状态（余额支付记录扣款明细）
       const o = await tx.order.update({
         where: { id: order.id },
@@ -912,6 +1024,16 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
           status: 'PAID',
           payMethod: method || 'WECHAT',
           paidAt: new Date(),
+          ...(thirdPartyCoupon
+            ? {
+                amount: payableAmount,
+                couponDiscount: order.couponDiscount + thirdPartyCoupon.discount,
+                metadata: {
+                  ...existingMetadata,
+                  thirdPartyCoupon: thirdPartyCoupon.metadata,
+                },
+              }
+            : {}),
           // 团购券支付成功后，将过期时间延长为 30 天有效期
           ...(order.groupBuyPackageId ? { expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) } : {}),
           ...(method === 'BALANCE' ? { principalDeduction, bonusDeduction } : {}),
@@ -935,7 +1057,7 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
       await tx.payment.create({
         data: {
           orderId: order.id,
-          amount: order.amount,
+          amount: payableAmount,
           method: method || 'WECHAT',
           status: 'SUCCESS',
         },
@@ -944,10 +1066,10 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
       return o
     })
 
-    // 赠送积分（在线支付按 order.amount 计算，全部视为现金收入）
+    // 赠送积分（按实际支付金额计算）
     if (order.userId) {
       const { earnRate } = await getPointsConfig()
-      const earned = Math.floor(order.amount / 100 * earnRate)
+      const earned = Math.floor(payableAmount / 100 * earnRate)
       if (earned > 0) {
         await prisma.user.update({
           where: { id: order.userId },
@@ -967,18 +1089,30 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
     }
 
     // 发送支付成功通知
+    const paidUser = order.userId ? await prisma.user.findUnique({ where: { id: order.userId }, select: { name: true, phone: true } }) : null
     if (order.userId) {
       await pushNotification(
         order.userId,
         'PAY_SUCCESS',
         '支付成功',
-        `您的订单 ${order.orderNo} 支付成功，金额 ¥${(order.amount / 100).toFixed(2)}`
+        `您的订单 ${order.orderNo} 支付成功，金额 ¥${(payableAmount / 100).toFixed(2)}`
       )
     }
+    // 给管理员推送用户支付通知（管理员视角）
+    await pushAdminNotification(
+      'ADMIN_NEW_ORDER',
+      '订单已支付',
+      `${paidUser?.name || '用户'} 的订单 ${order.orderNo} 支付成功，金额 ¥${(payableAmount / 100).toFixed(2)}`,
+      'USER'
+    )
 
     return success(res, updated, '支付成功')
   } catch (err) {
-    return error(res, (err as Error).message, 500)
+    const msg = (err as Error).message
+    if (msg.includes('优惠券') || msg.includes('第三方券') || msg.includes('余额不足') || msg.includes('订单已过期')) {
+      return error(res, msg, 400)
+    }
+    return error(res, msg, 500)
   }
 }
 
@@ -1118,6 +1252,24 @@ async function payRescheduleFeeOrder(
     )
   }
 
+  // 发送改签成功通知
+  const rescheduleVenue = await prisma.venue.findUnique({ where: { id: meta.newVenueId }, select: { name: true } })
+  const operator = feeOrder.userId ? await prisma.user.findUnique({ where: { id: feeOrder.userId }, select: { name: true } }) : null
+  if (feeOrder.userId) {
+    await pushNotification(
+      feeOrder.userId,
+      'BOOKING_SUCCESS',
+      '改签成功',
+      `您的预约已改签至 ${rescheduleVenue?.name || parentOrder.venueName} ${meta.newDate} ${meta.newStartTime}-${meta.newEndTime}`
+    )
+  }
+  await pushAdminNotification(
+    'ADMIN_NEW_ORDER',
+    '预约已改签',
+    `${operator?.name || '用户'} 将预约改签至 ${rescheduleVenue?.name || parentOrder.venueName} ${meta.newDate} ${meta.newStartTime}-${meta.newEndTime}，${meta.newPersonCount}人`,
+    'USER'
+  )
+
   return success(res, result, '改签费支付成功并已执行改签')
 }
 
@@ -1221,6 +1373,7 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
           })
         }
       }
+      await restoreThirdPartyCouponFromMetadata(tx, order.metadata)
 
       const updated = await tx.order.update({
         where: { id: order.id },
@@ -1423,7 +1576,7 @@ export async function executeOrderRefund(input: {
   if (order.status === 'NO_SHOW') {
     throw new Error('已作废订单请使用退款处置流程')
   }
-  if (!['PAID', 'READY_TO_VERIFY'].includes(order.status)) {
+  if (!['PAID', 'READY_TO_VERIFY', 'COMPLETED'].includes(order.status)) {
     throw new Error('该订单状态不允许退款')
   }
 
@@ -1439,6 +1592,7 @@ export async function executeOrderRefund(input: {
         data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
       })
     }
+    await restoreThirdPartyCouponFromMetadata(tx, order.metadata)
 
     const updated = await tx.order.update({
       where: { id: order.id },
@@ -1637,6 +1791,9 @@ export async function executeNoShowDisposition(input: {
           data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
         })
       }
+    }
+    if (action === 'FULL_REFUND') {
+      await restoreThirdPartyCouponFromMetadata(tx, order.metadata)
     }
 
     if (order.userId) {
@@ -1851,6 +2008,7 @@ export async function batchRefund(req: AuthenticatedRequest, res: Response) {
             data: { status: 'UNUSED', usedAt: null, usedOrderId: null },
           })
         }
+        await restoreThirdPartyCouponFromMetadata(tx, order.metadata)
 
         await tx.order.update({
           where: { id: order.id },

@@ -11,10 +11,11 @@ const routeToPermission: Record<string, string | string[]> = {
   '/booking':   'booking:read',
   '/orders':    'order:read',
   '/approvals': ['approval:read', 'approval:request'],
-  '/users':     'user:read',
+  '/member-center': 'user:read',
   '/analytics': ['finance:report', 'order:read', 'venue:read'],
   '/venue-analytics': ['finance:report', 'venue:read'],
   '/finance':   'finance:read',
+  '/finance/compliance': 'finance:read',
   '/accounts':  'account:read',
   '/member-marketing': 'user:gift',
   '/settings':  'setting:read',
@@ -23,6 +24,7 @@ const routeToPermission: Record<string, string | string[]> = {
   '/group-buys': 'group-buy:read',
   '/coupon-effects': 'marketing:campaign',
   '/campaigns': 'marketing:campaign',
+  '/platforms': 'marketing:campaign',
   '/trigger-rules': 'marketing:rule',
 }
 

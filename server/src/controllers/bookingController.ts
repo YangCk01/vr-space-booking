@@ -3,7 +3,7 @@ import { body, param, validationResult } from 'express-validator'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../utils/prisma'
 import { success, error, paginated } from '../utils/response'
-import { pushNotification } from '../controllers/notificationController'
+import { pushNotification, pushAdminNotification } from '../controllers/notificationController'
 import { startOfDay, endOfDay, parseISO } from 'date-fns'
 import { assignEquipment, releaseEquipment } from '../services/equipmentService'
 import { consumeBenefit } from '../services/userBenefitService'
@@ -356,6 +356,7 @@ export async function create(req: Request, res: Response) {
 
     // Send notification
     const userId = (req as any).user?.id
+    const operatorName = (req as any).user?.name || personName || '用户'
     if (userId) {
       await pushNotification(
         userId,
@@ -364,6 +365,13 @@ export async function create(req: Request, res: Response) {
         `您已成功预约 ${venue.name} ${date} ${startTime}-${endTime}`
       )
     }
+    // 给管理员推送用户预约通知（管理员视角）
+    await pushAdminNotification(
+      'ADMIN_NEW_ORDER',
+      '新预约',
+      `${operatorName} 预约了 ${venue.name} ${date} ${startTime}-${endTime}，${personCount || 1}人`,
+      'USER'
+    )
 
     return success(res, booking, '预约创建成功', 201)
   } catch (err) {
@@ -878,6 +886,24 @@ export async function reschedule(req: Request, res: Response) {
           clearDisruption: isMaintenanceAffected,
         })
       })
+
+      // 发送改签通知
+      const rescheduleVenue = await prisma.venue.findUnique({ where: { id: newVenueId }, select: { name: true } })
+      const operatorName = order.user?.name || booking.personName || '用户'
+      if (order.userId) {
+        await pushNotification(
+          order.userId,
+          'BOOKING_SUCCESS',
+          '改签成功',
+          `您的预约已改签至 ${rescheduleVenue?.name || booking.venue?.name} ${newDate} ${newStartTime}-${newEndTime}`
+        )
+      }
+      await pushAdminNotification(
+        'ADMIN_NEW_ORDER',
+        '预约已改签',
+        `${operatorName} 将预约改签至 ${rescheduleVenue?.name || booking.venue?.name} ${newDate} ${newStartTime}-${newEndTime}，${newPersonCount}人`,
+        'USER'
+      )
 
       return success(res, {
         newAmount: newFinalAmount,

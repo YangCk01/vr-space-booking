@@ -1,8 +1,10 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../types'
 import { prisma } from '../utils/prisma'
-import { success, paginated } from '../utils/response'
+import { success, paginated, error } from '../utils/response'
 import { startOfDay, endOfDay, subDays, format } from 'date-fns'
+import { getConfig, updateConfig } from '../services/configService'
+import { logAudit } from '../middleware/auditLog'
 
 /* ─── Local business day boundaries ─── */
 function dayStart(dateStr: string): Date { return startOfDay(new Date(dateStr + 'T00:00:00')) }
@@ -24,6 +26,114 @@ function orderCancelTime(order: { cancelledAt?: Date | null; updatedAt: Date; cr
 
 function orderRefundTime(order: { cancelledAt?: Date | null; updatedAt: Date; createdAt: Date }): Date {
   return order.cancelledAt || order.updatedAt || order.createdAt
+}
+
+const defaultAuditConfig = {
+  taxRate: 6,
+  paymentFeeRates: {
+    WECHAT: 0.6,
+    ALIPAY: 0.6,
+    CASH: 0,
+    BALANCE: 0,
+    BALANCE_POINTS: 0,
+    CARD: 0.6,
+  },
+  platformFeeRates: {
+    MEITUAN: 6,
+    DOUYIN: 5,
+    DIANPING: 6,
+  },
+  settlementCycles: {
+    WECHAT: 'T+1',
+    ALIPAY: 'T+1',
+    CASH: '实时',
+    BALANCE: '实时',
+    BALANCE_POINTS: '实时',
+    CARD: 'T+1',
+    MEITUAN: 'T+3',
+    DOUYIN: 'T+3',
+    DIANPING: 'T+7',
+  },
+}
+
+export function auditConfig() {
+  return {
+    taxRate: Number(getConfig('finance_tax_rate', defaultAuditConfig.taxRate)),
+    paymentFeeRates: {
+      ...defaultAuditConfig.paymentFeeRates,
+      ...(getConfig('finance_payment_fee_rates', {}) as Record<string, number>),
+    } as Record<string, number>,
+    platformFeeRates: {
+      ...defaultAuditConfig.platformFeeRates,
+      ...(getConfig('finance_platform_fee_rates', {}) as Record<string, number>),
+    } as Record<string, number>,
+    settlementCycles: {
+      ...defaultAuditConfig.settlementCycles,
+      ...(getConfig('finance_settlement_cycles', {}) as Record<string, string>),
+    } as Record<string, string>,
+  }
+}
+
+function readMeta(metadata: unknown): Record<string, any> {
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata as Record<string, any> : {}
+}
+
+function roundFee(amount: number, rate: number) {
+  return Math.round(amount * rate / 100)
+}
+
+export function paymentLabel(method?: string | null) {
+  const labels: Record<string, string> = {
+    WECHAT: '微信支付',
+    ALIPAY: '支付宝',
+    BALANCE: '储值余额',
+    BALANCE_POINTS: '余额+积分',
+    CASH: '现金',
+    CARD: '刷卡',
+  }
+  return method ? labels[method] || method : '-'
+}
+
+export function computeAuditStatus(actualRecv: number, expectedRecv: number, consumeStatus: string, bankStatus: string) {
+  if (consumeStatus === 'refunded') return 'refunded'
+  if (bankStatus === 'internal') return 'matched'
+  const diff = actualRecv - expectedRecv
+  if (diff < -1) return 'short'
+  if (diff > 1) return 'over'
+  return 'matched'
+}
+
+export function buildVouchers(record: any, taxRate: number) {
+  const revenue = Math.round(record.expectedRecv / (1 + taxRate / 100))
+  const tax = record.expectedRecv - revenue
+  if (record.consumeStatus === 'recharge') {
+    return [
+      { subject: '银行存款', debit: record.actualRecv, credit: 0, summary: '会员充值实收' },
+      { subject: '销售费用-支付手续费', debit: Math.abs(record.gatewayFee), credit: 0, summary: '充值支付手续费' },
+      { subject: '合同负债-会员本金', debit: 0, credit: record.assetChange?.principal || record.expectedRecv, summary: '会员充值本金' },
+      { subject: '合同负债-会员赠金', debit: 0, credit: record.assetChange?.gift || 0, summary: '会员充值赠金' },
+    ]
+  }
+  if (record.consumeStatus === 'refunded') {
+    return [
+      { subject: '主营业务收入', debit: Math.abs(revenue), credit: 0, summary: '退款冲减收入' },
+      { subject: '应交税费-应交增值税（销项）', debit: Math.abs(tax), credit: 0, summary: '退款冲减销项税' },
+      { subject: '银行存款', debit: 0, credit: Math.abs(record.actualRecv), summary: '退款原路退回' },
+    ]
+  }
+  if (record.paymentMethod === '储值余额' || record.paymentMethod === '余额+积分') {
+    return [
+      { subject: '合同负债-会员储值', debit: record.expectedRecv, credit: 0, summary: '储值余额核销' },
+      { subject: '主营业务收入', debit: 0, credit: revenue, summary: '确认收入' },
+      { subject: '应交税费-应交增值税（销项）', debit: 0, credit: tax, summary: '计提销项税' },
+    ]
+  }
+  return [
+    { subject: '应收账款/银行存款', debit: record.actualRecv, credit: 0, summary: '实际收款资产' },
+    { subject: '销售费用-平台及支付通道费', debit: Math.abs(record.platformFee) + Math.abs(record.gatewayFee), credit: 0, summary: '平台与支付手续费' },
+    { subject: '主营业务收入', debit: 0, credit: revenue, summary: '确认收入' },
+    { subject: '应交税费-应交增值税（销项）', debit: 0, credit: tax, summary: '计提销项税' },
+  ]
 }
 
 /* ─── 1. 财务概览 ─── */
@@ -600,4 +710,419 @@ export async function refunds(req: AuthenticatedRequest, res: Response) {
   ])
 
   return paginated(res, data, pageNum, sizeNum, total)
+}
+
+export async function getAuditConfig(req: AuthenticatedRequest, res: Response) {
+  return success(res, auditConfig())
+}
+
+export async function updateAuditConfig(req: AuthenticatedRequest, res: Response) {
+  try {
+    const config = auditConfig()
+    const nextTaxRate = Number(req.body?.taxRate ?? config.taxRate)
+    const nextPaymentFeeRates = {
+      ...config.paymentFeeRates,
+      ...(req.body?.paymentFeeRates || {}),
+    }
+    const nextPlatformFeeRates = {
+      ...config.platformFeeRates,
+      ...(req.body?.platformFeeRates || {}),
+    }
+    const nextSettlementCycles = {
+      ...config.settlementCycles,
+      ...(req.body?.settlementCycles || {}),
+    }
+
+    if (!Number.isFinite(nextTaxRate) || nextTaxRate < 0 || nextTaxRate > 100) {
+      return error(res, '税率必须在 0-100 之间', 400)
+    }
+    for (const [name, value] of Object.entries({ ...nextPaymentFeeRates, ...nextPlatformFeeRates })) {
+      const rate = Number(value)
+      if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+        return error(res, `${name} 费率必须在 0-100 之间`, 400)
+      }
+    }
+
+    await updateConfig('finance_tax_rate', nextTaxRate, req.user?.id)
+    await updateConfig('finance_payment_fee_rates', nextPaymentFeeRates, req.user?.id)
+    await updateConfig('finance_platform_fee_rates', nextPlatformFeeRates, req.user?.id)
+    await updateConfig('finance_settlement_cycles', nextSettlementCycles, req.user?.id)
+
+    await logAudit(req, {
+      action: 'FINANCE_AUDIT_CONFIG_UPDATE',
+      actionName: '更新业财审计费率配置',
+      targetType: 'FINANCE_CONFIG',
+      targetId: 'finance_audit_config',
+      targetDesc: '业财审计费率配置',
+      beforeValue: config,
+      afterValue: {
+        taxRate: nextTaxRate,
+        paymentFeeRates: nextPaymentFeeRates,
+        platformFeeRates: nextPlatformFeeRates,
+        settlementCycles: nextSettlementCycles,
+      },
+      reason: req.body?.reason || '财务管理页面调整费率',
+    })
+
+    return success(res, auditConfig(), '配置已保存')
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+export async function buildAuditRecords(params: {
+  startDate?: string
+  endDate?: string
+  venueId?: string
+  search?: string
+  status?: string
+  store?: string
+}) {
+  const config = auditConfig()
+  const dateWhere = {
+    ...(params.startDate ? { gte: dayStart(params.startDate) } : {}),
+    ...(params.endDate ? { lte: dayEnd(params.endDate) } : {}),
+  }
+  const hasDate = params.startDate || params.endDate
+  const whereDateOr = hasDate
+    ? [
+        { paidAt: dateWhere },
+        { cancelledAt: dateWhere },
+        { updatedAt: dateWhere },
+        { createdAt: dateWhere },
+      ]
+    : undefined
+
+  const [orders, recharges, auditLogs] = await Promise.all([
+    prisma.order.findMany({
+      where: {
+        orderKind: { not: 'GROUP_PARENT' },
+        status: { in: ['PAID', 'COMPLETED', 'CANCELLED', 'REFUNDED', 'NO_SHOW'] },
+        ...(whereDateOr ? { OR: whereDateOr } : {}),
+        ...(params.venueId ? { venueId: params.venueId } : {}),
+      },
+      include: {
+        user: { select: { name: true, phone: true } },
+        booking: {
+          include: {
+            game: { select: { title: true } },
+            venue: { select: { name: true } },
+          },
+        },
+        payments: true,
+        feeOrders: {
+          where: { orderKind: 'FEE', feeType: 'RESCHEDULE_FEE', status: { in: ['PAID', 'READY_TO_VERIFY', 'COMPLETED', 'REFUNDED'] } },
+          select: {
+            amount: true,
+            originalAmount: true,
+            payMethod: true,
+            status: true,
+            refundAmount: true,
+            principalDeduction: true,
+            bonusDeduction: true,
+            payments: { select: { amount: true } },
+          },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    }),
+    params.venueId
+      ? Promise.resolve([])
+      : prisma.rechargeRecord.findMany({
+          where: {
+            status: 'PAID',
+            ...(hasDate ? { createdAt: dateWhere } : {}),
+          },
+          include: { user: { select: { name: true, phone: true } } },
+          orderBy: { createdAt: 'desc' },
+        }),
+    prisma.auditLog.findMany({
+      where: {
+        targetType: 'FINANCE_AUDIT_RECORD',
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+  ])
+
+  const auditLogMap = new Map<string, typeof auditLogs>()
+  for (const log of auditLogs) {
+    const list = auditLogMap.get(log.targetId) || []
+    list.push(log)
+    auditLogMap.set(log.targetId, list)
+  }
+
+  const records: any[] = []
+  for (const order of orders) {
+    // 改签费订单合并到关联的原订单中开票/核销，不生成独立财务记录
+    if (order.orderKind === 'FEE') continue
+
+    const meta = readMeta(order.metadata)
+    const thirdPartySource = meta.thirdPartyCoupon?.source as string | undefined
+    const channel = thirdPartySource || (order.source === 'ONLINE' ? '微信小程序' : '线下收银台')
+    const payMethod = order.payMethod || order.payments[0]?.method || 'CASH'
+    const isRefunded = order.status === 'REFUNDED' || (order.refundAmount || 0) > 0
+    // 已支付的改签费合并到原订单，改签费本身不递延、不单独开票
+    const rescheduleFees = (order.feeOrders || []) as Array<{
+      amount: number
+      payMethod?: string | null
+      refundAmount?: number | null
+      principalDeduction?: number | null
+      bonusDeduction?: number | null
+      payments: Array<{ amount: number }>
+    }>
+    const rescheduleFeeTotal = rescheduleFees.reduce((sum, f) => sum + f.amount, 0)
+    const rescheduleFeeActual = rescheduleFees.reduce(
+      (sum, f) => sum + (f.payments?.reduce((s, p) => s + p.amount, 0) || f.amount),
+      0,
+    )
+    const rescheduleFeeRefundTotal = rescheduleFees.reduce((sum, f) => sum + (f.refundAmount || 0), 0)
+    const rescheduleFeePrincipalUsed = rescheduleFees.reduce((sum, f) => sum + (f.principalDeduction || 0), 0)
+    const rescheduleFeeGiftUsed = rescheduleFees.reduce((sum, f) => sum + (f.bonusDeduction || 0), 0)
+    const originalPrice = isRefunded
+      ? -((order.originalAmount || order.amount) + rescheduleFeeTotal)
+      : (order.originalAmount || order.amount) + rescheduleFeeTotal
+    const discountBreakdown = [
+      order.discountAmount > 0 ? { name: '会员优惠', amount: -order.discountAmount } : null,
+      order.couponDiscount > 0
+        ? { name: meta.thirdPartyCoupon?.name || (order.userCouponId ? '系统优惠券抵扣' : '优惠券抵扣'), amount: -order.couponDiscount }
+        : null,
+      order.pointsDeduction > 0 ? { name: '积分抵扣', amount: -order.pointsDeduction } : null,
+    ].filter(Boolean)
+    const platformRate = thirdPartySource ? Number(config.platformFeeRates[thirdPartySource] || 0) : 0
+    const payRate = Number(config.paymentFeeRates[payMethod] || 0)
+    const baseAmount = isRefunded ? -((order.refundAmount || order.amount) + rescheduleFeeRefundTotal) : order.amount
+    const platformFee = thirdPartySource ? -roundFee(Math.abs(order.amount), platformRate) : 0
+    const gatewayFee = ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
+      ? -roundFee(Math.abs(order.amount), payRate)
+      : 0
+    const rescheduleFeePlatformFee = thirdPartySource ? -roundFee(rescheduleFeeTotal, platformRate) : 0
+    const rescheduleFeeGatewayFee = ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
+      ? -roundFee(rescheduleFeeTotal, payRate)
+      : 0
+    const expectedRecv = isRefunded
+      ? baseAmount
+      : order.amount + platformFee + gatewayFee + rescheduleFeeTotal + rescheduleFeePlatformFee + rescheduleFeeGatewayFee
+    const actualRecv = isRefunded
+      ? -((order.refundAmount || order.amount) + rescheduleFeeRefundTotal)
+      : (order.payments.reduce((sum, payment) => sum + payment.amount, 0) || order.amount) + rescheduleFeeActual
+    const consumeStatus = isRefunded
+      ? 'refunded'
+      : order.status === 'PAID'
+        ? 'unconsumed'
+        : 'consumed'
+    const bankStatus = ['BALANCE', 'BALANCE_POINTS'].includes(payMethod)
+      ? 'internal'
+      : ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
+        ? 'in_transit'
+        : 'arrived'
+    const hasBalanceFee = rescheduleFees.some((f) => ['BALANCE', 'BALANCE_POINTS'].includes(f.payMethod || ''))
+    const paymentMethodLabel = hasBalanceFee && !['BALANCE', 'BALANCE_POINTS'].includes(payMethod)
+      ? `${paymentLabel(payMethod)} + 余额`
+      : paymentLabel(payMethod)
+    const id = order.orderNo
+    const record: any = {
+      id,
+      sourceId: order.id,
+      sourceType: 'ORDER',
+      store: order.booking?.venue?.name || order.venueName || '-',
+      operator: order.source === 'ONLINE' ? '用户自助' : '系统管理员',
+      channel,
+      paymentMethod: paymentMethodLabel,
+      payMethod,
+      feePayMethods: rescheduleFees.map((f) => f.payMethod).filter(Boolean) as string[],
+      type:
+        (order.booking?.game?.title || order.feeReason || 'VR体验订单') +
+        (rescheduleFeeTotal > 0
+          ? `（含改签费${rescheduleFees.some((f) => ['BALANCE', 'BALANCE_POINTS'].includes(f.payMethod || '')) ? '·余额' : ''}）`
+          : ''),
+      consumeStatus,
+      originalPrice,
+      discountBreakdown,
+      platformFee,
+      gatewayFee,
+      expectedRecv,
+      actualRecv,
+      settlementCycle: config.settlementCycles[thirdPartySource || payMethod] || '实时',
+      bankStatus,
+      assetChange:
+        (order.principalDeduction || 0) + (order.bonusDeduction || 0) + rescheduleFeePrincipalUsed + rescheduleFeeGiftUsed > 0
+          ? {
+              type: 'balance_used',
+              value: order.amount + rescheduleFeeActual,
+              principalUsed: (order.principalDeduction || 0) + rescheduleFeePrincipalUsed,
+              giftUsed: (order.bonusDeduction || 0) + rescheduleFeeGiftUsed,
+            }
+          : null,
+      invoice: {
+        status: expectedRecv > 0 ? 'pending' : isRefunded ? 'red_ink' : 'none',
+        amount: Math.round(expectedRecv / (1 + config.taxRate / 100)),
+        taxRate: config.taxRate,
+      },
+      orderTime: format(order.createdAt, 'yyyy-MM-dd HH:mm'),
+      reconTime: format(order.updatedAt, 'yyyy-MM-dd HH:mm'),
+      remark: meta.thirdPartyCoupon ? `平台券：${meta.thirdPartyCoupon.name}` : '',
+      relatedOrderId: order.parentOrderId || null,
+      userName: order.user?.name || order.booking?.personName || '-',
+      userPhone: order.user?.phone || order.booking?.personPhone || '-',
+      auditLog: auditLogMap.get(id) || [],
+    }
+    record.status = computeAuditStatus(record.actualRecv, record.expectedRecv, record.consumeStatus, record.bankStatus)
+    if (record.auditLog.some((log: any) => log.action === 'FINANCE_AUDIT_FORCE_MATCH')) {
+      record.status = 'matched'
+      record.forceMatched = true
+      record.forceMatchReason = record.auditLog.find((log: any) => log.action === 'FINANCE_AUDIT_FORCE_MATCH')?.reason || ''
+    }
+    record.vouchers = buildVouchers(record, config.taxRate)
+    records.push(record)
+  }
+
+  for (const recharge of recharges) {
+    const payMethod = recharge.payMethod || 'WECHAT'
+    const payRate = Number(config.paymentFeeRates[payMethod] || 0)
+    const gatewayFee = ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
+      ? -roundFee(recharge.amount, payRate)
+      : 0
+    const expectedRecv = recharge.amount + gatewayFee
+    const id = `RECHARGE-${recharge.id}`
+    const record: any = {
+      id,
+      sourceId: recharge.id,
+      sourceType: 'RECHARGE',
+      store: '会员中心',
+      operator: '用户自助',
+      channel: '会员充值',
+      paymentMethod: paymentLabel(payMethod),
+      payMethod,
+      type: `会员充值（充${(recharge.amount / 100).toFixed(2)}得${((recharge.amount + recharge.bonus) / 100).toFixed(2)}）`,
+      consumeStatus: 'recharge',
+      originalPrice: recharge.amount,
+      discountBreakdown: [],
+      platformFee: 0,
+      gatewayFee,
+      expectedRecv,
+      actualRecv: recharge.amount,
+      settlementCycle: config.settlementCycles[payMethod] || '实时',
+      bankStatus: ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod) ? 'in_transit' : 'arrived',
+      assetChange: { type: 'recharge', principal: recharge.amount, gift: recharge.bonus },
+      invoice: {
+        status: 'pending',
+        amount: Math.round(expectedRecv / (1 + config.taxRate / 100)),
+        taxRate: config.taxRate,
+      },
+      orderTime: format(recharge.createdAt, 'yyyy-MM-dd HH:mm'),
+      reconTime: format(recharge.paidAt || recharge.createdAt, 'yyyy-MM-dd HH:mm'),
+      remark: '',
+      relatedOrderId: null,
+      userName: recharge.user?.name || '-',
+      userPhone: recharge.user?.phone || '-',
+      auditLog: auditLogMap.get(id) || [],
+    }
+    record.status = computeAuditStatus(record.actualRecv, record.expectedRecv, record.consumeStatus, record.bankStatus)
+    if (record.auditLog.some((log: any) => log.action === 'FINANCE_AUDIT_FORCE_MATCH')) {
+      record.status = 'matched'
+      record.forceMatched = true
+      record.forceMatchReason = record.auditLog.find((log: any) => log.action === 'FINANCE_AUDIT_FORCE_MATCH')?.reason || ''
+    }
+    record.vouchers = buildVouchers(record, config.taxRate)
+    records.push(record)
+  }
+
+  return records
+    .filter((record) => !params.search || [
+      record.id,
+      record.store,
+      record.channel,
+      record.paymentMethod,
+      record.type,
+      record.userName,
+      record.userPhone,
+    ].some((value) => String(value || '').toLowerCase().includes(params.search!.toLowerCase())))
+    .filter((record) => !params.status || params.status === 'all' || record.status === params.status)
+    .filter((record) => !params.store || params.store === 'all' || record.store === params.store)
+    .sort((a, b) => new Date(b.reconTime).getTime() - new Date(a.reconTime).getTime())
+}
+
+export async function auditRecords(req: AuthenticatedRequest, res: Response) {
+  try {
+    const page = parseInt(String(req.query.page || '1'), 10)
+    const pageSize = parseInt(String(req.query.pageSize || '20'), 10)
+    const records = await buildAuditRecords({
+      startDate: req.query.startDate as string | undefined,
+      endDate: req.query.endDate as string | undefined,
+      venueId: req.query.venueId as string | undefined,
+      search: req.query.search as string | undefined,
+      status: req.query.status as string | undefined,
+      store: req.query.store as string | undefined,
+    })
+    const summary = {
+      total: records.length,
+      matched: records.filter((r) => r.status === 'matched').length,
+      exceptions: records.filter((r) => ['short', 'over'].includes(r.status)).length,
+      expectedRecv: records.reduce((sum, r) => sum + r.expectedRecv, 0),
+      actualRecv: records.reduce((sum, r) => sum + r.actualRecv, 0),
+      diff: records.reduce((sum, r) => sum + (r.actualRecv - r.expectedRecv), 0),
+      stores: Array.from(new Set(records.map((r) => r.store).filter(Boolean))),
+    }
+    const data = records.slice((page - 1) * pageSize, page * pageSize)
+    return success(res, {
+      data,
+      meta: {
+        page,
+        pageSize,
+        total: records.length,
+        totalPages: Math.max(1, Math.ceil(records.length / pageSize)),
+      },
+      summary,
+      config: auditConfig(),
+    })
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+export async function auditRecordDetail(req: AuthenticatedRequest, res: Response) {
+  try {
+    const records = await buildAuditRecords({})
+    const record = records.find((item) => item.id === req.params.id || item.sourceId === req.params.id)
+    if (!record) return error(res, '审计流水不存在', 404)
+    return success(res, record)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+export async function forceMatchAuditRecord(req: AuthenticatedRequest, res: Response) {
+  try {
+    const { reason, approver } = req.body || {}
+    if (!reason || !String(reason).trim()) return error(res, '请填写平账原因', 400)
+    const records = await buildAuditRecords({})
+    const record = records.find((item) => item.id === req.params.id || item.sourceId === req.params.id)
+    if (!record) return error(res, '审计流水不存在', 404)
+
+    await logAudit(req, {
+      action: 'FINANCE_AUDIT_FORCE_MATCH',
+      actionName: '业财审计人工平账',
+      targetType: 'FINANCE_AUDIT_RECORD',
+      targetId: record.id,
+      targetDesc: `${record.store} ${record.type}`,
+      beforeValue: {
+        expectedRecv: record.expectedRecv,
+        actualRecv: record.actualRecv,
+        status: record.status,
+      },
+      afterValue: {
+        expectedRecv: record.expectedRecv,
+        actualRecv: record.expectedRecv,
+        status: 'matched',
+        approver: approver || '',
+      },
+      diffValue: { diff: record.actualRecv - record.expectedRecv },
+      amount: record.actualRecv - record.expectedRecv,
+      reason: `${reason}${approver ? `；审批人：${approver}` : ''}`,
+    })
+
+    return success(res, { id: record.id, status: 'matched' }, '已记录人工平账')
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
 }

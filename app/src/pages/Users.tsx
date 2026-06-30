@@ -30,6 +30,7 @@ import {
   Ticket,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
+import { NumberFieldInput } from '@/components/ui/number-field'
 import { cn } from '@/lib/utils'
 import {
   Sheet,
@@ -1421,13 +1422,12 @@ export default function UsersPage() {
             )}
             <div>
               <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">赠送积分 <span className="text-vr-error">*</span></label>
-              <input
-                type="number"
-                min={1}
-                value={giftPointsForm.points}
-                onChange={(e) => setGiftPointsForm((f) => ({ ...f, points: e.target.value }))}
+              <NumberFieldInput
+                value={giftPointsForm.points ? Number(giftPointsForm.points) : undefined}
+                minValue={1}
                 placeholder="请输入积分数量"
-                className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+                onChange={(value) => setGiftPointsForm((f) => ({ ...f, points: String(value) }))}
+                required
               />
             </div>
             <div>

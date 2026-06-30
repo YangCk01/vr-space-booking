@@ -422,17 +422,19 @@ export function AdminPageSettings({ settings }: { settings?: RawSettings }) {
 
       <div className="flex gap-6">
         <div className="flex-1 max-w-4xl space-y-5">
-          <div className="grid grid-cols-2 gap-3 rounded-xl border border-vrborder-subtle bg-vrbg-surface p-2">
+          <div className="grid grid-cols-2 gap-3 rounded-2xl border border-vrborder-subtle bg-vrbg-surface p-2 shadow-sm">
             <button
               type="button"
               onClick={() => setActivePanel("brand")}
               className={cn(
-                "rounded-lg px-4 py-3 text-left transition-colors",
-                activePanel === "brand" ? "bg-vraccent-primary text-white" : "text-vrtext-secondary hover:bg-vrbg-elevated"
+                "rounded-xl px-4 py-3 text-left transition-all",
+                activePanel === "brand"
+                  ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-md shadow-cyan-500/20"
+                  : "text-vrtext-secondary hover:bg-vrbg-elevated"
               )}
             >
               <p className="text-vr-body-sm font-semibold">品牌与首页</p>
-              <p className={cn("mt-1 text-vr-caption", activePanel === "brand" ? "text-white/70" : "text-vrtext-tertiary")}>
+              <p className={cn("mt-1 text-vr-caption", activePanel === "brand" ? "text-white/80" : "text-vrtext-tertiary")}>
                 品牌基础、运营公告、首页模块文案
               </p>
             </button>
@@ -440,12 +442,14 @@ export function AdminPageSettings({ settings }: { settings?: RawSettings }) {
               type="button"
               onClick={() => setActivePanel("login")}
               className={cn(
-                "rounded-lg px-4 py-3 text-left transition-colors",
-                activePanel === "login" ? "bg-vraccent-primary text-white" : "text-vrtext-secondary hover:bg-vrbg-elevated"
+                "rounded-xl px-4 py-3 text-left transition-all",
+                activePanel === "login"
+                  ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-md shadow-cyan-500/20"
+                  : "text-vrtext-secondary hover:bg-vrbg-elevated"
               )}
             >
               <p className="text-vr-body-sm font-semibold">登录页</p>
-              <p className={cn("mt-1 text-vr-caption", activePanel === "login" ? "text-white/70" : "text-vrtext-tertiary")}>
+              <p className={cn("mt-1 text-vr-caption", activePanel === "login" ? "text-white/80" : "text-vrtext-tertiary")}>
                 登录文案、背景素材、能力卡片
               </p>
             </button>
@@ -664,7 +668,7 @@ export function AdminPageSettings({ settings }: { settings?: RawSettings }) {
                     ? "bg-vraccent-primary/50 text-white cursor-not-allowed"
                     : !isDirty
                       ? "bg-vrbg-elevated text-vrtext-muted cursor-not-allowed"
-                      : "bg-vraccent-primary text-white hover:bg-vraccent-primary-hover"
+                      : "bg-gradient-to-r from-cyan-500 to-blue-500 text-white hover:from-cyan-400 hover:to-blue-400 shadow-md shadow-cyan-500/20"
               )}
             >
               {mutation.isPending ? (

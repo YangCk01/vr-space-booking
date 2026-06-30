@@ -107,6 +107,16 @@ const INITIAL_SYSTEM_CONFIGS = [
   { key: 'dormant_days', value: '90', type: 'NUMBER', description: '沉默用户天数' },
   { key: 'recon_alert_enabled', value: 'true', type: 'BOOLEAN', description: '对账异常告警开关' },
   { key: 'recon_alert_amount_threshold', value: '10000', type: 'NUMBER', description: '对账异常金额阈值（分）' },
+  {
+    key: 'third_party_platform_config',
+    value: JSON.stringify({
+      MEITUAN: { enabled: true, autoVerify: true, settlementCycle: 'T+1', serviceRate: 6, merchantId: 'MT-local-demo', contact: '未接入真实平台' },
+      DOUYIN: { enabled: true, autoVerify: true, settlementCycle: 'T+1', serviceRate: 5, merchantId: 'DY-local-demo', contact: '未接入真实平台' },
+      DIANPING: { enabled: true, autoVerify: false, settlementCycle: 'T+7', serviceRate: 6, merchantId: 'DP-local-demo', contact: '未接入真实平台' },
+    }),
+    type: 'JSON',
+    description: '第三方平台接入配置（启用/停用、自动核销、结算周期、服务费率等）',
+  },
 ]
 
 export async function seedPermissions() {

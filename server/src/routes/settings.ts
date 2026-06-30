@@ -16,6 +16,8 @@ router.get('/refund-rules', controller.refundRules)
 router.get('/booking-config', controller.bookingConfig)
 // 公开接口：生命周期配置（供C端使用）
 router.get('/booking-lifecycle', controller.bookingLifecycle)
+// 公开接口：第三方平台配置（供C端券码兑换/支付使用）
+router.get('/platform-public', controller.platformPublic)
 
 router.use(authenticate)
 

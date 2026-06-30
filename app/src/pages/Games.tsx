@@ -24,6 +24,7 @@ import type { Game, GameInput } from '@/api/games'
 import { uploadFile } from '@/api/upload'
 import { getImageUrl } from '@/lib/imageUrl'
 import { cn } from '@/lib/utils'
+import { ImageUpload } from '@/components/ui/image-upload'
 import { useAuthStore } from '@/stores/authStore'
 import { hasPermission } from '@/lib/permissions'
 
@@ -67,8 +68,6 @@ export default function Games() {
   const [showModal, setShowModal] = useState(false)
   const [editingGame, setEditingGame] = useState<Game | null>(null)
   const [showDelete, setShowDelete] = useState<Game | null>(null)
-  const [uploadingImage, setUploadingImage] = useState(false)
-  const [uploadingDetailImage, setUploadingDetailImage] = useState(false)
   const [uploadingVideo, setUploadingVideo] = useState(false)
   const [formData, setFormData] = useState<Partial<Game>>({ ...emptyGame })
   const [tagInput, setTagInput] = useState('')
@@ -170,40 +169,6 @@ export default function Games() {
     setFormData((prev) => ({ ...prev, [field]: value }))
   }
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploadingImage(true)
-    try {
-      const result = await uploadFile('games', file)
-      updateField('coverImage', result.url)
-    } catch (err: any) {
-      alert('上传失败: ' + (err?.response?.data?.message || err.message))
-    } finally {
-      setUploadingImage(false)
-    }
-  }
-
-  const handleDetailImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files || files.length === 0) return
-    setUploadingDetailImage(true)
-    const current = formData.detailImages || []
-    const newImages: string[] = []
-    try {
-      for (const file of Array.from(files)) {
-        const result = await uploadFile('games', file)
-        newImages.push(result.url)
-      }
-      updateField('detailImages', [...current, ...newImages])
-    } catch (err: any) {
-      alert('上传失败: ' + (err?.response?.data?.message || err.message))
-    } finally {
-      setUploadingDetailImage(false)
-      e.target.value = ''
-    }
-  }
-
   const handleGameVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -263,7 +228,7 @@ export default function Games() {
     }
   }
 
-  const isPending = createMutation.isPending || updateMutation.isPending || uploadingImage || uploadingDetailImage || uploadingVideo
+  const isPending = createMutation.isPending || updateMutation.isPending || uploadingVideo
 
   const allVisibleSelected = filteredGames && filteredGames.length > 0 && filteredGames.every(g => selectedIds.includes(g.id))
   const visibleGames = filteredGames || []
@@ -566,30 +531,19 @@ export default function Games() {
                 {/* Cover Image */}
                 <div>
                   <label className="text-vr-caption text-vrtext-secondary font-medium block mb-2">封面图</label>
-                  <div className="flex items-center gap-4">
-                    {formData.coverImage ? (
-                      <img
-                        src={getImageUrl(formData.coverImage)}
-                        alt="cover"
-                        className="w-24 h-16 rounded-lg object-cover border border-vrborder-subtle"
-                      />
-                    ) : (
-                      <div className="w-24 h-16 rounded-lg bg-vrbg-elevated border border-dashed border-vrborder-subtle flex items-center justify-center">
-                        <Gamepad2 className="w-6 h-6 text-vrtext-muted" />
-                      </div>
-                    )}
-                    <label className="relative h-9 px-4 border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-secondary hover:bg-vrbg-elevated transition-colors flex items-center gap-2 cursor-pointer">
-                      <Upload className="w-4 h-4" />
-                      {uploadingImage ? '上传中...' : '上传封面'}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                        onChange={handleImageUpload}
-                        disabled={uploadingImage}
-                      />
-                    </label>
-                  </div>
+                  <ImageUpload
+                    compact
+                    value={formData.coverImage ? getImageUrl(formData.coverImage) : null}
+                    onUpload={async (file) => {
+                      try {
+                        const result = await uploadFile('games', file)
+                        updateField('coverImage', result.url)
+                      } catch (err: any) {
+                        alert('上传失败: ' + (err?.response?.data?.message || err.message))
+                      }
+                    }}
+                    onRemove={() => updateField('coverImage', '')}
+                  />
                 </div>
 
                 {/* Title */}
@@ -661,23 +615,19 @@ export default function Games() {
                         </button>
                       </div>
                     ))}
-                    <label className="w-20 h-20 rounded-lg border border-dashed border-vrborder-subtle flex flex-col items-center justify-center cursor-pointer hover:border-vraccent-primary hover:bg-vraccent-primary/5 transition-colors">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        onChange={handleDetailImageUpload}
-                        className="hidden"
-                      />
-                      {uploadingDetailImage ? (
-                        <span className="text-vr-caption text-vrtext-muted">上传中...</span>
-                      ) : (
-                        <>
-                          <Upload className="w-5 h-5 text-vrtext-muted mb-1" />
-                          <span className="text-vr-caption text-vrtext-muted">添加图片</span>
-                        </>
-                      )}
-                    </label>
+                    <ImageUpload
+                      compact
+                      multiple
+                      value={null}
+                      onUpload={async (file) => {
+                        try {
+                          const result = await uploadFile('games', file)
+                          setFormData((prev) => ({ ...prev, detailImages: [...(prev.detailImages || []), result.url] }))
+                        } catch (err) {
+                          alert('图片上传失败: ' + (err as Error).message)
+                        }
+                      }}
+                    />
                   </div>
                   <p className="text-vr-caption text-vrtext-muted">支持多选上传，图片将展示在C端游戏介绍页面</p>
                 </div>

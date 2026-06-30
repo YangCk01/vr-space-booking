@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useLanguage } from '@/i18n/language'
 import { cn } from '@/lib/utils'
 
-export default function LanguageSelect() {
+export default function LanguageSelect({ buttonClassName }: { buttonClassName?: string }) {
   const { language, setLanguage, label, options } = useLanguage()
   const [open, setOpen] = useState(false)
 
@@ -13,7 +13,10 @@ export default function LanguageSelect() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-9 h-9 rounded-full bg-[var(--bg-elevated)] text-[var(--accent-primary)] flex items-center justify-center gap-0.5 active:scale-95 transition-all"
+        className={cn(
+          "w-9 h-9 rounded-full flex items-center justify-center gap-0.5 active:scale-95 transition-all",
+          buttonClassName || "bg-[var(--bg-elevated)] text-[var(--accent-primary)]"
+        )}
         title={label.label}
         aria-label={label.label}
       >

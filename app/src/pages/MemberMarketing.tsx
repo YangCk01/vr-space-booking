@@ -15,7 +15,6 @@ import {
   Tag,
   Edit2,
   X,
-  ImageIcon,
   ShoppingBag,
   Truck,
   CheckCircle,
@@ -39,6 +38,7 @@ import {
 import type { PointsProduct, PointsOrder } from '@/api/points'
 import { uploadFile } from '@/api/upload'
 import { getImageUrl } from '@/lib/imageUrl'
+import { ImageUpload } from '@/components/ui/image-upload'
 import { getSystemConfigs, updateSystemConfig } from '@/api/systemConfig'
 
 const ease = [0.16, 1, 0.3, 1] as [number, number, number, number]
@@ -436,7 +436,6 @@ function PointsMallAdminSection() {
 
   const [showModal, setShowModal] = useState(false)
   const [editingProduct, setEditingProduct] = useState<PointsProduct | null>(null)
-  const [uploading, setUploading] = useState(false)
 
   const [form, setForm] = useState({
     name: '',
@@ -532,20 +531,6 @@ function PointsMallAdminSection() {
       updateMut.mutate({ id: editingProduct.id, data: payload })
     } else {
       createMut.mutate(payload)
-    }
-  }
-
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploading(true)
-    try {
-      const res = await uploadFile('products', file)
-      setForm((p) => ({ ...p, image: res.url }))
-    } catch (err: any) {
-      alert('图片上传失败: ' + (err?.response?.data?.message || err.message))
-    } finally {
-      setUploading(false)
     }
   }
 
@@ -679,27 +664,19 @@ function PointsMallAdminSection() {
                 {/* Image upload */}
                 <div>
                   <label className="block text-vr-caption text-vrtext-secondary mb-1.5">商品图片</label>
-                  <div className="flex items-center gap-3">
-                    <div className="w-16 h-16 rounded-lg bg-vrbg-surface border border-vrborder-subtle flex items-center justify-center overflow-hidden">
-                      {form.image ? (
-                        <img src={getImageUrl(form.image)} alt="" className="w-full h-full object-cover" />
-                      ) : (
-                        <ImageIcon className="w-6 h-6 text-vrtext-muted" />
-                      )}
-                    </div>
-                    <label className="cursor-pointer px-3 py-1.5 rounded-lg bg-vrbg-elevated border border-vrborder-subtle text-vr-caption text-vrtext-secondary hover:border-vrborder-hover transition-colors">
-                      {uploading ? '上传中...' : '上传图片'}
-                      <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-                    </label>
-                    {form.image && (
-                      <button
-                        onClick={() => setForm((p) => ({ ...p, image: '' }))}
-                        className="text-vrerror text-vr-caption hover:underline"
-                      >
-                        清除
-                      </button>
-                    )}
-                  </div>
+                  <ImageUpload
+                    compact
+                    value={form.image ? getImageUrl(form.image) : null}
+                    onUpload={async (file) => {
+                      try {
+                        const res = await uploadFile('products', file)
+                        setForm((p) => ({ ...p, image: res.url }))
+                      } catch (err) {
+                        alert('图片上传失败: ' + (err as Error).message)
+                      }
+                    }}
+                    onRemove={() => setForm((p) => ({ ...p, image: '' }))}
+                  />
                 </div>
 
                 {/* Name */}

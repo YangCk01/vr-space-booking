@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { NumberFieldInput } from '@/components/ui/number-field'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Search, Plus, Edit2, Trash2, X, Package, Users, User, UsersRound, Crown, MapPin,
@@ -11,6 +12,7 @@ import { getVenues } from '@/api/venues'
 import { uploadFile } from '@/api/upload'
 import { getImageUrl } from '@/lib/imageUrl'
 import { cn } from '@/lib/utils'
+import { ImageUpload } from '@/components/ui/image-upload'
 import { useAuthStore } from '@/stores/authStore'
 import { hasPermission } from '@/lib/permissions'
 
@@ -69,7 +71,6 @@ export default function GroupBuys() {
   const [processStepsInput, setProcessStepsInput] = useState('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [selectedVenueIds, setSelectedVenueIds] = useState<string[]>([])
-  const [uploading, setUploading] = useState(false)
 
   const { data: listRes, isLoading } = useQuery({
     queryKey: ['group-buys'],
@@ -150,20 +151,6 @@ export default function GroupBuys() {
   }
   const updateField = <K extends keyof GroupBuyPackage>(field: K, value: GroupBuyPackage[K]) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
-  }
-
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploading(true)
-    try {
-      const result = await uploadFile('group-buys', file)
-      updateField('coverImage', result.url)
-    } catch (err: any) {
-      alert('上传失败: ' + (err?.response?.data?.message || err.message))
-    } finally {
-      setUploading(false)
-    }
   }
 
   const handleSave = () => {
@@ -391,11 +378,19 @@ export default function GroupBuys() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-vr-caption text-vrtext-secondary mb-1">最少人数</label>
-                    <input type="number" value={formData.minPeople} onChange={(e) => updateField('minPeople', Number(e.target.value))} className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary" />
+                    <NumberFieldInput
+                      value={formData.minPeople}
+                      minValue={1}
+                      onChange={(value) => updateField('minPeople', value)}
+                    />
                   </div>
                   <div>
                     <label className="block text-vr-caption text-vrtext-secondary mb-1">最多人数</label>
-                    <input type="number" value={formData.maxPeople} onChange={(e) => updateField('maxPeople', Number(e.target.value))} className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary" />
+                    <NumberFieldInput
+                      value={formData.maxPeople}
+                      minValue={1}
+                      onChange={(value) => updateField('maxPeople', value)}
+                    />
                   </div>
                 </div>
 
@@ -417,7 +412,11 @@ export default function GroupBuys() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-vr-caption text-vrtext-secondary mb-1">排序</label>
-                    <input type="number" value={formData.sortOrder} onChange={(e) => updateField('sortOrder', Number(e.target.value))} className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary" />
+                    <NumberFieldInput
+                      value={formData.sortOrder}
+                      minValue={0}
+                      onChange={(value) => updateField('sortOrder', value)}
+                    />
                   </div>
                   <div>
                     <label className="block text-vr-caption text-vrtext-secondary mb-1">状态</label>
@@ -431,19 +430,21 @@ export default function GroupBuys() {
                 <div>
                   <label className="block text-vr-caption text-vrtext-secondary mb-1">封面图</label>
                   <div className="flex items-center gap-3">
-                    {formData.coverImage ? (
-                      <img src={getImageUrl(formData.coverImage)} alt="" className="w-16 h-16 rounded-lg object-cover" />
-                    ) : (
-                      <div className="w-16 h-16 rounded-lg bg-vrbg-elevated flex items-center justify-center text-vrtext-muted"><Package className="w-6 h-6" /></div>
-                    )}
-                    <div className="flex flex-col gap-1">
-                      <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-vrborder-subtle text-vr-body-sm text-vrtext-secondary hover:border-vraccent-primary hover:text-vraccent-primary cursor-pointer transition-colors">
-                        <Plus className="w-4 h-4" />
-                        {uploading ? '上传中...' : '上传封面'}
-                        <input type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml" className="hidden" onChange={handleImageUpload} />
-                      </label>
-                      <p className="text-vr-caption text-vrtext-tertiary">支持 jpg、png、gif、webp、svg，单张 ≤5MB</p>
-                    </div>
+                    <ImageUpload
+                      compact
+                      value={formData.coverImage ? getImageUrl(formData.coverImage) : null}
+                      onUpload={async (file) => {
+                        try {
+                          const result = await uploadFile('group-buys', file)
+                          setFormData((p: any) => ({ ...p, coverImage: result.url }))
+                        } catch (err) {
+                          alert('图片上传失败: ' + (err as Error).message)
+                        }
+                      }}
+                      onRemove={() => setFormData((p: any) => ({ ...p, coverImage: '' }))}
+                      accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml"
+                    />
+                    <p className="text-vr-caption text-vrtext-tertiary">支持 jpg、png、gif、webp、svg，单张 ≤5MB</p>
                   </div>
                 </div>
 

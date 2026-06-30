@@ -11,6 +11,8 @@ export interface Order {
   amount: number
   status: string
   payMethod: string | null
+  couponDiscount?: number
+  metadata?: Record<string, any> | null
   paidAt: string | null
   cancelledAt: string | null
   refundAmount: number | null
@@ -46,7 +48,8 @@ export interface OrderInput {
   customer?: string
   phone?: string
   source?: 'ONLINE' | 'OFFLINE'
-  payMethod?: 'BALANCE' | 'WECHAT' | 'ALIPAY'
+  payMethod?: 'BALANCE' | 'WECHAT' | 'ALIPAY' | 'CASH'
+  thirdPartyCouponCode?: string
 }
 
 export async function getOrders(params?: {
@@ -82,8 +85,8 @@ export async function createOrder(input: OrderInput) {
   return res.data.data
 }
 
-export async function payOrder(id: string, method?: string) {
-  const res = await apiClient.put(`/orders/${id}/pay`, { method })
+export async function payOrder(id: string, method?: string, thirdPartyCouponCode?: string) {
+  const res = await apiClient.put(`/orders/${id}/pay`, { method, thirdPartyCouponCode })
   return res.data.data
 }
 
