@@ -41,17 +41,16 @@ function createFileFilter(options: { allowVideo?: boolean } = {}) {
     const imageExts = ['jpeg', 'jpg', 'png', 'gif', 'webp', 'svg']
     const imageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml']
     const videoExts = ['mp4', 'webm', 'mov', 'm4v']
-    const videoMimes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v']
 
     const isImage = imageExts.includes(ext) && imageMimes.includes(file.mimetype)
-    const isVideo = options.allowVideo && videoExts.includes(ext) && videoMimes.includes(file.mimetype)
+    const isVideo = options.allowVideo && videoExts.includes(ext)
 
     if (isImage || isVideo) {
       cb(null, true)
     } else if (options.allowVideo) {
-      cb(new Error('只允许上传图片或视频文件 (jpg, png, gif, webp, svg, mp4, webm, mov, m4v)'))
+      cb(new Error(`只允许上传图片或视频文件 (jpg, png, gif, webp, svg, mp4, webm, mov, m4v)，当前文件: ${file.originalname}, 类型: ${file.mimetype || '未知'}`))
     } else {
-      cb(new Error('只允许上传图片文件 (jpg, png, gif, webp, svg)'))
+      cb(new Error(`只允许上传图片文件 (jpg, png, gif, webp, svg)，当前文件: ${file.originalname}, 类型: ${file.mimetype || '未知'}`))
     }
   }
 }
