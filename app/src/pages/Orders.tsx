@@ -33,6 +33,7 @@ import {
   batchRefundOrders,
   activateOrder,
 } from "@/api/orders";
+import { checkInBooking } from "@/api/bookings";
 import {
   createNoShowRefundApproval,
   createOrderRefundApproval,
@@ -79,6 +80,7 @@ interface Order {
     giftRemark?: string;
   };
   status: string;
+  source?: 'ONLINE' | 'OFFLINE';
   bookingId?: string;
   user?: { name: string; phone: string };
   customer?: string;
@@ -210,6 +212,7 @@ const payMethodLabelMap: Record<string, string> = {
   WECHAT: "微信支付",
   ALIPAY: "支付宝",
   CASH: "现金",
+  SCANBOX: "扫码盒",
 };
 
 const platformLabelMap: Record<string, string> = {
@@ -443,6 +446,7 @@ function OrderDetailSheet({
   cancelPending,
   refundPending,
   verifyPending,
+  checkInPending,
   activatePending,
   completeRefundPending,
   deletePending,
@@ -470,6 +474,7 @@ function OrderDetailSheet({
   cancelPending: boolean;
   refundPending: boolean;
   verifyPending: boolean;
+  checkInPending: boolean;
   activatePending: boolean;
   completeRefundPending: boolean;
   deletePending: boolean;
@@ -1007,10 +1012,10 @@ function OrderDetailSheet({
                 {canVerify && statusLower === "ready_to_verify" && (
                   <button
                     onClick={() => onVerify()}
-                    disabled={verifyPending}
+                    disabled={verifyPending || checkInPending}
                     className="flex-1 h-10 rounded-lg bg-vrsuccess text-white text-vr-body-sm font-medium hover:bg-vrsuccess/90 transition-colors disabled:opacity-50"
                   >
-                    {verifyPending ? "处理中..." : "核销订单"}
+                    {verifyPending || checkInPending ? "处理中..." : "核销订单"}
                   </button>
                 )}
               </>
@@ -1468,6 +1473,21 @@ export default function Orders() {
     },
   });
 
+  // 线下现金/扫码盒支付订单直接签到核销
+  const checkInMutation = useMutation({
+    mutationFn: checkInBooking,
+    onSuccess: () => {
+      invalidateAll();
+      setDrawerOpen(false);
+    },
+    onError: (error: any) => {
+      alert(
+        "核销失败: " +
+          (error?.response?.data?.message || error?.message || "未知错误"),
+      );
+    },
+  });
+
   // 扫码识别订单并展示核销确认
   const handleScanVerify = async (code: string) => {
     const trimmed = code.trim();
@@ -1807,7 +1827,7 @@ export default function Orders() {
     if (paymentTargetOrder && paymentMethod) {
       payMutation.mutate({
         id: paymentTargetOrder.id,
-        method: paymentMethod === "SCANBOX" ? undefined : paymentMethod,
+        method: paymentMethod,
         thirdPartyCouponCode: paymentCoupon?.code,
       });
     }
@@ -2546,9 +2566,14 @@ export default function Orders() {
         onCancel={(o) => cancelMutation.mutate(o)}
         onRefund={openRefundDialog}
         onVerify={() => {
-          // 改为真实扫码识别，扫描订单二维码后确认核销
-          setDrawerOpen(false);
-          setScanOpen(true);
+          // 线下预约订单无需扫码，直接签到核销
+          if (selectedOrder?.source === "OFFLINE" && selectedOrder?.bookingId) {
+            checkInMutation.mutate(selectedOrder.bookingId);
+          } else {
+            // 改为真实扫码识别，扫描订单二维码后确认核销
+            setDrawerOpen(false);
+            setScanOpen(true);
+          }
         }}
         onActivate={openRestoreDialog}
         onCompleteRefund={(id) => completeRefundMutation.mutate(id)}
@@ -2581,6 +2606,7 @@ export default function Orders() {
         cancelPending={cancelMutation.isPending}
         refundPending={refundMutation.isPending}
         verifyPending={verifyMutation.isPending}
+        checkInPending={checkInMutation.isPending}
         activatePending={activateMutation.isPending}
         completeRefundPending={completeRefundMutation.isPending}
         deletePending={deleteMutation.isPending}
@@ -2636,7 +2662,7 @@ export default function Orders() {
           setPaymentTargetOrder(null);
           resetPaymentCoupon();
         }}
-        method={paymentMethod || "SCANBOX"}
+        method={paymentMethod || "WECHAT"}
         orderNo={paymentTargetOrder?.orderNo || ""}
         amount={Math.max(0, ((paymentTargetOrder?.amount || 0) - paymentCouponDiscount) / 100)}
         onSuccess={handleScanBoxSuccess}

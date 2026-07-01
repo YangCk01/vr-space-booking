@@ -15,7 +15,7 @@ import { handleEvent } from '../jobs/triggerJob'
 import { expirePendingOrders } from '../jobs/orderTimeoutJob'
 import { processBookingLifecycle } from '../jobs/bookingLifecycleJob'
 import { onCouponUsed } from '../services/campaignRewardService'
-import { releaseEquipment } from '../services/equipmentService'
+import { releaseEquipment, assignEquipment } from '../services/equipmentService'
 import { executeRescheduleInTx } from './bookingController'
 import { normalizeThirdPartyCouponCode } from '../utils/thirdPartyCoupon'
 import { isPlatformEnabled } from '../utils/platformConfig'
@@ -958,6 +958,8 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
       }
     }
 
+    const isOffline = order.source === 'OFFLINE'
+
     // 支付成功：更新订单 + 扣优惠券 + 赠积分（事务保护）
     const updated = await prisma.$transaction(async (tx) => {
       // 1. 扣减优惠券（支付成功时才扣）
@@ -1017,13 +1019,18 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
         if (updatedCoupon.count !== 1) throw new Error('第三方券已被使用')
       }
 
+      const now = new Date()
+
       // 3. 更新订单状态（余额支付记录扣款明细）
+      // 线下预约订单视为顾客已到场收款，支付即核销
+      const isOffline = order.source === 'OFFLINE'
       const o = await tx.order.update({
         where: { id: order.id },
         data: {
-          status: 'PAID',
+          status: isOffline ? 'COMPLETED' : 'PAID',
           payMethod: method || 'WECHAT',
-          paidAt: new Date(),
+          paidAt: now,
+          ...(isOffline ? { verifiedAt: now } : {}),
           ...(thirdPartyCoupon
             ? {
                 amount: payableAmount,
@@ -1040,6 +1047,14 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
         },
       })
 
+      // 线下订单同步签到核销关联预约
+      if (isOffline && order.bookingId) {
+        await tx.booking.update({
+          where: { id: order.bookingId },
+          data: { status: 'CHECKED_IN', checkedInAt: now },
+        })
+      }
+
       // 3.5 团购父订单支付成功后，同步更新所有子订单为已付款
       if (order.orderKind === 'GROUP_PARENT') {
         await tx.order.updateMany({
@@ -1047,7 +1062,7 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
           data: {
             status: 'PAID',
             payMethod: method || 'WECHAT',
-            paidAt: new Date(),
+            paidAt: now,
             expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
           },
         })
@@ -1105,6 +1120,16 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
       `${paidUser?.name || '用户'} 的订单 ${order.orderNo} 支付成功，金额 ¥${(payableAmount / 100).toFixed(2)}`,
       'USER'
     )
+
+    // 线下订单支付后自动分配设备
+    if (isOffline && order.bookingId) {
+      try {
+        const assigned = await assignEquipment(order.bookingId)
+        console.log(`[orderController.pay] 线下订单支付自动分配设备: ${assigned.map((d) => d.name).join(', ')}`)
+      } catch (e) {
+        console.error(`[orderController.pay] 线下订单支付设备分配失败 Booking ${order.bookingId}:`, e)
+      }
+    }
 
     return success(res, updated, '支付成功')
   } catch (err) {
@@ -2395,24 +2420,14 @@ export async function redeem(req: AuthenticatedRequest, res: Response) {
       return s1 < e2 && e1 > s2
     })
 
-    const deviceCount = venue.deviceCount || 1
+    const capacity = venue.capacity || venue.deviceCount || 1
     const pc = parseInt(personCount) || 1
     const finalGameId = gameId || order.groupBuyPackage?.gameId || null
 
-    if (!finalGameId) {
-      if (conflicts.length > 0) {
-        return error(res, '该时段已被预约', 409)
-      }
-    } else {
-      const otherGameBooking = conflicts.some((b) => b.gameId && b.gameId !== finalGameId)
-      if (otherGameBooking) {
-        return error(res, '该时段已有其他游戏预约', 409)
-      }
-      const sameGameBookings = conflicts.filter((b) => b.gameId === finalGameId)
-      const currentCount = sameGameBookings.reduce((sum, b) => sum + (b.personCount || 1), 0)
-      if (currentCount + pc > deviceCount) {
-        return error(res, '该时段该游戏已约满', 409)
-      }
+    // 按场地人数容量判断：统计所有冲突预约的总人数
+    const currentCount = conflicts.reduce((sum, b) => sum + (b.personCount || 1), 0)
+    if (currentCount + pc > capacity) {
+      return error(res, '该时段已约满', 409)
     }
 
     const bookingTitle = title || `${venue.name} ${type === 'TEAM' ? '团队预约' : type === 'INDIVIDUAL' ? '散客预约' : type === 'CORPORATE' ? '企业活动' : '团购预约'} ${startTime}-${endTime}`
@@ -2582,24 +2597,14 @@ export async function redeemCustomer(req: AuthenticatedRequest, res: Response) {
       return s1 < e2 && e1 > s2
     })
 
-    const deviceCount = venue.deviceCount || 1
+    const capacity = venue.capacity || venue.deviceCount || 1
     const pc = parseInt(personCount) || 1
     const finalGameId = order.groupBuyPackage?.gameId || null
 
-    if (!finalGameId) {
-      if (conflicts.length > 0) {
-        return error(res, '该时段已被预约', 409)
-      }
-    } else {
-      const otherGameBooking = conflicts.some((b) => b.gameId && b.gameId !== finalGameId)
-      if (otherGameBooking) {
-        return error(res, '该时段已有其他游戏预约', 409)
-      }
-      const sameGameBookings = conflicts.filter((b) => b.gameId === finalGameId)
-      const currentCount = sameGameBookings.reduce((sum, b) => sum + (b.personCount || 1), 0)
-      if (currentCount + pc > deviceCount) {
-        return error(res, '该时段该游戏已约满', 409)
-      }
+    // 按场地人数容量判断：统计所有冲突预约的总人数
+    const currentCount = conflicts.reduce((sum, b) => sum + (b.personCount || 1), 0)
+    if (currentCount + pc > capacity) {
+      return error(res, '该时段已约满', 409)
     }
 
     const bookingTitle = `${venue.name} 团购预约 ${startTime}-${endTime}`

@@ -794,17 +794,15 @@ export default function Booking() {
     }
 
     const used = bookings.reduce((sum, e) => sum + (Number(e.personCount) || 0), 0)
-    const capacity = Number(venue.capacity) || used
+    const capacity = Math.max(Number(venue.capacity) || used, 1)
     const remaining = Math.max(capacity - used, 0)
     const first = bookings[0]
-    const currentGameId = dayGame?.id || ''
-    const sameGame = currentGameId
-      ? bookings.every((e) => (e.gameId || e.game?.id || '') === currentGameId)
-      : bookings.every((e) => (e.gameId || e.game?.id || '') === (first.gameId || first.game?.id || ''))
-    if (remaining > 0 && sameGame) {
+
+    // 按场地人数容量判断：只要还有余量就可以继续预约（不再区分游戏）
+    if (used < capacity) {
       return {
         kind: 'joinable' as const,
-        label: `可拼 ${remaining}人`,
+        label: remaining > 0 ? `可拼 ${remaining}人` : '可预约',
         event: first,
         clickable: canManageBookings,
         used,
@@ -814,11 +812,11 @@ export default function Booking() {
 
     return {
       kind: 'full' as const,
-      label: remaining <= 0 ? '已约满' : '已占用',
+      label: '已约满',
       event: first,
       clickable: false,
       used,
-      remaining,
+      remaining: 0,
     }
   }, [currentDate, filteredEvents, canManageBookings, daySlotStep, dayGame])
 
@@ -1086,7 +1084,7 @@ export default function Booking() {
                             {venue.openTime?.slice(0, 5) || `${String(dayStartHour).padStart(2, '0')}:00`} - {venue.closeTime?.slice(0, 5) || `${String(dayEndHour).padStart(2, '0')}:00`}
                           </span>
                           <span>已排 {venueEvents.length} 场</span>
-                          <span>人数 {venuePeople}/{venue.capacity}</span>
+                          <span>人数 {venuePeople}</span>
                         </div>
                       </div>
                     </div>

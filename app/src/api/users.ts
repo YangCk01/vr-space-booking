@@ -138,6 +138,17 @@ export async function batchGiftCoupon(userIds: string[], couponData: {
   giftReason?: string
   giftRemark?: string
 }) {
-  const res = await apiClient.post('/gift/batch-gift-coupon', { userIds, ...couponData })
+  const { name, type, discountRate, validDays, giftReason, giftRemark } = couponData
+  const res = await apiClient.post('/gift/batch-gift-coupon', {
+    userIds,
+    couponConfig: {
+      name,
+      type,
+      discountRate,
+      validityDays: validDays,
+    },
+    reason: giftReason,
+    remark: giftRemark,
+  })
   return res.data
 }

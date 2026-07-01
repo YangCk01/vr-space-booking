@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export type PaymentMethod = 'WECHAT' | 'ALIPAY' | 'CASH' | 'SCANBOX'
+export type PaymentMethod = 'WECHAT' | 'ALIPAY' | 'CASH'
 
 interface PaymentMethodModalProps {
   open: boolean
@@ -75,16 +75,6 @@ const methods: {
     hoverBg: 'hover:bg-amber-500/20',
     border: 'border-amber-500/30',
     text: 'text-amber-400',
-  },
-  {
-    key: 'SCANBOX',
-    label: '扫码盒',
-    subLabel: '扫码盒设备收款',
-    icon: <ScanLine className="w-6 h-6" />,
-    bg: 'bg-violet-500/10',
-    hoverBg: 'hover:bg-violet-500/20',
-    border: 'border-violet-500/30',
-    text: 'text-violet-400',
   },
 ]
 

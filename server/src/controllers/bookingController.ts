@@ -180,45 +180,21 @@ export async function checkConflict(req: Request, res: Response) {
       return s1 < e2 && e1 > s2
     })
 
-    const deviceCount = venue?.deviceCount || 1
+    const capacity = venue?.capacity || venue?.deviceCount || 1
 
-    // 未选游戏时保持原有二元冲突判断
-    if (!gameId) {
-      const hasConflict = conflicts.length > 0
-      return success(res, {
-        status: hasConflict ? 'full' : 'available',
-        currentCount: hasConflict ? conflicts.reduce((sum, b) => sum + (b.personCount || 1), 0) : 0,
-        remainingCount: hasConflict ? 0 : deviceCount,
-        maxCount: deviceCount,
-      })
-    }
-
-    const selectedGameId = gameId as string
-
-    // 检查是否有其他游戏的预约
-    const otherGameBooking = conflicts.some((b) => b.gameId && b.gameId !== selectedGameId)
-    if (otherGameBooking) {
-      return success(res, {
-        status: 'occupied_by_other_game',
-        currentCount: 0,
-        remainingCount: 0,
-        maxCount: deviceCount,
-      })
-    }
-
-    // 统计同一游戏已预约人数
-    const sameGameBookings = conflicts.filter((b) => b.gameId === selectedGameId)
-    const currentCount = sameGameBookings.reduce((sum, b) => sum + (b.personCount || 1), 0)
+    // 按场地人数容量判断：统计所有冲突预约的总人数
+    const currentCount = conflicts.reduce((sum, b) => sum + (b.personCount || 1), 0)
+    const remainingCount = Math.max(capacity - currentCount, 0)
 
     if (currentCount === 0) {
-      return success(res, { status: 'available', currentCount: 0, remainingCount: deviceCount, maxCount: deviceCount })
+      return success(res, { status: 'available', currentCount: 0, remainingCount, maxCount: capacity })
     }
 
-    if (currentCount < deviceCount) {
-      return success(res, { status: 'joinable', currentCount, remainingCount: deviceCount - currentCount, maxCount: deviceCount })
+    if (currentCount < capacity) {
+      return success(res, { status: 'joinable', currentCount, remainingCount, maxCount: capacity })
     }
 
-    return success(res, { status: 'full', currentCount, remainingCount: 0, maxCount: deviceCount })
+    return success(res, { status: 'full', currentCount, remainingCount: 0, maxCount: capacity })
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -308,28 +284,13 @@ export async function create(req: Request, res: Response) {
       return s1 < e2 && e1 > s2
     })
 
-    const deviceCount = venue.deviceCount || 1
+    const capacity = venue.capacity || venue.deviceCount || 1
     const pc = parseInt(personCount) || 1
 
-    // 未选游戏时保持原有二元冲突判断
-    if (!gameId) {
-      if (conflicts.length > 0) {
-        return error(res, '该时段已被预约', 409)
-      }
-    } else {
-      // 检查是否有其他游戏的预约
-      const otherGameBooking = conflicts.some((b) => b.gameId && b.gameId !== gameId)
-      if (otherGameBooking) {
-        return error(res, '该时段已有其他游戏预约', 409)
-      }
-
-      // 统计同一游戏已预约人数
-      const sameGameBookings = conflicts.filter((b) => b.gameId === gameId)
-      const currentCount = sameGameBookings.reduce((sum, b) => sum + (b.personCount || 1), 0)
-
-      if (currentCount + pc > deviceCount) {
-        return error(res, '该时段该游戏已约满', 409)
-      }
+    // 按场地人数容量判断：统计所有冲突预约的总人数
+    const currentCount = conflicts.reduce((sum, b) => sum + (b.personCount || 1), 0)
+    if (currentCount + pc > capacity) {
+      return error(res, '该时段已约满', 409)
     }
 
     const bookingTitle = title || `${venue.name} ${type === 'TEAM' ? '团队预约' : type === 'INDIVIDUAL' ? '散客预约' : type === 'CORPORATE' ? '企业活动' : '维护'} ${startTime}-${endTime}`
@@ -801,7 +762,7 @@ export async function reschedule(req: Request, res: Response) {
     })
 
     const venue = await prisma.venue.findUnique({ where: { id: newVenueId } })
-    const deviceCount = venue?.deviceCount || 1
+    const capacity = venue?.capacity || venue?.deviceCount || 1
     const pc = parseInt(newPersonCount as any) || 1
 
     const s1 = timeToMinutes(newStartTime)
@@ -825,16 +786,10 @@ export async function reschedule(req: Request, res: Response) {
       return s1 < e2 && e1 > s2
     })
 
-    const otherGameBooking = conflicts.some((b) => b.gameId && b.gameId !== newGameId)
-    if (otherGameBooking) {
-      return error(res, '该时段已有其他游戏预约', 400)
-    }
-
-    const sameGameBookings = conflicts.filter((b) => b.gameId === newGameId)
-    const currentCount = sameGameBookings.reduce((sum, b) => sum + (b.personCount || 1), 0)
-
-    if (currentCount + pc > deviceCount) {
-      return error(res, '该时段该游戏已约满', 400)
+    // 按场地人数容量判断：统计所有冲突预约的总人数
+    const currentCount = conflicts.reduce((sum, b) => sum + (b.personCount || 1), 0)
+    if (currentCount + pc > capacity) {
+      return error(res, '该时段已约满', 400)
     }
 
     // 4. 计算价格差异与改签费

@@ -10,6 +10,7 @@ export interface Order {
   venueName: string
   amount: number
   status: string
+  source?: 'ONLINE' | 'OFFLINE'
   payMethod: string | null
   couponDiscount?: number
   metadata?: Record<string, any> | null
@@ -48,7 +49,7 @@ export interface OrderInput {
   customer?: string
   phone?: string
   source?: 'ONLINE' | 'OFFLINE'
-  payMethod?: 'BALANCE' | 'WECHAT' | 'ALIPAY' | 'CASH'
+  payMethod?: 'BALANCE' | 'WECHAT' | 'ALIPAY' | 'CASH' | 'SCANBOX'
   thirdPartyCouponCode?: string
 }
 

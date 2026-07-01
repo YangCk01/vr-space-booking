@@ -1,6 +1,6 @@
 import cron from 'node-cron'
 import { prisma } from '../utils/prisma'
-import { releaseEquipment } from '../services/equipmentService'
+import { releaseEquipment, assignEquipment } from '../services/equipmentService'
 import { pushNotification } from '../controllers/notificationController'
 
 interface LifecycleConfig {
@@ -136,6 +136,48 @@ export async function processBookingLifecycle(now = new Date()) {
           }
         })
         console.log(`[BookingLifecycleJob] 修正过早待核销 Booking ${b.id}`)
+      }
+    }
+  }
+
+  // ── 1.6 线下预约订单：开场前核销窗口内自动核销 ──
+  // 兜底历史订单以及未在支付时完成核销的线下订单
+  const offlineAutoVerifyBookings = await prisma.booking.findMany({
+    where: {
+      status: { in: ['CONFIRMED', 'READY'] },
+      order: {
+        source: 'OFFLINE',
+        status: { in: ['PAID', 'READY_TO_VERIFY'] },
+      },
+      date: {
+        gte: new Date(now.getTime() - 1 * 60 * 60 * 1000),
+        lte: new Date(now.getTime() + cfg.verifyAdvanceMinutes * 60 * 1000 + 24 * 60 * 60 * 1000),
+      },
+    },
+    include: { order: true },
+  })
+
+  for (const b of offlineAutoVerifyBookings) {
+    const start = getBookingStartTime(b.date, b.startTime)
+    const diffMs = start.getTime() - now.getTime()
+    if (diffMs > 0 && diffMs <= cfg.verifyAdvanceMinutes * 60 * 1000) {
+      await prisma.$transaction(async (tx) => {
+        await tx.booking.update({
+          where: { id: b.id },
+          data: { status: 'CHECKED_IN', checkedInAt: now },
+        })
+        if (b.order) {
+          await tx.order.update({
+            where: { id: b.order.id },
+            data: { status: 'COMPLETED', verifiedAt: now },
+          })
+        }
+      })
+      try {
+        await assignEquipment(b.id)
+        console.log(`[BookingLifecycleJob] 线下订单自动核销 Booking ${b.id}`)
+      } catch (e) {
+        console.error(`[BookingLifecycleJob] 线下订单自动核销后设备分配失败 Booking ${b.id}:`, e)
       }
     }
   }

@@ -340,12 +340,15 @@ function ScheduleTimeline({
     if (booking.type === 'MAINTENANCE' || booking.status === 'NO_SHOW') {
       return 'border-slate-300 bg-slate-50 text-slate-500 dark:bg-slate-500/12 dark:text-slate-300'
     }
-    if (booking.type === 'TEAM') {
+    // 开场前核销窗口内：显示“即将开始”
+    if (booking.status === 'READY') {
       return 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/12 dark:text-emerald-300'
     }
-    if (booking.type === 'CORPORATE') {
+    // 已开始/已签到
+    if (booking.status === 'PLAYING' || booking.status === 'CHECKED_IN') {
       return 'border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-500/12 dark:text-amber-300'
     }
+    // 已预约 / 已完成等
     return 'border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-500/12 dark:text-blue-300'
   }
 
@@ -907,7 +910,8 @@ export default function Home() {
     }
   })
 
-  const pendingVerifyCount = todayBookings.filter((b: any) => ['PAID', 'READY_TO_VERIFY', 'PLAYING'].includes(b.status)).length
+  // 待核销对应 Booking 的 READY 状态（订单状态 READY_TO_VERIFY）
+  const pendingVerifyCount = todayBookings.filter((b: any) => b.status === 'READY').length
   const refundAlertCount = stats?.refundedOrders || 0
   const reconAlertCount = (stats?.noShowCount || 0) + (stats?.cancelledOrders || 0)
 
@@ -937,7 +941,7 @@ export default function Home() {
     },
     {
       label: '待核销',
-      value: String(pendingVerifyCount || stats.pendingOrders || 0),
+      value: String(pendingVerifyCount),
       numericValue: pendingVerifyCount,
       prefix: '',
       suffix: '',
@@ -1024,7 +1028,7 @@ export default function Home() {
           </div>
           <div className="space-y-5">
             <VenueStatusPanel venues={venues} />
-            <TodoPanel pendingVerify={pendingVerifyCount || stats?.pendingOrders || 0} reconAlerts={reconAlertCount} refundAlerts={refundAlertCount} />
+            <TodoPanel pendingVerify={pendingVerifyCount} reconAlerts={reconAlertCount} refundAlerts={refundAlertCount} />
             <LatestOrders orders={latestOrders} title={bHomeOrdersTitle} />
           </div>
         </div>
