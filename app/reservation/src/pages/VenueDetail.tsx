@@ -421,7 +421,7 @@ export default function VenueDetail() {
             <div className="absolute left-0 top-0 bottom-2 w-5 bg-gradient-to-r from-[var(--bg-primary)] to-transparent z-10 pointer-events-none" />
             {/* 右渐变提示 */}
             <div className="absolute right-0 top-0 bottom-2 w-5 bg-gradient-to-l from-[var(--bg-primary)] to-transparent z-10 pointer-events-none" />
-            <div className="flex gap-3 overflow-x-auto overscroll-x-contain px-4 sm:px-0 pb-2 scrollbar-hide snap-x snap-mandatory touch-pan-x [scrollbar-width:none] [-webkit-overflow-scrolling:touch]">
+            <div className="flex gap-3 overflow-x-auto px-4 sm:px-0 pb-2 scrollbar-hide snap-x snap-mandatory touch-pan-scroll [scrollbar-width:none]">
               {activeGames.map((game) => {
                 const isSelected = selectedGameId === game.id
                 return (
@@ -501,7 +501,7 @@ export default function VenueDetail() {
           <div className="absolute left-0 top-0 bottom-2 w-5 bg-gradient-to-r from-[var(--bg-primary)] to-transparent z-10 pointer-events-none" />
           {/* 右渐变提示 */}
           <div className="absolute right-0 top-0 bottom-2 w-5 bg-gradient-to-l from-[var(--bg-primary)] to-transparent z-10 pointer-events-none" />
-          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide snap-x snap-mandatory touch-pan-x scroll-smooth">
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide snap-x snap-mandatory touch-pan-scroll scroll-smooth">
             {days.map((date, idx) => {
               const isActive = idx === selectedDay
               return (

@@ -138,6 +138,11 @@
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+  .touch-pan-scroll {
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
 }
 
 /* Animated sign-in page styles */
