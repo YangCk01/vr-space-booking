@@ -295,6 +295,30 @@ export default function Home() {
   const moduleTimerRef = useRef<number | null>(null)
   const videoRefs = useRef<Map<string, HTMLVideoElement>>(new Map())
 
+  const pauseInactiveModuleVideos = useCallback((activeId?: string) => {
+    videoRefs.current.forEach((video, moduleId) => {
+      if (moduleId === activeId) return
+      video.pause()
+      video.preload = 'none'
+    })
+  }, [])
+
+  const playActiveModuleVideo = useCallback((moduleId?: string) => {
+    if (!moduleId || document.hidden) return
+    const video = videoRefs.current.get(moduleId)
+    if (!video) return
+
+    video.muted = true
+    video.playsInline = true
+    video.preload = 'auto'
+    if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+      video.load()
+    }
+    void video.play().catch(() => {
+      // Mobile browsers may still defer playback until the next user gesture.
+    })
+  }, [])
+
   const scrollModuleTo = useCallback((index: number) => {
     const el = moduleCarouselRef.current
     if (!el) return
@@ -354,7 +378,8 @@ export default function Home() {
   const handleModuleScroll = () => {
     const el = moduleCarouselRef.current
     if (!el || el.clientWidth === 0) return
-    setActiveModule(Math.round(el.scrollLeft / el.clientWidth))
+    const nextActive = Math.round(el.scrollLeft / el.clientWidth)
+    setActiveModule(nextActive)
   }
 
   const handleModuleVideoEnded = useCallback(() => {
@@ -367,6 +392,28 @@ export default function Home() {
       setVideoAspectRatios((prev) => ({ ...prev, [moduleId]: video.videoWidth / video.videoHeight }))
     }
   }, [])
+
+  useEffect(() => {
+    const active = carouselModules[activeModule]
+    pauseInactiveModuleVideos(active?.id)
+    if (active?.videoUrl) {
+      playActiveModuleVideo(active.id)
+    }
+  }, [activeModule, carouselModules, pauseInactiveModuleVideos, playActiveModuleVideo])
+
+  useEffect(() => {
+    const onVisibility = () => {
+      const active = carouselModules[activeModule]
+      if (document.hidden) {
+        pauseInactiveModuleVideos()
+        if (active?.id) videoRefs.current.get(active.id)?.pause()
+        return
+      }
+      if (active?.videoUrl) playActiveModuleVideo(active.id)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [activeModule, carouselModules, pauseInactiveModuleVideos, playActiveModuleVideo])
 
   const openConfiguredLink = (url?: string) => {
     if (!url) return
@@ -820,10 +867,11 @@ export default function Home() {
                           onMouseDown={resetModuleAutoScroll}
                           className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide -mx-5"
                         >
-                          {carouselModules.map((module) => {
+                          {carouselModules.map((module, index) => {
                             const hasTextContent = !!(module.title?.trim() || module.content?.trim())
                             const showButton = !!(module.linkUrl?.trim() && module.buttonText?.trim())
                             const hasContent = hasTextContent || showButton
+                            const isActiveModule = index === activeModule
                             return (
                               <div
                                 key={module.id}
@@ -842,12 +890,19 @@ export default function Home() {
                                             else videoRefs.current.delete(module.id)
                                           }}
                                           src={getImageUrl(module.videoUrl)}
+                                          poster={module.imageUrl ? getImageUrl(module.imageUrl) : undefined}
                                           controls
-                                          autoPlay
+                                          autoPlay={isActiveModule}
                                           muted
                                           playsInline
-                                          preload="metadata"
+                                          preload={isActiveModule ? 'auto' : 'none'}
+                                          disablePictureInPicture
                                           onLoadedMetadata={(e) => handleVideoLoadedMetadata(module.id, e.currentTarget)}
+                                          onCanPlay={(e) => {
+                                            if (isActiveModule) {
+                                              void e.currentTarget.play().catch(() => {})
+                                            }
+                                          }}
                                           onEnded={handleModuleVideoEnded}
                                           className="w-full h-full object-contain block"
                                         />
