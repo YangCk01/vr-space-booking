@@ -24,7 +24,7 @@ export async function getRechargeConfig() {
   return res.data.data as RechargeConfig[]
 }
 
-export async function createRecharge(data: { amount: number; payMethod: string }) {
+export async function createRecharge(data: { amount: number; payMethod: 'CASH' | 'CARD'; venueId: string }) {
   const res = await apiClient.post('/recharges', data)
   return res.data.data as RechargeRecord
 }

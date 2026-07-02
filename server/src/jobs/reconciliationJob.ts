@@ -9,6 +9,7 @@ import { fetchDeviceLogs } from '../services/deviceLogService'
 import { sendReconAlert } from '../services/notificationService'
 import { pushAdminNotification } from '../controllers/notificationController'
 import { summarizePendingReconExceptions } from '../services/reconExceptionState'
+import { runTrackedJob } from './jobRunner'
 
 /**
  * 告警阈值（后续从 SystemConfig 读取）
@@ -50,7 +51,7 @@ async function getThresholds() {
 export function startReconJob() {
   cron.schedule('0 2 * * *', async () => {
     const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd')
-    await executeReconciliation(yesterday)
+    await runTrackedJob('reconciliation', () => executeReconciliation(yesterday))
   }, {
     timezone: 'Asia/Shanghai',
   })

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { authenticate } from '../middleware/auth'
 import { createUploader } from '../utils/upload'
+import { success, error } from '../utils/response'
 
 const router = Router()
 
@@ -10,31 +11,27 @@ router.post('/:type', authenticate, (req: Request, res: Response) => {
   const allowedTypes = ['venues', 'logos', 'avatars', 'games', 'products', 'pages', 'group-buys']
 
   if (!allowedTypes.includes(type)) {
-    return res.status(400).json({ success: false, message: '不支持的上传类型' })
+    return error(res, '不支持的上传类型', 400)
   }
 
   const uploader = createUploader(type)
 
   uploader(req, res, (err: any) => {
     if (err) {
-      return res.status(400).json({ success: false, message: err.message })
+      return error(res, err.message, 400)
     }
 
     if (!req.file) {
-      return res.status(400).json({ success: false, message: '未上传文件' })
+      return error(res, '未上传文件', 400)
     }
 
     const fileUrl = `/uploads/${type}/${req.file.filename}`
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        url: fileUrl,
-        filename: req.file.filename,
-        size: req.file.size,
-      },
-      message: '上传成功',
-    })
+    return success(res, {
+      url: fileUrl,
+      filename: req.file.filename,
+      size: req.file.size,
+    }, '上传成功')
   })
 })
 

@@ -2,6 +2,8 @@ import cron from 'node-cron'
 import { prisma } from '../utils/prisma'
 import { releaseEquipment, assignEquipment } from '../services/equipmentService'
 import { pushNotification } from '../controllers/notificationController'
+import { calculateBookingStartAt, isInVerifyWindow } from '../domain/orderLifecycle'
+import { runTrackedJob } from './jobRunner'
 
 interface LifecycleConfig {
   verifyAdvanceMinutes: number
@@ -46,8 +48,7 @@ async function getLifecycleConfig(): Promise<LifecycleConfig> {
  * 返回东八区对应的 Date 对象
  */
 function getBookingStartTime(date: Date, startTime: string): Date {
-  const dateStr = date.toISOString().split('T')[0] // '2026-06-04'
-  return new Date(`${dateStr}T${startTime}:00+08:00`)
+  return calculateBookingStartAt(date, startTime)
 }
 
 export async function processBookingLifecycle(now = new Date()) {
@@ -100,9 +101,13 @@ export async function processBookingLifecycle(now = new Date()) {
   for (const b of inconsistentBookings) {
     if (b.order) {
       const start = getBookingStartTime(b.date, b.startTime)
-      const readyAt = new Date(start.getTime() - cfg.verifyAdvanceMinutes * 60 * 1000)
-      const noShowDeadline = new Date(start.getTime() + cfg.noShowDeadlineMinutes * 60 * 1000)
-      const inVerifyWindow = now >= readyAt && now < noShowDeadline
+      const inVerifyWindow = isInVerifyWindow({
+        date: b.date,
+        startTime: b.startTime,
+        now,
+        verifyAdvanceMinutes: cfg.verifyAdvanceMinutes,
+        noShowDeadlineMinutes: cfg.noShowDeadlineMinutes,
+      })
 
       if (inVerifyWindow) {
         await prisma.$transaction(async (tx) => {
@@ -328,7 +333,7 @@ export async function processBookingLifecycle(now = new Date()) {
 export function startBookingLifecycleJob() {
   cron.schedule('* * * * *', async () => {
     try {
-      await processBookingLifecycle()
+      await runTrackedJob('booking-lifecycle', () => processBookingLifecycle())
     } catch (e) {
       console.error('[BookingLifecycleJob] 执行失败:', e)
     }

@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { type AxiosResponse } from 'axios'
 import { API_BASE_URL } from '@/lib/apiBase'
 
 export const ADMIN_ACCESS_TOKEN_KEY = 'adminAccessToken'
@@ -24,11 +24,87 @@ apiClient.interceptors.request.use(
   (error) => Promise.reject(error)
 )
 
-// 响应拦截器：统一错误处理 + Token 刷新
+interface LegacyMeta {
+  requestId?: string
+  timestamp?: string
+  page?: number
+  pageSize?: number
+  total?: number
+  totalPages?: number
+  [key: string]: any
+}
+
+interface UnifiedResponse<T = any> {
+  code: number
+  message: string
+  data: T
+  meta?: LegacyMeta
+  details?: any
+}
+
+function adaptToLegacyResponse<T = any>(response: AxiosResponse<UnifiedResponse<T> | any>): AxiosResponse<any> {
+  const payload = response.data
+  if (!payload || typeof payload.code !== 'number') {
+    return response
+  }
+
+  const { code, message, data, meta, details } = payload
+
+  if (code !== 0) {
+    const error: any = new Error(message || '请求失败')
+    error.response = {
+      ...response,
+      data: { code, message, details, meta },
+    }
+    error.config = response.config
+    error.status = response.status
+    throw error
+  }
+
+  let adaptedData: any = data
+  let adaptedMeta: LegacyMeta | undefined = meta
+
+  if (data && Array.isArray(data.list) && typeof data.total === 'number') {
+    adaptedData = data.list
+    adaptedMeta = {
+      ...meta,
+      page: data.page,
+      pageSize: data.pageSize,
+      total: data.total,
+      totalPages: Math.ceil(data.total / data.pageSize),
+    }
+  }
+
+  response.data = {
+    success: true,
+    data: adaptedData,
+    message,
+    meta: adaptedMeta,
+  }
+
+  return response
+}
+
+function extractMessageFromErrorData(data: any): string | undefined {
+  if (!data) return undefined
+  if (typeof data.message === 'string') return data.message
+  if (typeof data.error === 'string') return data.error
+  return undefined
+}
+
+// 响应拦截器：兼容新旧统一响应格式 + 统一错误处理 + Token 刷新
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => adaptToLegacyResponse(response),
   async (error) => {
     const originalRequest = error.config
+
+    // 统一错误体：优先取服务端返回的 message
+    if (error.response?.data) {
+      const message = extractMessageFromErrorData(error.response.data)
+      if (message && !error.message) {
+        error.message = message
+      }
+    }
 
     // Token 过期，尝试刷新
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {

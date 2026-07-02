@@ -140,19 +140,9 @@ export async function list(req: Request, res: Response) {
       levelCounts[g.level.toLowerCase()] = g._count.level
     }
 
-    const response: any = {
-      success: true,
-      data: enrichedUsers,
-      message: 'success',
-      meta: {
-        page: pageNum,
-        pageSize: sizeNum,
-        total,
-        totalPages: Math.ceil(total / sizeNum),
-        levelCounts,
-      },
-    }
-    return res.status(200).json(response)
+    return paginated(res, enrichedUsers, pageNum, sizeNum, total, 'success', {
+      levelCounts,
+    })
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }

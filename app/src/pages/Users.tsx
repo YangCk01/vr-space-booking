@@ -53,6 +53,8 @@ import type { User as ApiUser } from '@/api/users'
 import { getSystemConfigs } from '@/api/systemConfig'
 import { giftPoints, giftCoupon, getPointsGiftRecords, getCouponGiftRecords } from '@/api/gift'
 import { getUserRechargeRecords } from '@/api/finance'
+import { getVenues } from '@/api/venues'
+import { getRechargeConfig, staffRecharge, type RechargeConfig } from '@/api/recharges'
 import { buildMemberLevelsFromConfig } from '@/lib/memberLevels'
 import { hasPermission } from '@/lib/permissions'
 import { useAuthStore } from '@/stores/authStore'
@@ -667,6 +669,208 @@ function DeleteConfirmDialog({
   )
 }
 
+function MemberRechargeSheet({
+  user,
+  open,
+  onOpenChange,
+}: {
+  user: ApiUser | null
+  open: boolean
+  onOpenChange: (v: boolean) => void
+}) {
+  const queryClient = useQueryClient()
+  const [amount, setAmount] = useState('')
+  const [venueId, setVenueId] = useState('')
+  const [payMethod, setPayMethod] = useState<'CASH' | 'CARD'>('CASH')
+  const [remark, setRemark] = useState('')
+  const [rechargeError, setRechargeError] = useState('')
+
+  const { data: configs = [] } = useQuery({
+    queryKey: ['rechargeConfig'],
+    queryFn: getRechargeConfig,
+    enabled: open,
+  })
+
+  const { data: venueData } = useQuery({
+    queryKey: ['venues', 'recharge-options'],
+    queryFn: () => getVenues({ pageSize: 100 }),
+    enabled: open,
+  })
+
+  const venues = venueData?.data || []
+  const selectedConfig = configs.find((cfg: RechargeConfig) => String(cfg.amount) === amount)
+
+  useEffect(() => {
+    if (!open) return
+    setRechargeError('')
+    setPayMethod('CASH')
+    setRemark('')
+  }, [open, user?.id])
+
+  useEffect(() => {
+    if (!open) return
+    if (!amount && configs.length > 0) {
+      setAmount(String(configs[0].amount))
+    }
+    if (!venueId && venues.length > 0) {
+      setVenueId(venues[0].id)
+    }
+  }, [open, amount, configs, venueId, venues])
+
+  const rechargeMutation = useMutation({
+    mutationFn: () => {
+      if (!user) throw new Error('会员不能为空')
+      if (!amount) throw new Error('请选择充值档位')
+      if (!venueId) throw new Error('请选择归属门店')
+      return staffRecharge({
+        userId: user.id,
+        amount: Number(amount),
+        venueId,
+        payMethod,
+        remark: remark.trim() || undefined,
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      if (user?.id) {
+        queryClient.invalidateQueries({ queryKey: ['user-recharge-records', user.id] })
+      }
+      queryClient.invalidateQueries({ queryKey: ['finance'] })
+      onOpenChange(false)
+    },
+    onError: (err: any) => {
+      setRechargeError(err?.response?.data?.message || err?.message || '充值失败')
+    },
+  })
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-[420px] bg-vrbg-card border-l border-vrborder-subtle p-0 sm:max-w-[420px]">
+        <SheetHeader className="p-6 border-b border-vrborder-subtle">
+          <SheetTitle className="text-vr-h3 text-vrtext-primary">会员储值入账</SheetTitle>
+        </SheetHeader>
+
+        <div className="p-6 space-y-4">
+          <div className="rounded-xl bg-vrbg-elevated border border-vrborder-subtle p-4">
+            <p className="text-vr-caption text-vrtext-muted">充值会员</p>
+            <p className="text-vr-body text-vrtext-primary font-medium mt-1">{user?.name || '-'}</p>
+            <p className="text-vr-caption text-vrtext-tertiary mt-0.5">{user?.phone || '-'}</p>
+          </div>
+
+          {rechargeError && (
+            <div className="p-3 rounded-lg bg-vrerror/10 border border-vrerror/20 text-vr-body-sm text-vrerror">
+              {rechargeError}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">充值档位</label>
+            <select
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+            >
+              <option value="">请选择充值档位</option>
+              {configs.map((cfg: RechargeConfig) => (
+                <option key={cfg.amount} value={cfg.amount}>
+                  充 ¥{(cfg.amount / 100).toFixed(2)}，赠 ¥{(cfg.bonus / 100).toFixed(2)}，到账 ¥{(cfg.total / 100).toFixed(2)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">归属门店</label>
+            <select
+              value={venueId}
+              onChange={(e) => setVenueId(e.target.value)}
+              className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+            >
+              <option value="">请选择归属门店</option>
+              {venues.map((venue: any) => (
+                <option key={venue.id} value={venue.id}>{venue.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">收款方式</label>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { key: 'CASH' as const, label: '现金收款' },
+                { key: 'CARD' as const, label: '刷卡收款' },
+              ].map((method) => (
+                <button
+                  key={method.key}
+                  type="button"
+                  onClick={() => setPayMethod(method.key)}
+                  className={cn(
+                    'h-10 rounded-lg border text-vr-body-sm font-medium transition-colors',
+                    payMethod === method.key
+                      ? 'border-vraccent-primary bg-vraccent-primary/10 text-vraccent-primary'
+                      : 'border-vrborder-subtle text-vrtext-secondary hover:bg-vrbg-elevated',
+                  )}
+                >
+                  {method.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {selectedConfig && (
+            <div className="rounded-xl border border-vrsuccess/25 bg-vrsuccess/10 p-4 space-y-1">
+              <div className="flex justify-between text-vr-body-sm">
+                <span className="text-vrtext-secondary">实收本金</span>
+                <span className="text-vrtext-primary">¥{(selectedConfig.amount / 100).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-vr-body-sm">
+                <span className="text-vrtext-secondary">赠送金额</span>
+                <span className="text-vrsuccess">+¥{(selectedConfig.bonus / 100).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-vr-body font-semibold pt-1">
+                <span className="text-vrtext-primary">入账合计</span>
+                <span className="text-vraccent-primary">¥{(selectedConfig.total / 100).toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">备注</label>
+            <textarea
+              value={remark}
+              onChange={(e) => setRemark(e.target.value)}
+              placeholder="例如：门店 POS 小票号、收款说明"
+              rows={3}
+              className="w-full px-3 py-2 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary resize-none"
+            />
+          </div>
+
+          <div className="rounded-lg bg-vrwarning/10 border border-vrwarning/25 px-3 py-2 text-vr-caption text-vrwarning">
+            请确认门店已实际收到现金或刷卡款项后再入账。
+          </div>
+        </div>
+
+        <div className="p-6 border-t border-vrborder-subtle flex gap-3">
+          <button
+            onClick={() => onOpenChange(false)}
+            className="flex-1 h-10 rounded-lg border border-vrborder-subtle text-vrtext-secondary text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors"
+          >
+            取消
+          </button>
+          <button
+            onClick={() => rechargeMutation.mutate()}
+            disabled={rechargeMutation.isPending || !user || !amount || !venueId}
+            className="flex-1 h-10 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+          >
+            {rechargeMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+            确认入账
+          </button>
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
 export default function UsersPage() {
   const queryClient = useQueryClient()
   const currentUser = useAuthStore((state) => state.user)
@@ -695,6 +899,8 @@ export default function UsersPage() {
   })
   const [createError, setCreateError] = useState('')
   const [createLoading, setCreateLoading] = useState(false)
+  const [rechargeSheetOpen, setRechargeSheetOpen] = useState(false)
+  const [rechargingUser, setRechargingUser] = useState<ApiUser | null>(null)
 
   /* ─── Gift states ─── */
   const [giftPointsOpen, setGiftPointsOpen] = useState(false)
@@ -821,6 +1027,11 @@ export default function UsersPage() {
   const handleOpenDelete = (user: ApiUser) => {
     setDeletingUser(user)
     setDeleteDialogOpen(true)
+  }
+
+  const handleOpenRecharge = (user: ApiUser) => {
+    setRechargingUser(user)
+    setRechargeSheetOpen(true)
   }
 
   const handleEditSubmit = (data: Partial<ApiUser>) => {
@@ -1168,6 +1379,15 @@ export default function UsersPage() {
                           )}
                           {canGiftUsers && (
                             <button
+                              onClick={() => handleOpenRecharge(user)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vraccent-primary hover:bg-vraccent-primary/10 transition-colors"
+                              title="会员储值"
+                            >
+                              <Wallet className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canGiftUsers && (
+                            <button
                               onClick={() => {
                                 setGiftChoiceUser(user)
                                 setGiftChoiceOpen(true)
@@ -1278,6 +1498,15 @@ export default function UsersPage() {
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteConfirm}
         isPending={deleteMutation.isPending}
+      />
+
+      <MemberRechargeSheet
+        user={rechargingUser}
+        open={rechargeSheetOpen}
+        onOpenChange={(open) => {
+          setRechargeSheetOpen(open)
+          if (!open) setRechargingUser(null)
+        }}
       />
 
       {/* Create User Sheet */}

@@ -17,6 +17,7 @@ import { authenticate, optionalAuthenticate } from '../middleware/auth'
 import { requireAnyPermissionOrRole, requirePermission } from '../middleware/rbac'
 import { logOperation } from '../middleware/operationLog'
 import { prisma } from '../utils/prisma'
+import { success, error } from '../utils/response'
 
 const router = Router()
 
@@ -28,15 +29,15 @@ router.get('/:id/status', authenticate, status)
 router.get('/:id/equipment', authenticate, requirePermission('booking:read'), async (req, res) => {
   try {
     const assigned = await getAssignedEquipment(req.params.id as string)
-    return res.json({ success: true, data: assigned.map((a) => ({
+    return success(res, assigned.map((a) => ({
       id: a.equipment.id,
       name: a.equipment.name,
       code: a.equipment.code,
       type: a.equipment.type,
       assignedAt: a.assignedAt,
-    })) })
+    })))
   } catch (err) {
-    return res.status(500).json({ success: false, message: (err as Error).message })
+    return error(res, (err as Error).message, 500)
   }
 })
 router.put('/:id/equipment', authenticate, requirePermission('booking:manage'), async (req, res) => {
@@ -50,9 +51,9 @@ router.put('/:id/equipment', authenticate, requirePermission('booking:manage'), 
     await prisma.bookingEquipment.createMany({
       data: equipmentIds.map((eid: string) => ({ bookingId, equipmentId: eid })),
     })
-    return res.json({ success: true, message: '设备分配已更新' })
+    return success(res, null, '设备分配已更新')
   } catch (err) {
-    return res.status(500).json({ success: false, message: (err as Error).message })
+    return error(res, (err as Error).message, 500)
   }
 })
 router.post('/', optionalAuthenticate, createValidators, logOperation({ type: '新增预约', content: (req) => `新增预约: ${req.body.title || req.body.venueId}` }), create)

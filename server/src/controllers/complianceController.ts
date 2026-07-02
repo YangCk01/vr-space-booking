@@ -106,6 +106,8 @@ function applyTabFilter(records: any[], tab: string) {
       return records.filter((r) => r.bankStatus === 'in_transit')
     case 'invoice':
       return records.filter((r) => r.invoice.status === 'pending')
+    case 'cancelled':
+      return records.filter((r) => r.consumeStatus === 'cancelled')
     case 'exception':
       return records.filter((r) => !['matched', 'refunded'].includes(r.status))
     default:

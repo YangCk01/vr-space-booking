@@ -49,7 +49,7 @@ export interface OrderInput {
   customer?: string
   phone?: string
   source?: 'ONLINE' | 'OFFLINE'
-  payMethod?: 'BALANCE' | 'WECHAT' | 'ALIPAY' | 'CASH' | 'SCANBOX'
+  payMethod?: 'BALANCE' | 'CASH' | 'CARD'
   thirdPartyCouponCode?: string
 }
 

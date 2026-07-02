@@ -2,17 +2,16 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   X,
-  QrCode,
   ScanLine,
   Wallet,
+  CreditCard,
   CheckCircle2,
   Loader2,
-  Smartphone,
   Ticket,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export type PaymentMethod = 'WECHAT' | 'ALIPAY' | 'CASH'
+export type PaymentMethod = 'CASH' | 'CARD'
 
 interface PaymentMethodModalProps {
   open: boolean
@@ -47,26 +46,6 @@ const methods: {
   text: string
 }[] = [
   {
-    key: 'WECHAT',
-    label: '微信支付',
-    subLabel: '顾客微信扫码支付',
-    icon: <QrCode className="w-6 h-6" />,
-    bg: 'bg-emerald-500/10',
-    hoverBg: 'hover:bg-emerald-500/20',
-    border: 'border-emerald-500/30',
-    text: 'text-emerald-400',
-  },
-  {
-    key: 'ALIPAY',
-    label: '支付宝',
-    subLabel: '顾客支付宝扫码支付',
-    icon: <Smartphone className="w-6 h-6" />,
-    bg: 'bg-sky-500/10',
-    hoverBg: 'hover:bg-sky-500/20',
-    border: 'border-sky-500/30',
-    text: 'text-sky-400',
-  },
-  {
     key: 'CASH',
     label: '现金收款',
     subLabel: '线下现金直接收款',
@@ -75,6 +54,16 @@ const methods: {
     hoverBg: 'hover:bg-amber-500/20',
     border: 'border-amber-500/30',
     text: 'text-amber-400',
+  },
+  {
+    key: 'CARD',
+    label: '刷卡收款',
+    subLabel: '员工确认 POS 刷卡到账',
+    icon: <CreditCard className="w-6 h-6" />,
+    bg: 'bg-vraccent-primary/10',
+    hoverBg: 'hover:bg-vraccent-primary/20',
+    border: 'border-vraccent-primary/30',
+    text: 'text-vraccent-primary',
   },
 ]
 
@@ -284,11 +273,12 @@ export function PaymentMethodModal({
 /* ──────────────────────────────────────────────── */
 
 type ScanStatus = 'waiting' | 'scanned' | 'processing' | 'success' | 'error'
+type ScanBoxPaymentMethod = 'WECHAT' | 'ALIPAY' | 'SCANBOX'
 
 interface ScanBoxSimulatorProps {
   open: boolean
   onClose: () => void
-  method: PaymentMethod
+  method: ScanBoxPaymentMethod
   orderNo: string
   amount: number
   onSuccess: () => void
@@ -308,7 +298,6 @@ export function ScanBoxSimulator({
   const [scanCount, setScanCount] = useState(0)
 
   const methodLabel = method === 'WECHAT' ? '微信支付' : method === 'ALIPAY' ? '支付宝' : '扫码支付'
-  const methodColor = method === 'WECHAT' ? 'text-emerald-400' : method === 'ALIPAY' ? 'text-sky-400' : 'text-vraccent-primary'
   const methodBg = method === 'WECHAT' ? 'bg-emerald-500' : method === 'ALIPAY' ? 'bg-sky-500' : 'bg-vraccent-primary'
 
   // 模拟扫码流程

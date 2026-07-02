@@ -38,6 +38,7 @@ model User {
   pointsExchanges   PointsExchange[]
   pointsOrders      PointsOrder[]
   recharges         RechargeRecord[]
+  storeBalances     UserStoreBalance[]
   thirdPartyCoupons ThirdPartyCoupon[]
   userCoupons       UserCoupon[]
   managedVenues     VenueManager[]
@@ -72,7 +73,9 @@ model Venue {
   deviceLogs           DeviceSessionLog[]
   equipment            Equipment[]
   managers             VenueManager[]
-  groupBuyPackages     GroupBuyPackage[] @relation("GroupBuyPackageToVenue")
+  groupBuyPackages     GroupBuyPackage[]  @relation("GroupBuyPackageToVenue")
+  recharges            RechargeRecord[]
+  storeBalances        UserStoreBalance[]
 }
 
 model VenueManager {
@@ -116,69 +119,78 @@ model Booking {
   venue              Venue              @relation(fields: [venueId], references: [id], onDelete: Cascade)
   assignedEquipments BookingEquipment[]
   order              Order?
+
+  @@index([venueId, date, status])
+  @@index([userId, date])
+  @@index([status, date])
 }
 
 model Order {
-  id                  String               @id @default(uuid())
-  orderNo             String               @unique
-  bookingId           String?              @unique
-  userId              String?
-  venueId             String?
-  venueName           String?
-  amount              Int
-  status              OrderStatus          @default(PENDING)
-  payMethod           PayMethod?
-  paidAt              DateTime?
-  cancelledAt         DateTime?
-  refundAmount        Int?
-  bookingTime         String?
-  expireAt            DateTime?
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  source              OrderSource          @default(OFFLINE)
-  bonusDeduction      Int                  @default(0)
-  discountAmount      Int                  @default(0)
-  discountRate        Int                  @default(100)
-  originalAmount      Int                  @default(0)
-  pointsDeduction     Int                  @default(0)
-  pointsUsed          Int                  @default(0)
-  principalDeduction  Int                  @default(0)
-  userCouponId        String?
-  couponDiscount      Int                  @default(0)
-  noShowAt            DateTime?
-  noShowReason        String?
-  penaltyAmount       Int?
-  standbyConverted    Boolean              @default(false)
-  verifiedAt          DateTime?
-  playingStartedAt    DateTime?
-  playingEndedAt      DateTime?
-  rescheduleCount     Int                  @default(0)
-  rescheduleFeeAmount Int                  @default(0)
-  quantity            Int                  @default(1)
-  verifyCode          String?              @unique
-  groupBuyPackageId   String?
-  orderKind           String               @default("NORMAL")
-  feeType             String?
-  parentOrderId       String?
-  feeReason           String?
-  disruptionStatus    String               @default("NONE")
-  disruptionReason    String?
-  disruptionSource    String?
-  disruptionAt        DateTime?
-  metadata            Json?
-  transactions        BalanceTransaction[]
-  booking             Booking?             @relation(fields: [bookingId], references: [id])
-  userCoupon          UserCoupon?          @relation(fields: [userCouponId], references: [id])
-  user                User?                @relation(fields: [userId], references: [id])
-  groupBuyPackage     GroupBuyPackage?     @relation(fields: [groupBuyPackageId], references: [id])
-  parentOrder         Order?               @relation("OrderFeeOrders", fields: [parentOrderId], references: [id])
-  feeOrders           Order[]              @relation("OrderFeeOrders")
-  payments            Payment[]
+  id                       String               @id @default(uuid())
+  orderNo                  String               @unique
+  bookingId                String?              @unique
+  userId                   String?
+  venueId                  String?
+  venueName                String?
+  amount                   Int
+  status                   OrderStatus          @default(PENDING)
+  payMethod                PayMethod?
+  paidAt                   DateTime?
+  cancelledAt              DateTime?
+  refundAmount             Int?
+  bookingTime              String?
+  expireAt                 DateTime?
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+  source                   OrderSource          @default(OFFLINE)
+  bonusDeduction           Int                  @default(0)
+  discountAmount           Int                  @default(0)
+  discountRate             Int                  @default(100)
+  originalAmount           Int                  @default(0)
+  pointsDeduction          Int                  @default(0)
+  pointsUsed               Int                  @default(0)
+  principalDeduction       Int                  @default(0)
+  balanceDeductionSnapshot Json? // 余额扣减来源快照，用于退款追溯
+  userCouponId             String?
+  couponDiscount           Int                  @default(0)
+  noShowAt                 DateTime?
+  noShowReason             String?
+  penaltyAmount            Int?
+  standbyConverted         Boolean              @default(false)
+  verifiedAt               DateTime?
+  playingStartedAt         DateTime?
+  playingEndedAt           DateTime?
+  rescheduleCount          Int                  @default(0)
+  rescheduleFeeAmount      Int                  @default(0)
+  quantity                 Int                  @default(1)
+  verifyCode               String?              @unique
+  groupBuyPackageId        String?
+  orderKind                String               @default("NORMAL")
+  feeType                  String?
+  parentOrderId            String?
+  feeReason                String?
+  disruptionStatus         String               @default("NONE")
+  disruptionReason         String?
+  disruptionSource         String?
+  disruptionAt             DateTime?
+  metadata                 Json?
+  transactions             BalanceTransaction[]
+  booking                  Booking?             @relation(fields: [bookingId], references: [id])
+  userCoupon               UserCoupon?          @relation(fields: [userCouponId], references: [id])
+  user                     User?                @relation(fields: [userId], references: [id])
+  groupBuyPackage          GroupBuyPackage?     @relation(fields: [groupBuyPackageId], references: [id])
+  parentOrder              Order?               @relation("OrderFeeOrders", fields: [parentOrderId], references: [id])
+  feeOrders                Order[]              @relation("OrderFeeOrders")
+  payments                 Payment[]
 
   @@index([userId])
+  @@index([userId, createdAt])
+  @@index([venueId, status, paidAt])
   @@index([status])
+  @@index([status, paidAt])
   @@index([createdAt])
   @@index([orderKind])
+  @@index([orderKind, status, createdAt])
   @@index([feeType])
   @@index([parentOrderId])
   @@index([disruptionStatus])
@@ -229,6 +241,7 @@ model Payment {
 
   @@index([orderId])
   @@index([createdAt])
+  @@index([status, createdAt])
 }
 
 model Equipment {
@@ -322,6 +335,7 @@ model BackupRecord {
 model RechargeRecord {
   id        String    @id @default(uuid())
   userId    String
+  venueId   String?
   amount    Int
   bonus     Int
   total     Int
@@ -330,9 +344,12 @@ model RechargeRecord {
   paidAt    DateTime?
   createdAt DateTime  @default(now())
   user      User      @relation(fields: [userId], references: [id])
+  venue     Venue?    @relation(fields: [venueId], references: [id])
 
   @@index([userId])
+  @@index([venueId])
   @@index([status])
+  @@index([status, paidAt])
   @@index([createdAt])
 }
 
@@ -343,6 +360,8 @@ model BalanceTransaction {
   amount          Int
   orderId         String?
   rechargeId      String?
+  venueId         String? // 发生门店（消费/退款门店）
+  sourceVenueId   String? // 资金来源门店（跨店消费时）
   remark          String?
   createdAt       DateTime @default(now())
   bonusAmount     Int      @default(0)
@@ -355,63 +374,81 @@ model BalanceTransaction {
   @@index([userId])
   @@index([orderId])
   @@index([rechargeId])
+  @@index([venueId])
+  @@index([sourceVenueId])
   @@index([createdAt])
   @@index([type])
+  @@index([type, createdAt])
+}
+
+model JobExecutionLog {
+  id           String    @id @default(uuid())
+  jobName      String
+  status       String
+  startedAt    DateTime
+  finishedAt   DateTime?
+  durationMs   Int?
+  errorMessage String?
+  createdAt    DateTime  @default(now())
+
+  @@index([jobName, startedAt])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model Game {
-  id              String            @id @default(uuid())
-  title           String
-  subtitle        String?
-  description     String?
-  coverImage      String?
-  videoUrl        String?
-  price           Int               @default(0)
-  duration        Int               @default(30)
-  minPlayers      Int               @default(1)
-  maxPlayers      Int               @default(4)
-  tags            String[]
-  status          String            @default("ACTIVE")
-  sortOrder       Int               @default(0)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  detailImages    String[]
-  notice          String?
-  bookings        Booking[]
+  id               String            @id @default(uuid())
+  title            String
+  subtitle         String?
+  description      String?
+  coverImage       String?
+  videoUrl         String?
+  price            Int               @default(0)
+  duration         Int               @default(30)
+  minPlayers       Int               @default(1)
+  maxPlayers       Int               @default(4)
+  tags             String[]
+  status           String            @default("ACTIVE")
+  sortOrder        Int               @default(0)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  detailImages     String[]
+  notice           String?
+  bookings         Booking[]
   groupBuyPackages GroupBuyPackage[]
 }
 
 model GroupBuyPackage {
-  id                    String   @id @default(uuid())
-  gameId                String
-  title                 String
-  subtitle              String?
-  type                  String   @default("DOUBLE") // DOUBLE / THREE / PRIVATE
-  label                 String   @default("双人团")
-  minPeople             Int      @default(2)
-  maxPeople             Int      @default(2)
-  originalPricePerPerson Int     @default(0)
-  groupPricePerPerson   Int      @default(0)
-  totalGroupPrice       Int      @default(0)
-  coverImage            String?
-  tags                  String[]
-  status                String   @default("ACTIVE") // ACTIVE / INACTIVE
-  sortOrder             Int      @default(0)
-  startDate             DateTime? @db.Date
-  endDate               DateTime? @db.Date
-  description           String?
-  soldText              String   @default("近期售 200+")
-  refundTags            String[] @default(["随时退", "过期自动退"])
-  packageItems          String[] @default([])
-  processSteps          String[] @default(["购买团购券", "选择门店与场次", "到店核销入场"])
-  notice                String?
-  refundNotice          String?
-  buyButtonText         String   @default("立即抢购")
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-  game                  Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  venues                Venue[]  @relation("GroupBuyPackageToVenue")
-  orders                Order[]
+  id                     String    @id @default(uuid())
+  gameId                 String
+  title                  String
+  subtitle               String?
+  type                   String    @default("DOUBLE") // DOUBLE / THREE / PRIVATE
+  label                  String    @default("双人团")
+  minPeople              Int       @default(2)
+  maxPeople              Int       @default(2)
+  originalPricePerPerson Int       @default(0)
+  groupPricePerPerson    Int       @default(0)
+  totalGroupPrice        Int       @default(0)
+  coverImage             String?
+  tags                   String[]
+  status                 String    @default("ACTIVE") // ACTIVE / INACTIVE
+  sortOrder              Int       @default(0)
+  startDate              DateTime? @db.Date
+  endDate                DateTime? @db.Date
+  description            String?
+  soldText               String    @default("近期售 200+")
+  refundTags             String[]  @default(["随时退", "过期自动退"])
+  packageItems           String[]  @default([])
+  processSteps           String[]  @default(["购买团购券", "选择门店与场次", "到店核销入场"])
+  notice                 String?
+  refundNotice           String?
+  buyButtonText          String    @default("立即抢购")
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  game                   Game      @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  venues                 Venue[]   @relation("GroupBuyPackageToVenue")
+  orders                 Order[]
 
   @@index([gameId])
   @@index([status])
@@ -983,6 +1020,9 @@ model UserStoreBalance {
   totalRecharged   Int      @default(0)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
 
   @@unique([userId, venueId])
   @@index([userId])

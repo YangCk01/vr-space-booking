@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../utils/prisma'
+import { success } from '../utils/response'
 
 const router = Router()
 
@@ -10,7 +11,7 @@ router.get('/exceptions-count', async (_req, res) => {
     orderBy: { createdAt: 'desc' },
     take: 10,
   })
-  res.json({ count, exceptions: all })
+  return success(res, { count, exceptions: all })
 })
 
 export default router

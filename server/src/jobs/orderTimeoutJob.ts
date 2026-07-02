@@ -1,6 +1,7 @@
 import cron from 'node-cron'
 import { prisma } from '../utils/prisma'
 import { releaseEquipment } from '../services/equipmentService'
+import { runTrackedJob } from './jobRunner'
 
 function readOrderMetadata(metadata: unknown): Record<string, any> {
   if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
@@ -93,7 +94,7 @@ export async function expirePendingOrders(now = new Date()) {
 export function startOrderTimeoutJob() {
   cron.schedule('* * * * *', async () => {
     try {
-      const processed = await expirePendingOrders()
+      const processed = await runTrackedJob('order-timeout', () => expirePendingOrders())
       if (processed > 0) {
         console.log(`[OrderTimeoutJob] 自动取消 ${processed} 个过期待支付订单`)
       }

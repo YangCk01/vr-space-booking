@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ChevronLeft, Check, Zap } from 'lucide-react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { getRechargeConfig, createRecharge, confirmRecharge } from '@/api/recharges'
+import { useQuery } from '@tanstack/react-query'
+import { getRechargeConfig } from '@/api/recharges'
 import { useAuth } from '@/providers/AuthProvider'
 import { cn } from '@/lib/utils'
 import { apiClient } from '@/api/client'
@@ -18,11 +18,8 @@ async function getMemberPublicConfig() {
 
 export default function Recharge() {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const { user, refreshUser } = useAuth()
+  const { user } = useAuth()
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
-  const [payMethod, setPayMethod] = useState<'wechat' | 'alipay'>('wechat')
-  const [status, setStatus] = useState<'idle' | 'paying' | 'success'>('idle')
 
   const { data: configs, isLoading } = useQuery({
     queryKey: ['rechargeConfig'],
@@ -34,41 +31,11 @@ export default function Recharge() {
     queryFn: getMemberPublicConfig,
   })
 
-  const createMut = useMutation({ mutationFn: createRecharge })
-  const confirmMut = useMutation({ mutationFn: confirmRecharge })
-
   const currentLevel = memberConfig?.levels?.find((l) => l.key === user?.level)
 
-  const handlePay = async () => {
+  const handleContactStore = () => {
     if (selectedIdx === null || !configs) return
-    const cfg = configs[selectedIdx]
-    setStatus('paying')
-
-    try {
-      // 1. 创建充值订单
-      const recharge = await createMut.mutateAsync({
-        amount: cfg.amount,
-        payMethod,
-      })
-
-      // 2. 如果后端未自动到账，则调确认接口
-      if (recharge.status !== 'PAID') {
-        await confirmMut.mutateAsync(recharge.id)
-      }
-
-      // 3. 刷新用户信息和充值记录
-      queryClient.invalidateQueries({ queryKey: ['rechargeConfig'] })
-      queryClient.invalidateQueries({ queryKey: ['orders'] })
-      queryClient.invalidateQueries({ queryKey: ['member-public-config'] })
-      await refreshUser()
-
-      setStatus('success')
-    } catch (err: any) {
-      console.error('充值失败:', err)
-      const msg = err?.response?.data?.message || err?.message || '支付失败，请重试'
-      alert(msg)
-      setStatus('idle')
-    }
+    navigate('/store-contact')
   }
 
   const selectedCfg = selectedIdx !== null && configs ? configs[selectedIdx] : null
@@ -129,7 +96,7 @@ export default function Recharge() {
               return (
                 <button
                   key={idx}
-                  onClick={() => { setSelectedIdx(idx); setStatus('idle') }}
+                  onClick={() => setSelectedIdx(idx)}
                   className={cn(
                     'relative p-4 rounded-xl border text-left transition-all',
                     isSelected
@@ -167,25 +134,9 @@ export default function Recharge() {
             animate={{ opacity: 1, y: 0 }}
             className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-4 space-y-3"
           >
-            <p className="text-sm font-medium text-[var(--text-primary)]">支付方式</p>
-            <div className="flex gap-3">
-              {[
-                { key: 'wechat' as const, label: '微信支付' },
-                { key: 'alipay' as const, label: '支付宝' },
-              ].map((m) => (
-                <button
-                  key={m.key}
-                  onClick={() => setPayMethod(m.key)}
-                  className={cn(
-                    'flex-1 h-10 rounded-lg border text-sm font-medium transition-all',
-                    payMethod === m.key
-                      ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/5 text-[var(--accent-primary)]'
-                      : 'border-[var(--border-subtle)] text-[var(--text-secondary)] hover:border-[var(--border-hover)]',
-                  )}
-                >
-                  {m.label}
-                </button>
-              ))}
+            <p className="text-sm font-medium text-[var(--text-primary)]">办理方式</p>
+            <div className="rounded-lg border border-[var(--warning)]/25 bg-[var(--warning)]/10 px-3 py-2 text-xs text-[var(--warning)]">
+              线上储值暂未开放。请到店由员工确认现金或刷卡收款后入账，避免未接入真实支付前出现虚假到账。
             </div>
 
             {/* Summary */}
@@ -206,42 +157,17 @@ export default function Recharge() {
             </div>
           </motion.div>
         )}
-
-        {/* Success state */}
-        {status === 'success' && selectedCfg && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-[var(--success)]/10 border border-[var(--success)]/20 rounded-xl p-6 text-center"
-          >
-            <div className="w-12 h-12 rounded-full bg-[var(--success)]/20 flex items-center justify-center mx-auto mb-3">
-              <Check className="w-6 h-6 text-[var(--success)]" />
-            </div>
-            <p className="text-lg font-bold text-[var(--text-primary)]">充值成功</p>
-            <p className="text-sm text-[var(--text-secondary)] mt-1">
-              到账 ¥{selectedCfg.total / 100}，当前余额 ¥{((user?.principalBalance || 0) + (user?.bonusBalance || 0)) / 100}
-            </p>
-
-            <button
-              onClick={() => navigate('/profile')}
-              className="mt-4 h-10 px-6 rounded-xl bg-gradient-accent text-white text-sm font-semibold shadow-glow"
-            >
-              返回个人中心
-            </button>
-          </motion.div>
-        )}
       </div>
 
       {/* Bottom CTA */}
-      {selectedCfg && status !== 'success' && (
+      {selectedCfg && (
         <div className="fixed bottom-[calc(3.5rem+var(--safe-bottom))] left-0 right-0 z-40 bg-gradient-to-t from-[var(--bg-primary)] to-transparent pt-6 pb-4 px-4">
           <div className="max-w-lg mx-auto">
             <button
-              onClick={handlePay}
-              disabled={status === 'paying'}
+              onClick={handleContactStore}
               className="w-full h-12 rounded-xl bg-gradient-accent text-white font-semibold text-base shadow-glow hover:shadow-glow-sm active:scale-[0.98] transition-all disabled:opacity-60"
             >
-              {status === 'paying' ? '支付中...' : `确认支付 ¥${selectedCfg.amount / 100}`}
+              联系门店到店办理
             </button>
           </div>
         </div>

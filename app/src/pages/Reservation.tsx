@@ -42,7 +42,7 @@ interface Venue {
   maintenanceEndTime?: string | null
 }
 
-type PaymentMethod = 'wechat' | 'alipay'
+type PaymentMethod = 'cash' | 'card'
 
 type Step = 1 | 2 | 3 | 4
 
@@ -734,8 +734,8 @@ function StepConfirmOrder({
         <h4 className="text-vr-body-sm text-vrtext-secondary mb-3">支付方式</h4>
         <div className="space-y-2">
           {([
-            { key: 'wechat' as const, label: '微信支付', color: 'text-[#07C160]', bg: 'bg-[#07C160]' },
-            { key: 'alipay' as const, label: '支付宝', color: 'text-[#1677FF]', bg: 'bg-[#1677FF]' },
+            { key: 'cash' as const, label: '现金收款', bg: 'bg-amber-500', icon: '现' },
+            { key: 'card' as const, label: '刷卡收款', bg: 'bg-vraccent-primary', icon: '卡' },
           ]).map((method, idx) => (
             <motion.button
               key={method.key}
@@ -779,7 +779,7 @@ function StepConfirmOrder({
               {/* Icon placeholder using colored circle */}
               <div className={cn('w-8 h-8 rounded-full flex items-center justify-center shrink-0', method.bg)}>
                 <span className="text-white text-[10px] font-bold">
-                  {method.key === 'wechat' ? '微' : '支'}
+                  {method.icon}
                 </span>
               </div>
 
@@ -988,7 +988,7 @@ export default function Reservation() {
     venue: null,
     date: new Date(),
     timeSlots: [],
-    paymentMethod: 'wechat',
+    paymentMethod: 'cash',
     personName: '',
     personPhone: '',
     personCount: 1,
@@ -1066,6 +1066,7 @@ export default function Reservation() {
             customer: bookingData.personName,
             phone: bookingData.personPhone,
             source: 'ONLINE',
+            payMethod: bookingData.paymentMethod.toUpperCase() as 'CASH' | 'CARD',
           })
           queryClient.invalidateQueries({ queryKey: ['bookings'], exact: false })
           queryClient.invalidateQueries({ queryKey: ['orders'] })
@@ -1345,7 +1346,7 @@ export default function Reservation() {
               {step === 3
                 ? createBookingMutation.isPending
                   ? '提交中...'
-                  : '立即支付'
+                  : '提交预约'
                 : '下一步'}
             </button>
           </motion.div>

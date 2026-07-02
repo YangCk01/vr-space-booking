@@ -893,7 +893,7 @@ export async function runDailyReport(
 
   const couponDiscountCost = await prisma.order.aggregate({
     where: {
-      status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
+      status: { in: ['PAID', 'COMPLETED'] },
       couponDiscount: { gt: 0 },
       paidAt: { gte: start, lte: end }
     },
@@ -2077,7 +2077,7 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
 
     const couponDiscountCostSum = await prisma.order.aggregate({
       where: {
-        status: { in: ['PAID', 'COMPLETED', 'REFUNDED', 'CANCELLED'] },
+        status: { in: ['PAID', 'COMPLETED'] },
         couponDiscount: { gt: 0 },
       },
       _sum: { couponDiscount: true },

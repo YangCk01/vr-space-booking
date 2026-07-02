@@ -1,34 +1,62 @@
 import { Response } from 'express'
+import { resolveErrorCode, ErrorCodes } from './errorCodes'
+import * as api from './apiResponse'
 
 export interface ApiResponse<T = unknown> {
-  success: boolean
+  code: number
+  message: string
   data?: T
-  message?: string
-  error?: string
+  details?: string | Record<string, unknown>
   meta?: {
+    requestId?: string
+    timestamp: string
     page?: number
     pageSize?: number
     total?: number
     totalPages?: number
+    [key: string]: unknown
+  }
+}
+
+function statusToDefaultErrorCode(statusCode: number): number {
+  switch (statusCode) {
+    case 400:
+      return ErrorCodes.BAD_REQUEST
+    case 401:
+      return ErrorCodes.UNAUTHORIZED
+    case 403:
+      return ErrorCodes.FORBIDDEN
+    case 404:
+      return ErrorCodes.NOT_FOUND
+    case 409:
+      return ErrorCodes.CONFLICT
+    case 429:
+      return ErrorCodes.TOO_MANY_REQUESTS
+    case 500:
+    default:
+      return ErrorCodes.INTERNAL_ERROR
   }
 }
 
 export function success<T>(res: Response, data: T, message = 'success', statusCode = 200) {
-  const response: ApiResponse<T> = {
-    success: true,
-    data,
-    message,
-  }
-  return res.status(statusCode).json(response)
+  return api.success(res, data, message, statusCode)
 }
 
-export function error(res: Response, message: string, statusCode = 400, errorDetail?: string) {
-  const response: ApiResponse = {
-    success: false,
-    message,
-    error: errorDetail,
-  }
-  return res.status(statusCode).json(response)
+export function error(
+  res: Response,
+  message: string,
+  statusCode = 400,
+  errorDetail?: string,
+  code?: string | number
+) {
+  const numericCode =
+    typeof code === 'number'
+      ? code
+      : typeof code === 'string'
+        ? resolveErrorCode(code)
+        : statusToDefaultErrorCode(statusCode)
+  const details = errorDetail ? { detail: errorDetail } : undefined
+  return api.error(res, numericCode, message, statusCode, details)
 }
 
 export function paginated<T>(
@@ -37,18 +65,8 @@ export function paginated<T>(
   page: number,
   pageSize: number,
   total: number,
-  message = 'success'
+  message = 'success',
+  extraMeta: Record<string, unknown> = {}
 ) {
-  const response: ApiResponse<T[]> = {
-    success: true,
-    data,
-    message,
-    meta: {
-      page,
-      pageSize,
-      total,
-      totalPages: Math.ceil(total / pageSize),
-    },
-  }
-  return res.status(200).json(response)
+  return api.paginated(res, data, page, pageSize, total, message, extraMeta)
 }

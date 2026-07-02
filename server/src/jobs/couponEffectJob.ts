@@ -55,8 +55,6 @@ export async function runCouponEffectReport(dateStr: string) {
         select: { id: true, userId: true, usedOrderId: true },
       })
 
-      const usedCount = usedCoupons.length
-
       // 3. 昨日过期数
       const expiredCount = await prisma.userCoupon.count({
         where: {
@@ -71,18 +69,25 @@ export async function runCouponEffectReport(dateStr: string) {
       const usedOrderIds = usedCoupons.map((c) => c.usedOrderId).filter(Boolean) as string[]
       let totalOrderAmount = 0
       let couponDiscountCost = 0
+      let validUsedCoupons = usedCoupons.filter((c) => !c.usedOrderId)
       if (usedOrderIds.length > 0) {
-        const orderAgg = await prisma.order.aggregate({
-          where: { id: { in: usedOrderIds } },
-          _sum: { amount: true, couponDiscount: true },
+        const validOrders = await prisma.order.findMany({
+          where: {
+            id: { in: usedOrderIds },
+            status: { in: ['PAID', 'COMPLETED'] },
+          },
+          select: { id: true, amount: true, couponDiscount: true },
         })
-        totalOrderAmount = orderAgg._sum.amount || 0
-        couponDiscountCost = orderAgg._sum.couponDiscount || 0
+        const validOrderIds = new Set(validOrders.map((order) => order.id))
+        validUsedCoupons = usedCoupons.filter((coupon) => !coupon.usedOrderId || validOrderIds.has(coupon.usedOrderId))
+        totalOrderAmount = validOrders.reduce((sum, order) => sum + order.amount, 0)
+        couponDiscountCost = validOrders.reduce((sum, order) => sum + order.couponDiscount, 0)
       }
+      const usedCount = validUsedCoupons.length
 
       // 5. 复购统计（30 天内再次消费）
       const thirtyDaysLater = new Date(end.getTime() + 30 * 24 * 60 * 60 * 1000)
-      const usedUserIds = [...new Set(usedCoupons.map((c) => c.userId))]
+      const usedUserIds = [...new Set(validUsedCoupons.map((c) => c.userId))]
       let reorderUserCount = 0
       let reorderAmount = 0
 

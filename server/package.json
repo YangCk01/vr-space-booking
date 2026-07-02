@@ -11,8 +11,10 @@
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:seed": "ts-node src/utils/seed.ts",
+    "db:check-balance": "ts-node scripts/checkStoreBalanceConsistency.ts",
     "db:studio": "prisma studio",
     "lint": "tsc --noEmit",
+    "test:unit": "tsc -p tsconfig.test.json && node --test dist-test/contracts/*.test.js dist-test/controllers/*.test.js dist-test/domain/*.test.js dist-test/jobs/*.test.js dist-test/middleware/*.test.js dist-test/utils/*.test.js dist-test/openapi/*.test.js",
     "test:recon": "node scripts/recon-smoke-test.js",
     "test:finance-summary": "node scripts/finance-summary-check.js"
   },
@@ -24,6 +26,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^8.5.0",
     "@prisma/client": "6.19.3",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -35,7 +38,8 @@
     "multer": "^1.4.5-lts.2",
     "node-cron": "^4.2.1",
     "socket.io": "^4.8.1",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

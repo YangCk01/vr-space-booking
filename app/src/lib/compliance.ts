@@ -5,7 +5,7 @@
 
 export const TAX_RATE = 0.06 // 默认服务税率 6%（增值税）
 
-export type ConsumeStatus = 'consumed' | 'unconsumed' | 'recharge' | 'refunded'
+export type ConsumeStatus = 'consumed' | 'unconsumed' | 'recharge' | 'refunded' | 'cancelled'
 export type BankStatus = 'in_transit' | 'arrived' | 'internal' | 'pending_recon'
 export type RecordStatus = 'matched' | 'short' | 'over' | 'diff' | 'refunded'
 export type InvoiceStatus = 'none' | 'pending' | 'issued' | 'red_ink'
@@ -147,6 +147,12 @@ export function generateVouchers(record: ComplianceRecord): VoucherEntry[] {
       { subject: '合同负债-会员本金', debit: 0, credit: principal, summary: '会员充值本金（负债）' },
       { subject: '合同负债-会员赠金', debit: 0, credit: gift, summary: '会员充值赠金（负债）' },
     )
+  } else if (record.consumeStatus === 'cancelled') {
+    if (actual <= 0) return []
+    vouchers.push(
+      { subject: '银行存款', debit: actual, credit: 0, summary: '取消单已收款' },
+      { subject: '其他应付款-待退款/待处理款', debit: 0, credit: actual, summary: '取消单未确认收入' },
+    )
   } else if (record.consumeStatus === 'refunded') {
     vouchers.push(
       {
@@ -206,6 +212,10 @@ export function computeRecordStatus(
     ((actualRecv ?? record.actualRecv) - (expectedRecv ?? record.expectedRecv ?? 0)).toFixed(2),
   )
   if (record.consumeStatus === 'refunded') return 'refunded'
+  if (record.consumeStatus === 'cancelled') {
+    if (Math.abs(diff) <= 0.01) return 'matched'
+    return diff > 0.01 ? 'over' : 'short'
+  }
   if (record.bankStatus === 'internal' || record.consumeStatus === 'unconsumed') return 'matched'
   if (diff < -0.01) return 'short'
   if (diff > 0.01) return 'over'

@@ -11,8 +11,6 @@ import { cn } from '@/lib/utils'
 import { getImageUrl } from '@/lib/imageUrl'
 
 const payMethodMap: Record<string, { label: string; method: string }> = {
-  wechat: { label: '微信支付', method: 'WECHAT' },
-  alipay: { label: '支付宝', method: 'ALIPAY' },
   balance: { label: '余额支付', method: 'BALANCE' },
 }
 
@@ -62,7 +60,7 @@ export default function Pay() {
   const queryClient = useQueryClient()
   const { user, isLoggedIn, refreshUser } = useAuth()
 
-  const [paymentMethod, setPaymentMethod] = useState<'wechat' | 'alipay' | 'balance'>('wechat')
+  const [paymentMethod, setPaymentMethod] = useState<'balance'>('balance')
   const [errorMsg, setErrorMsg] = useState('')
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [selectedPlatformCoupon, setSelectedPlatformCoupon] = useState<ThirdPartyCoupon | null>(null)
@@ -156,17 +154,13 @@ export default function Pay() {
     paymentInitRef.current = false
   }, [id])
 
-  // 默认优先余额支付；余额不足时默认微信支付并提示充值
+  // 真实微信/支付宝支付未接入前，C 端只允许余额支付。
   useEffect(() => {
     if (!order || paymentInitRef.current) return
     paymentInitRef.current = true
-    if (isLoggedIn && user && balance >= payableAmount) {
-      setPaymentMethod('balance')
-    } else {
-      setPaymentMethod('wechat')
-      if (isLoggedIn && user && payableAmount > 0) {
-        setErrorMsg('余额不足，请先充值')
-      }
+    setPaymentMethod('balance')
+    if (isLoggedIn && user && balance < payableAmount && payableAmount > 0) {
+      setErrorMsg('余额不足，当前暂未接入微信/支付宝在线支付，请联系门店或到店处理')
     }
   }, [order, user, isLoggedIn, balance, payableAmount])
 
@@ -239,7 +233,7 @@ export default function Pay() {
       return
     }
     if (paymentMethod === 'balance' && balanceDisabled) {
-      setErrorMsg('余额不足，请先充值')
+      setErrorMsg('余额不足，当前暂未接入微信/支付宝在线支付，请联系门店或到店处理')
       return
     }
     if (selectedPlatformCoupon && selectedPlatformDiscount <= 0) {
@@ -525,8 +519,6 @@ export default function Pay() {
           <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3">选择支付方式</h3>
           <div className="space-y-2">
             {[
-              { key: 'wechat' as const, label: '微信支付', sub: '使用微信支付' },
-              { key: 'alipay' as const, label: '支付宝', sub: '使用支付宝支付' },
               ...(isLoggedIn && user ? [{
                 key: 'balance' as const,
                 label: '余额支付',
@@ -575,10 +567,10 @@ export default function Pay() {
               {errorMsg}
               {errorMsg.includes('余额不足') && (
                 <button
-                  onClick={() => navigate('/recharge')}
+                  onClick={() => navigate('/store-contact')}
                   className="ml-auto text-xs font-medium underline"
                 >
-                  去充值
+                  联系门店
                 </button>
               )}
             </motion.div>

@@ -2,6 +2,7 @@ import cron from 'node-cron'
 import { format } from 'date-fns'
 import { prisma } from '../utils/prisma'
 import { pushAdminNotification } from '../controllers/notificationController'
+import { runTrackedJob } from './jobRunner'
 
 /**
  * 每日 03:00 执行数据一致性校验
@@ -11,7 +12,7 @@ export function startDataConsistencyJob() {
     const today = format(new Date(), 'yyyy-MM-dd')
     console.log(`[DataConsistencyJob] 开始数据一致性校验: ${today}`)
     try {
-      await runDataConsistencyCheck(today)
+      await runTrackedJob('data-consistency', () => runDataConsistencyCheck(today))
       console.log(`[DataConsistencyJob] 数据一致性校验完成: ${today}`)
     } catch (e) {
       console.error(`[DataConsistencyJob] 数据一致性校验失败: ${today}`, e)

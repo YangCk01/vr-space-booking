@@ -211,8 +211,11 @@ async function checkHardwareConsistency(batchId: string, dateStr: string) {
     const orders = await prisma.order.findMany({
       where: {
         venueId: venue.id,
-        status: { in: ['PAID', 'COMPLETED', 'REFUNDED'] },
-        createdAt: { gte: dayStart, lte: dayEnd },
+        status: 'COMPLETED',
+        OR: [
+          { verifiedAt: { gte: dayStart, lte: dayEnd } },
+          { verifiedAt: null, updatedAt: { gte: dayStart, lte: dayEnd } },
+        ],
       },
       select: {
         id: true,
@@ -221,11 +224,12 @@ async function checkHardwareConsistency(batchId: string, dateStr: string) {
         status: true,
         createdAt: true,
         paidAt: true,
+        verifiedAt: true,
         updatedAt: true,
         payMethod: true,
         booking: { select: { personCount: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { updatedAt: 'desc' },
     })
 
     if (hardwareCount === 0 && systemCount > 0) {
@@ -244,6 +248,7 @@ async function checkHardwareConsistency(batchId: string, dateStr: string) {
             venueId: venue.id,
             orderCreatedAt: order.createdAt,
             orderPaidAt: order.paidAt,
+            orderVerifiedAt: order.verifiedAt,
             orderUpdatedAt: order.updatedAt,
             personCount: order.booking?.personCount,
             payMethod: order.payMethod,
@@ -280,6 +285,7 @@ async function checkHardwareConsistency(batchId: string, dateStr: string) {
             venueId: venue.id,
             orderCreatedAt: order.createdAt,
             orderPaidAt: order.paidAt,
+            orderVerifiedAt: order.verifiedAt,
             orderUpdatedAt: order.updatedAt,
             personCount: order.booking?.personCount,
             payMethod: order.payMethod,

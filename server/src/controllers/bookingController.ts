@@ -8,7 +8,10 @@ import { startOfDay, endOfDay, parseISO } from 'date-fns'
 import { assignEquipment, releaseEquipment } from '../services/equipmentService'
 import { consumeBenefit } from '../services/userBenefitService'
 import { generateOrderNo } from '../utils/orderNo'
-import { deductProportional } from '../utils/wallet'
+import { calculateScheduledBookingStatuses } from '../domain/orderLifecycle'
+import { calculateBalanceDebit, calculateRefundSplitFromDeduction } from '../domain/walletLedger'
+import { AuthenticatedRequest } from '../types'
+import { applyVenueScope } from '../domain/venueScope'
 
 export const createValidators = [
   body('venueId').notEmpty().withMessage('场地不能为空'),
@@ -20,7 +23,7 @@ export const createValidators = [
   body('personPhone').optional().isString().withMessage('预约人电话格式错误'),
 ]
 
-export async function list(req: Request, res: Response) {
+export async function list(req: AuthenticatedRequest, res: Response) {
   try {
     const { venueId, date, startDate, endDate, type, page = '1', pageSize = '50' } = req.query
     const pageNum = parseInt(page as string, 10)
@@ -51,9 +54,15 @@ export async function list(req: Request, res: Response) {
       }
     }
 
+    const scoped = applyVenueScope(where, req.user)
+    if (scoped.empty) {
+      return paginated(res, [], pageNum, sizeNum, 0)
+    }
+    const queryWhere = scoped.where
+
     const [bookings, total] = await Promise.all([
       prisma.booking.findMany({
-        where,
+        where: queryWhere,
         skip: (pageNum - 1) * sizeNum,
         take: sizeNum,
         orderBy: { createdAt: 'desc' },
@@ -63,7 +72,7 @@ export async function list(req: Request, res: Response) {
           game: { select: { id: true, title: true } },
         },
       }),
-      prisma.booking.count({ where }),
+      prisma.booking.count({ where: queryWhere }),
     ])
 
     return paginated(res, bookings, pageNum, sizeNum, total)
@@ -72,7 +81,7 @@ export async function list(req: Request, res: Response) {
   }
 }
 
-export async function calendar(req: Request, res: Response) {
+export async function calendar(req: AuthenticatedRequest, res: Response) {
   try {
     const { startDate, endDate, venueId } = req.query
 
@@ -92,8 +101,13 @@ export async function calendar(req: Request, res: Response) {
       where.venueId = venueId as string
     }
 
+    const scoped = applyVenueScope(where, req.user)
+    if (scoped.empty) {
+      return success(res, [])
+    }
+
     const bookings = await prisma.booking.findMany({
-      where,
+      where: scoped.where,
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
       include: {
         venue: { select: { id: true, name: true, theme: true } },
@@ -216,10 +230,6 @@ async function getVerifyAdvanceMinutes(client: Prisma.TransactionClient | typeof
   const setting = await client.systemSetting.findUnique({ where: { key: 'verify_advance_minutes' } })
   const raw = setting?.value as any
   return Number(raw?.value ?? raw ?? 15)
-}
-
-function getLocalBookingStartTime(date: string, startTime: string) {
-  return new Date(`${date}T${startTime}:00+08:00`)
 }
 
 export async function create(req: Request, res: Response) {
@@ -518,11 +528,12 @@ export async function executeRescheduleInTx(
 
   const queryDate = new Date(`${newDate}T00:00:00.000Z`)
   const verifyAdvanceMinutes = await getVerifyAdvanceMinutes(tx)
-  const newStartAt = getLocalBookingStartTime(newDate, newStartTime)
-  const minutesUntilStart = (newStartAt.getTime() - Date.now()) / (1000 * 60)
-  const shouldBeReady = minutesUntilStart > 0 && minutesUntilStart <= verifyAdvanceMinutes
-  const nextBookingStatus = shouldBeReady ? 'READY' : 'CONFIRMED'
-  const nextOrderStatus = shouldBeReady ? 'READY_TO_VERIFY' : 'PAID'
+  const nextStatuses = calculateScheduledBookingStatuses({
+    date: queryDate,
+    startTime: newStartTime,
+    now: new Date(),
+    verifyAdvanceMinutes,
+  })
 
   // 记录改签前原时间，用于 C 端展示
   const originalBookingDate = booking.date
@@ -540,7 +551,7 @@ export async function executeRescheduleInTx(
       endTime: newEndTime,
       gameId: newGameId,
       personCount: newPersonCount,
-      status: nextBookingStatus,
+      status: nextStatuses.bookingStatus,
     },
   })
 
@@ -551,7 +562,7 @@ export async function executeRescheduleInTx(
     venueId: newVenueId,
     venueName: newVenue?.name || order.venueName,
     bookingTime: `${newDate} ${newStartTime}-${newEndTime}`,
-    status: nextOrderStatus,
+    status: nextStatuses.orderStatus,
     rescheduleCount: clearDisruption ? (order.rescheduleCount || 0) : { increment: 1 },
     rescheduleFeeAmount: { increment: feeAmount },
     metadata: {
@@ -604,16 +615,12 @@ export async function executeRescheduleInTx(
     }
     const user = await tx.user.findUnique({ where: { id: order.userId } })
     const wallet = { principal: user?.principalBalance || 0, bonus: user?.bonusBalance || 0 }
-    const totalBalance = wallet.principal + wallet.bonus
-    if (totalBalance < deltaAmount) {
-      throw new Error('余额不足，无法支付改签差价')
-    }
-    const { principalDeduction, bonusDeduction } = deductProportional(wallet, deltaAmount)
+    const debit = calculateBalanceDebit({ wallet, amount: deltaAmount })
     await tx.user.update({
       where: { id: order.userId },
       data: {
-        principalBalance: { decrement: principalDeduction },
-        bonusBalance: { decrement: bonusDeduction },
+        principalBalance: { decrement: debit.principalAmount },
+        bonusBalance: { decrement: debit.bonusAmount },
         balance: { decrement: deltaAmount },
       },
     })
@@ -623,26 +630,25 @@ export async function executeRescheduleInTx(
         orderId: order.id,
         type: 'RESCHEDULE_SURCHARGE',
         amount: deltaAmount,
-        principalAmount: -principalDeduction,
-        bonusAmount: -bonusDeduction,
+        principalAmount: -debit.principalAmount,
+        bonusAmount: -debit.bonusAmount,
         totalAmount: -deltaAmount,
         remark: `改签补差价：${booking.startTime} → ${newStartTime}`,
       },
     })
   } else if (deltaAmount < 0) {
-    const refundAmount = Math.abs(deltaAmount)
-    const ratio = order.principalDeduction + order.bonusDeduction > 0
-      ? order.principalDeduction / (order.principalDeduction + order.bonusDeduction)
-      : 1
-    const refundPrincipal = Math.floor(refundAmount * ratio)
-    const refundBonus = refundAmount - refundPrincipal
+    const refund = calculateRefundSplitFromDeduction({
+      originalPrincipalDeduction: order.principalDeduction || 0,
+      originalBonusDeduction: order.bonusDeduction || 0,
+      refundAmount: Math.abs(deltaAmount),
+    })
     if (order.userId) {
       await tx.user.update({
         where: { id: order.userId },
         data: {
-          principalBalance: { increment: refundPrincipal },
-          bonusBalance: { increment: refundBonus },
-          balance: { increment: refundAmount },
+          principalBalance: { increment: refund.principalAmount },
+          bonusBalance: { increment: refund.bonusAmount },
+          balance: { increment: refund.amount },
         },
       })
       await tx.balanceTransaction.create({
@@ -650,10 +656,10 @@ export async function executeRescheduleInTx(
           userId: order.userId,
           orderId: order.id,
           type: 'RESCHEDULE_REFUND',
-          amount: refundAmount,
-          principalAmount: refundPrincipal,
-          bonusAmount: refundBonus,
-          totalAmount: refundAmount,
+          amount: refund.amount,
+          principalAmount: refund.principalAmount,
+          bonusAmount: refund.bonusAmount,
+          totalAmount: refund.totalAmount,
           remark: `改签退差价：${booking.startTime} → ${newStartTime}`,
         },
       })
@@ -868,14 +874,9 @@ export async function reschedule(req: Request, res: Response) {
       }, '改签成功')
     }
 
-    // 7. 收费改签：生成独立的改签费订单，不自动扣款，等待顾客选择支付方式
-    if (!['BALANCE', 'WECHAT', 'ALIPAY'].includes(method)) {
-      return error(res, '不支持的支付方式', 400)
-    }
-
-    // 在线支付暂不支持补差价（避免一笔订单包含非改签费金额）
-    if (method !== 'BALANCE' && deltaAmount > 0) {
-      return error(res, '当前改签需要补差价，请选择余额支付或联系管理员处理', 400)
+    // 7. 收费改签：未接入真实渠道支付前，只允许生成余额支付的待付款改签费订单。
+    if (method !== 'BALANCE') {
+      return error(res, '当前改签费仅支持余额支付；微信/支付宝真实支付暂未接入，请联系门店处理', 400)
     }
 
     const feeOrder = await prisma.$transaction(async (tx) => {

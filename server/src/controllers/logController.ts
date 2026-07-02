@@ -1,6 +1,6 @@
 import { Request, Response } from 'express'
 import { prisma } from '../utils/prisma'
-import { success, paginated } from '../utils/response'
+import { success, error, paginated } from '../utils/response'
 
 export async function list(req: Request, res: Response) {
   try {
@@ -43,10 +43,7 @@ export async function list(req: Request, res: Response) {
 
     return paginated(res, logs, pageNum, sizeNum, total)
   } catch (err) {
-    return res.status(500).json({
-      success: false,
-      message: (err as Error).message,
-    })
+    return error(res, (err as Error).message, 500)
   }
 }
 
@@ -60,9 +57,6 @@ export async function getTypes(req: Request, res: Response) {
 
     return success(res, types.map((t) => ({ type: t.type, count: t._count.type })))
   } catch (err) {
-    return res.status(500).json({
-      success: false,
-      message: (err as Error).message,
-    })
+    return error(res, (err as Error).message, 500)
   }
 }

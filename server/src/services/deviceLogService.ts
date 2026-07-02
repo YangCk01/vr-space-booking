@@ -147,7 +147,8 @@ export async function getHardwarePlayerCount(
 }
 
 /**
- * 获取指定日期和门店的系统确权人次（Booking COMPLETED）
+ * 获取指定日期和门店的系统确权人次。
+ * 只按已核销/已完成订单统计，避免把已付款未到店、已取消或已退款订单当成硬件播控人次。
  */
 export async function getSystemPlayerCount(
   venueId: string,
@@ -158,14 +159,17 @@ export async function getSystemPlayerCount(
   const dayStart = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
   const dayEnd = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999))
 
-  const agg = await prisma.booking.aggregate({
+  const orders = await prisma.order.findMany({
     where: {
       venueId,
-      date: { gte: dayStart, lte: dayEnd },
       status: 'COMPLETED',
+      OR: [
+        { verifiedAt: { gte: dayStart, lte: dayEnd } },
+        { verifiedAt: null, updatedAt: { gte: dayStart, lte: dayEnd } },
+      ],
     },
-    _sum: { personCount: true },
+    select: { booking: { select: { personCount: true } } },
   })
 
-  return agg._sum?.personCount || 0
+  return orders.reduce((sum, order) => sum + (order.booking?.personCount || 1), 0)
 }

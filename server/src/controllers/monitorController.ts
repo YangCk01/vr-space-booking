@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { prisma } from '../utils/prisma'
 import { startOfDay, endOfDay } from 'date-fns'
-import { success } from '../utils/response'
+import { success, error } from '../utils/response'
 
 export async function realtime(req: Request, res: Response) {
   try {
@@ -123,9 +123,6 @@ export async function realtime(req: Request, res: Response) {
       })),
     })
   } catch (err) {
-    return res.status(500).json({
-      success: false,
-      message: (err as Error).message,
-    })
+    return error(res, (err as Error).message, 500)
   }
 }

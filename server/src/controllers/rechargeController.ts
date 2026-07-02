@@ -1,8 +1,11 @@
 import { Request, Response } from 'express'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../utils/prisma'
 import { success, error } from '../utils/response'
 import { format } from 'date-fns'
 import { getRechargeConfig, compareLevel, normalizeLevelKey } from '../utils/memberConfig'
+import { requireRechargeVenueId } from '../domain/rechargeVenue'
+import { AuthenticatedRequest } from '../types'
 
 function generateRechargeNo(): string {
   const dateStr = format(new Date(), 'yyyyMMdd')
@@ -32,18 +35,31 @@ export async function create(req: Request, res: Response) {
     const userId = (req as any).user?.id
     if (!userId) return error(res, '未登录', 401)
 
-    const { amount, payMethod } = req.body
+    const { amount, payMethod, venueId } = req.body
     const configList = await getRechargeConfig()
     const config = configList.find(c => c.amount === parseInt(amount))
     if (!config) return error(res, '无效的充值金额', 400)
 
+    let rechargeVenueId: string
+    try {
+      rechargeVenueId = requireRechargeVenueId(venueId)
+    } catch (err) {
+      return error(res, (err as Error).message, 400)
+    }
+    const venue = await prisma.venue.findUnique({
+      where: { id: rechargeVenueId },
+      select: { id: true, name: true },
+    })
+    if (!venue) return error(res, '归属门店不存在', 400)
+
     const recharge = await prisma.rechargeRecord.create({
       data: {
         userId,
+        venueId: rechargeVenueId,
         amount: config.amount,
         bonus: config.bonus,
         total: config.total,
-        payMethod: payMethod?.toUpperCase() || 'WECHAT',
+        payMethod: payMethod?.toUpperCase() || 'CASH',
         status: 'PENDING',
       },
     })
@@ -86,6 +102,25 @@ export async function confirm(req: Request, res: Response) {
         },
       })
 
+      // 2.5 同步写入门店余额（数据层隔离）
+      if (updated.venueId) {
+        await tx.userStoreBalance.upsert({
+          where: { userId_venueId: { userId, venueId: updated.venueId } },
+          update: {
+            principalBalance: { increment: updated.amount },
+            bonusBalance: { increment: updated.bonus },
+            totalRecharged: { increment: updated.amount },
+          },
+          create: {
+            userId,
+            venueId: updated.venueId,
+            principalBalance: updated.amount,
+            bonusBalance: updated.bonus,
+            totalRecharged: updated.amount,
+          },
+        })
+      }
+
       // 3. 升级会员等级（只升不降）—— 使用配置匹配
       const configList = await getRechargeConfig()
       const matched = configList.find(c => c.amount === updated.amount)
@@ -106,6 +141,7 @@ export async function confirm(req: Request, res: Response) {
           bonusAmount: updated.bonus,
           totalAmount: updated.total,
           rechargeId: updated.id,
+          venueId: updated.venueId,
           remark: `充值${updated.amount / 100}元，赠送${updated.bonus / 100}元`,
         },
       })
@@ -114,6 +150,128 @@ export async function confirm(req: Request, res: Response) {
     })
 
     return success(res, result, '充值成功')
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+async function confirmRechargeInTx(tx: Prisma.TransactionClient, input: {
+  rechargeId: string
+  userId: string
+  operatorName?: string
+  remark?: string
+}) {
+  const updated = await tx.rechargeRecord.update({
+    where: { id: input.rechargeId },
+    data: { status: 'PAID', paidAt: new Date() },
+  })
+
+  const user = await tx.user.update({
+    where: { id: input.userId },
+    data: {
+      principalBalance: { increment: updated.amount },
+      bonusBalance: { increment: updated.bonus },
+      balance: { increment: updated.total },
+    },
+  })
+
+  if (updated.venueId) {
+    await tx.userStoreBalance.upsert({
+      where: { userId_venueId: { userId: input.userId, venueId: updated.venueId } },
+      update: {
+        principalBalance: { increment: updated.amount },
+        bonusBalance: { increment: updated.bonus },
+        totalRecharged: { increment: updated.amount },
+      },
+      create: {
+        userId: input.userId,
+        venueId: updated.venueId,
+        principalBalance: updated.amount,
+        bonusBalance: updated.bonus,
+        totalRecharged: updated.amount,
+      },
+    })
+  }
+
+  const configList = await getRechargeConfig()
+  const matched = configList.find(c => c.amount === updated.amount)
+  if (matched && compareLevel(matched.level, user.level) > 0) {
+    await tx.user.update({
+      where: { id: input.userId },
+      data: { level: normalizeLevelKey(matched.level) as any },
+    })
+  }
+
+  await tx.balanceTransaction.create({
+    data: {
+      userId: input.userId,
+      type: 'RECHARGE',
+      amount: updated.total,
+      principalAmount: updated.amount,
+      bonusAmount: updated.bonus,
+      totalAmount: updated.total,
+      rechargeId: updated.id,
+      venueId: updated.venueId,
+      remark: input.remark
+        ? `门店充值${updated.amount / 100}元，赠送${updated.bonus / 100}元，${input.remark}`
+        : `门店充值${updated.amount / 100}元，赠送${updated.bonus / 100}元${input.operatorName ? `，操作人：${input.operatorName}` : ''}`,
+    },
+  })
+
+  return updated
+}
+
+/** B端：员工给指定会员充值并确认到账 */
+export async function staffRecharge(req: AuthenticatedRequest, res: Response) {
+  try {
+    const operatorId = req.user?.id
+    if (!operatorId) return error(res, '未登录', 401)
+
+    const { userId, amount, payMethod, venueId, remark } = req.body
+    const targetUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true },
+    })
+    if (!targetUser) return error(res, '会员不存在', 404)
+
+    const configList = await getRechargeConfig()
+    const config = configList.find(c => c.amount === parseInt(amount))
+    if (!config) return error(res, '无效的充值金额', 400)
+
+    let rechargeVenueId: string
+    try {
+      rechargeVenueId = requireRechargeVenueId(venueId)
+    } catch (err) {
+      return error(res, (err as Error).message, 400)
+    }
+    const venue = await prisma.venue.findUnique({
+      where: { id: rechargeVenueId },
+      select: { id: true },
+    })
+    if (!venue) return error(res, '归属门店不存在', 400)
+
+    const result = await prisma.$transaction(async (tx) => {
+      const recharge = await tx.rechargeRecord.create({
+        data: {
+          userId,
+          venueId: rechargeVenueId,
+          amount: config.amount,
+          bonus: config.bonus,
+          total: config.total,
+          payMethod: String(payMethod || 'CASH').toUpperCase(),
+          status: 'PENDING',
+        },
+      })
+
+      return confirmRechargeInTx(tx, {
+        rechargeId: recharge.id,
+        userId,
+        operatorName: req.user?.name,
+        remark: remark || undefined,
+      })
+    })
+
+    return success(res, { rechargeNo: result.id, ...result }, '充值已入账', 201)
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }

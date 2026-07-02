@@ -42,7 +42,6 @@ import {
 } from "@/api/approvals";
 import {
   PaymentMethodModal,
-  ScanBoxSimulator,
   type PaymentMethod,
 } from "@/components/PaymentModal";
 import { VerifyScanModal } from "@/components/VerifyModal";
@@ -1124,10 +1123,6 @@ export default function Orders() {
 
   // 收款弹窗状态
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
-  const [scanBoxOpen, setScanBoxOpen] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(
-    null,
-  );
   const [paymentTargetOrder, setPaymentTargetOrder] = useState<Order | null>(
     null,
   );
@@ -1359,7 +1354,6 @@ export default function Orders() {
       invalidateAll();
       setDrawerOpen(false);
       setPaymentModalOpen(false);
-      setScanBoxOpen(false);
       setPaymentTargetOrder(null);
       resetPaymentCoupon();
     },
@@ -1802,32 +1796,12 @@ export default function Orders() {
       setPaymentCouponError(paymentCouponError || "第三方券当前不可用");
       return;
     }
-    setPaymentMethod(method);
     setPaymentModalOpen(false);
 
-    if (method === "CASH") {
-      // 现金直接收款，不走扫码流程
-      if (paymentTargetOrder) {
-        payMutation.mutate({
-          id: paymentTargetOrder.id,
-          method: "CASH",
-          thirdPartyCouponCode: paymentCoupon?.code,
-        });
-      }
-      return;
-    }
-
-    // 微信、支付宝、扫码盒 → 打开扫码模拟器
-    setScanBoxOpen(true);
-  };
-
-  const handleScanBoxSuccess = () => {
-    // 模拟支付成功后的真实收款调用
-    // TODO: 接入真实扫码支付 API（轮询支付结果）
-    if (paymentTargetOrder && paymentMethod) {
+    if (paymentTargetOrder) {
       payMutation.mutate({
         id: paymentTargetOrder.id,
-        method: paymentMethod,
+        method,
         thirdPartyCouponCode: paymentCoupon?.code,
       });
     }
@@ -2651,21 +2625,6 @@ export default function Orders() {
         onLookupCoupon={() => lookupPaymentCoupon()}
         onScanCoupon={() => setPaymentCouponScanOpen(true)}
         onSelect={handleSelectPaymentMethod}
-      />
-
-      {/* Scan Box Simulator */}
-      <ScanBoxSimulator
-        open={scanBoxOpen}
-        onClose={() => {
-          setScanBoxOpen(false);
-          setPaymentMethod(null);
-          setPaymentTargetOrder(null);
-          resetPaymentCoupon();
-        }}
-        method={paymentMethod || "WECHAT"}
-        orderNo={paymentTargetOrder?.orderNo || ""}
-        amount={Math.max(0, ((paymentTargetOrder?.amount || 0) - paymentCouponDiscount) / 100)}
-        onSuccess={handleScanBoxSuccess}
       />
 
       {/* Verify Scan Modal */}

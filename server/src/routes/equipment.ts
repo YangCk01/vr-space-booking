@@ -4,6 +4,7 @@ import { requireAnyPermission, requirePermission } from '../middleware/rbac'
 import { logOperation } from '../middleware/operationLog'
 import * as controller from '../controllers/equipmentController'
 import { getEquipmentOccupancy } from '../services/equipmentService'
+import { success, error } from '../utils/response'
 
 const router = Router()
 
@@ -19,9 +20,9 @@ router.post('/:id/maintenance', requireAnyPermission('venue:manage', 'venue:main
 router.get('/:id/occupancy', requirePermission('venue:read'), async (req, res) => {
   try {
     const occupancy = await getEquipmentOccupancy(req.params.id as string)
-    return res.json({ success: true, data: occupancy })
+    return success(res, occupancy)
   } catch (err) {
-    return res.status(500).json({ success: false, message: (err as Error).message })
+    return error(res, (err as Error).message, 500)
   }
 })
 

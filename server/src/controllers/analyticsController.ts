@@ -103,8 +103,9 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
     for (const o of currentPeriodOrders) {
       if (o.status === 'PAID' || o.status === 'COMPLETED') {
         currentOperatingRevenue += o.amount
-      } else if (o.status === 'CANCELLED' && o.refundAmount != null) {
-        currentOtherIncome += Math.max(0, o.amount - o.refundAmount)
+      } else if (o.status === 'CANCELLED') {
+        const refundAmount = o.refundAmount || 0
+        if (refundAmount > 0) currentOtherIncome += Math.max(0, o.amount - refundAmount)
       } else if (o.status === 'NO_SHOW') {
         currentOtherIncome += retainedIncome(o)
       }
@@ -135,8 +136,9 @@ export async function dashboard(req: AuthenticatedRequest, res: Response) {
     for (const o of prevPeriodOrders) {
       if (o.status === 'PAID' || o.status === 'COMPLETED') {
         prevOperatingRevenue += o.amount
-      } else if (o.status === 'CANCELLED' && o.refundAmount != null) {
-        prevOtherIncome += Math.max(0, o.amount - o.refundAmount)
+      } else if (o.status === 'CANCELLED') {
+        const refundAmount = o.refundAmount || 0
+        if (refundAmount > 0) prevOtherIncome += Math.max(0, o.amount - refundAmount)
       } else if (o.status === 'NO_SHOW') {
         prevOtherIncome += retainedIncome(o)
       }

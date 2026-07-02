@@ -10,6 +10,26 @@ import { logAudit } from '../middleware/auditLog'
 function dayStart(dateStr: string): Date { return startOfDay(new Date(dateStr + 'T00:00:00')) }
 function dayEnd(dateStr: string): Date { return endOfDay(new Date(dateStr + 'T00:00:00')) }
 
+const DEFAULT_AUDIT_LOOKBACK_DAYS = 30
+const MAX_AUDIT_RANGE_DAYS = 93
+
+export function resolveAuditDateRange(
+  params: { startDate?: string; endDate?: string },
+  now = new Date()
+): { startDate: string; endDate: string } {
+  const endDate = params.endDate || format(now, 'yyyy-MM-dd')
+  const requestedStart = params.startDate || format(subDays(dayStart(endDate), DEFAULT_AUDIT_LOOKBACK_DAYS), 'yyyy-MM-dd')
+  const end = dayStart(endDate)
+  const start = dayStart(requestedStart)
+  const maxStart = subDays(end, MAX_AUDIT_RANGE_DAYS)
+  const boundedStart = start < maxStart ? maxStart : start
+
+  return {
+    startDate: format(boundedStart, 'yyyy-MM-dd'),
+    endDate,
+  }
+}
+
 function noShowRetainedIncome(order: { amount: number; refundAmount?: number | null; penaltyAmount?: number | null }): number {
   if (order.penaltyAmount != null) return Math.max(0, order.penaltyAmount)
   const refunded = order.refundAmount || 0
@@ -96,6 +116,11 @@ export function paymentLabel(method?: string | null) {
 
 export function computeAuditStatus(actualRecv: number, expectedRecv: number, consumeStatus: string, bankStatus: string) {
   if (consumeStatus === 'refunded') return 'refunded'
+  if (consumeStatus === 'cancelled') {
+    const diff = actualRecv - expectedRecv
+    if (Math.abs(diff) <= 1) return 'matched'
+    return diff > 1 ? 'over' : 'short'
+  }
   if (bankStatus === 'internal') return 'matched'
   const diff = actualRecv - expectedRecv
   if (diff < -1) return 'short'
@@ -112,6 +137,13 @@ export function buildVouchers(record: any, taxRate: number) {
       { subject: '销售费用-支付手续费', debit: Math.abs(record.gatewayFee), credit: 0, summary: '充值支付手续费' },
       { subject: '合同负债-会员本金', debit: 0, credit: record.assetChange?.principal || record.expectedRecv, summary: '会员充值本金' },
       { subject: '合同负债-会员赠金', debit: 0, credit: record.assetChange?.gift || 0, summary: '会员充值赠金' },
+    ]
+  }
+  if (record.consumeStatus === 'cancelled') {
+    if (record.actualRecv <= 0) return []
+    return [
+      { subject: '银行存款', debit: record.actualRecv, credit: 0, summary: '取消单已收款' },
+      { subject: '其他应付款-待退款/待处理款', debit: 0, credit: record.actualRecv, summary: '取消单未确认收入' },
     ]
   }
   if (record.consumeStatus === 'refunded') {
@@ -296,12 +328,14 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
         if (!entry) continue
         entry.cancelRefund += o.refundAmount
       }
-      // 取消订单：未退部分作为取消费收入
-      if (o.status === 'CANCELLED' && o.refundAmount != null) {
+      // 取消订单：只有发生了实际退款且仍有差额时，差额才可作为取消费收入。
+      // refundAmount 为 0/空通常代表待退款或人工处理，不能把整单金额确认为收入。
+      const cancelRefundAmount = o.refundAmount || 0
+      if (o.status === 'CANCELLED' && cancelRefundAmount > 0) {
         const key = format(orderCancelTime(o), 'yyyy-MM-dd')
         const entry = trendMap.get(key)
         if (!entry) continue
-        const cancelFee = o.amount - o.refundAmount
+        const cancelFee = o.amount - cancelRefundAmount
         if (cancelFee > 0) {
           entry.cancelFee += cancelFee
           entry.otherIncome += cancelFee
@@ -779,26 +813,24 @@ export async function buildAuditRecords(params: {
   store?: string
 }) {
   const config = auditConfig()
+  const auditDateRange = resolveAuditDateRange(params)
   const dateWhere = {
-    ...(params.startDate ? { gte: dayStart(params.startDate) } : {}),
-    ...(params.endDate ? { lte: dayEnd(params.endDate) } : {}),
+    gte: dayStart(auditDateRange.startDate),
+    lte: dayEnd(auditDateRange.endDate),
   }
-  const hasDate = params.startDate || params.endDate
-  const whereDateOr = hasDate
-    ? [
-        { paidAt: dateWhere },
-        { cancelledAt: dateWhere },
-        { updatedAt: dateWhere },
-        { createdAt: dateWhere },
-      ]
-    : undefined
+  const whereDateOr = [
+    { paidAt: dateWhere },
+    { cancelledAt: dateWhere },
+    { updatedAt: dateWhere },
+    { createdAt: dateWhere },
+  ]
 
   const [orders, recharges, auditLogs] = await Promise.all([
     prisma.order.findMany({
       where: {
         orderKind: { not: 'GROUP_PARENT' },
         status: { in: ['PAID', 'COMPLETED', 'CANCELLED', 'REFUNDED', 'NO_SHOW'] },
-        ...(whereDateOr ? { OR: whereDateOr } : {}),
+        OR: whereDateOr,
         ...(params.venueId ? { venueId: params.venueId } : {}),
       },
       include: {
@@ -831,7 +863,7 @@ export async function buildAuditRecords(params: {
       : prisma.rechargeRecord.findMany({
           where: {
             status: 'PAID',
-            ...(hasDate ? { createdAt: dateWhere } : {}),
+            createdAt: dateWhere,
           },
           include: { user: { select: { name: true, phone: true } } },
           orderBy: { createdAt: 'desc' },
@@ -860,6 +892,10 @@ export async function buildAuditRecords(params: {
     const thirdPartySource = meta.thirdPartyCoupon?.source as string | undefined
     const channel = thirdPartySource || (order.source === 'ONLINE' ? '微信小程序' : '线下收银台')
     const payMethod = order.payMethod || order.payments[0]?.method || 'CASH'
+    const isCancelled = order.status === 'CANCELLED'
+    const refundTotal = (order.refundAmount || 0)
+    const paymentActual = order.payments.reduce((sum, payment) => sum + payment.amount, 0) || order.amount
+    const isCancelledWithoutRefund = isCancelled && refundTotal <= 0
     const isRefunded = order.status === 'REFUNDED' || (order.refundAmount || 0) > 0
     // 已支付的改签费合并到原订单，改签费本身不递延、不单独开票
     const rescheduleFees = (order.feeOrders || []) as Array<{
@@ -878,39 +914,51 @@ export async function buildAuditRecords(params: {
     const rescheduleFeeRefundTotal = rescheduleFees.reduce((sum, f) => sum + (f.refundAmount || 0), 0)
     const rescheduleFeePrincipalUsed = rescheduleFees.reduce((sum, f) => sum + (f.principalDeduction || 0), 0)
     const rescheduleFeeGiftUsed = rescheduleFees.reduce((sum, f) => sum + (f.bonusDeduction || 0), 0)
-    const originalPrice = isRefunded
+    const originalPrice = isCancelledWithoutRefund
+      ? 0
+      : isRefunded
       ? -((order.originalAmount || order.amount) + rescheduleFeeTotal)
       : (order.originalAmount || order.amount) + rescheduleFeeTotal
-    const discountBreakdown = [
-      order.discountAmount > 0 ? { name: '会员优惠', amount: -order.discountAmount } : null,
-      order.couponDiscount > 0
-        ? { name: meta.thirdPartyCoupon?.name || (order.userCouponId ? '系统优惠券抵扣' : '优惠券抵扣'), amount: -order.couponDiscount }
-        : null,
-      order.pointsDeduction > 0 ? { name: '积分抵扣', amount: -order.pointsDeduction } : null,
-    ].filter(Boolean)
+    const discountBreakdown = isCancelledWithoutRefund
+      ? []
+      : [
+          order.discountAmount > 0 ? { name: '会员优惠', amount: -order.discountAmount } : null,
+          order.couponDiscount > 0
+            ? { name: meta.thirdPartyCoupon?.name || (order.userCouponId ? '系统优惠券抵扣' : '优惠券抵扣'), amount: -order.couponDiscount }
+            : null,
+          order.pointsDeduction > 0 ? { name: '积分抵扣', amount: -order.pointsDeduction } : null,
+        ].filter(Boolean)
     const platformRate = thirdPartySource ? Number(config.platformFeeRates[thirdPartySource] || 0) : 0
     const payRate = Number(config.paymentFeeRates[payMethod] || 0)
     const baseAmount = isRefunded ? -((order.refundAmount || order.amount) + rescheduleFeeRefundTotal) : order.amount
-    const platformFee = thirdPartySource ? -roundFee(Math.abs(order.amount), platformRate) : 0
-    const gatewayFee = ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
+    const platformFee = !isCancelledWithoutRefund && thirdPartySource ? -roundFee(Math.abs(order.amount), platformRate) : 0
+    const gatewayFee = !isCancelledWithoutRefund && ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
       ? -roundFee(Math.abs(order.amount), payRate)
       : 0
-    const rescheduleFeePlatformFee = thirdPartySource ? -roundFee(rescheduleFeeTotal, platformRate) : 0
-    const rescheduleFeeGatewayFee = ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
+    const rescheduleFeePlatformFee = !isCancelledWithoutRefund && thirdPartySource ? -roundFee(rescheduleFeeTotal, platformRate) : 0
+    const rescheduleFeeGatewayFee = !isCancelledWithoutRefund && ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
       ? -roundFee(rescheduleFeeTotal, payRate)
       : 0
-    const expectedRecv = isRefunded
+    const expectedRecv = isCancelledWithoutRefund
+      ? 0
+      : isRefunded
       ? baseAmount
       : order.amount + platformFee + gatewayFee + rescheduleFeeTotal + rescheduleFeePlatformFee + rescheduleFeeGatewayFee
-    const actualRecv = isRefunded
+    const actualRecv = isCancelledWithoutRefund
+      ? paymentActual + rescheduleFeeActual
+      : isRefunded
       ? -((order.refundAmount || order.amount) + rescheduleFeeRefundTotal)
-      : (order.payments.reduce((sum, payment) => sum + payment.amount, 0) || order.amount) + rescheduleFeeActual
-    const consumeStatus = isRefunded
+      : paymentActual + rescheduleFeeActual
+    const consumeStatus = isCancelledWithoutRefund
+      ? 'cancelled'
+      : isRefunded
       ? 'refunded'
       : order.status === 'PAID'
         ? 'unconsumed'
         : 'consumed'
-    const bankStatus = ['BALANCE', 'BALANCE_POINTS'].includes(payMethod)
+    const bankStatus = isCancelledWithoutRefund
+      ? actualRecv > 0 ? 'pending_recon' : 'arrived'
+      : ['BALANCE', 'BALANCE_POINTS'].includes(payMethod)
       ? 'internal'
       : ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
         ? 'in_transit'
@@ -945,7 +993,7 @@ export async function buildAuditRecords(params: {
       settlementCycle: config.settlementCycles[thirdPartySource || payMethod] || '实时',
       bankStatus,
       assetChange:
-        (order.principalDeduction || 0) + (order.bonusDeduction || 0) + rescheduleFeePrincipalUsed + rescheduleFeeGiftUsed > 0
+        !isCancelledWithoutRefund && (order.principalDeduction || 0) + (order.bonusDeduction || 0) + rescheduleFeePrincipalUsed + rescheduleFeeGiftUsed > 0
           ? {
               type: 'balance_used',
               value: order.amount + rescheduleFeeActual,
@@ -954,13 +1002,15 @@ export async function buildAuditRecords(params: {
             }
           : null,
       invoice: {
-        status: expectedRecv > 0 ? 'pending' : isRefunded ? 'red_ink' : 'none',
-        amount: Math.round(expectedRecv / (1 + config.taxRate / 100)),
+        status: isCancelledWithoutRefund ? 'none' : expectedRecv > 0 ? 'pending' : isRefunded ? 'red_ink' : 'none',
+        amount: isCancelledWithoutRefund ? 0 : Math.round(expectedRecv / (1 + config.taxRate / 100)),
         taxRate: config.taxRate,
       },
       orderTime: format(order.createdAt, 'yyyy-MM-dd HH:mm'),
       reconTime: format(order.updatedAt, 'yyyy-MM-dd HH:mm'),
-      remark: meta.thirdPartyCoupon ? `平台券：${meta.thirdPartyCoupon.name}` : '',
+      remark: isCancelledWithoutRefund
+        ? '订单已取消，未确认为收入；如已收款需走退款或人工处理'
+        : meta.thirdPartyCoupon ? `平台券：${meta.thirdPartyCoupon.name}` : '',
       relatedOrderId: order.parentOrderId || null,
       userName: order.user?.name || order.booking?.personName || '-',
       userPhone: order.user?.phone || order.booking?.personPhone || '-',
@@ -977,9 +1027,9 @@ export async function buildAuditRecords(params: {
   }
 
   for (const recharge of recharges) {
-    const payMethod = recharge.payMethod || 'WECHAT'
+    const payMethod = recharge.payMethod || 'CASH'
     const payRate = Number(config.paymentFeeRates[payMethod] || 0)
-    const gatewayFee = ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
+    const gatewayFee = payMethod === 'CARD'
       ? -roundFee(recharge.amount, payRate)
       : 0
     const expectedRecv = recharge.amount + gatewayFee
@@ -1002,7 +1052,7 @@ export async function buildAuditRecords(params: {
       expectedRecv,
       actualRecv: recharge.amount,
       settlementCycle: config.settlementCycles[payMethod] || '实时',
-      bankStatus: ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod) ? 'in_transit' : 'arrived',
+      bankStatus: payMethod === 'CARD' ? 'in_transit' : 'arrived',
       assetChange: { type: 'recharge', principal: recharge.amount, gift: recharge.bonus },
       invoice: {
         status: 'pending',

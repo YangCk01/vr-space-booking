@@ -68,6 +68,7 @@ const tabList = [
   { id: 'unconsumed', label: '未核销/预售单' },
   { id: 'transit', label: 'T+N在途未结' },
   { id: 'invoice', label: '开票预警' },
+  { id: 'cancelled', label: '已取消待处理' },
   { id: 'exception', label: '异常处理池' },
 ] as const
 
@@ -86,6 +87,7 @@ const consumeConfig = {
   unconsumed: { text: '待核销(递延)', color: 'text-amber-700 bg-amber-100 dark:text-amber-400 dark:bg-amber-500/15' },
   recharge: { text: '预充值(负债)', color: 'text-purple-700 bg-purple-100 dark:text-purple-400 dark:bg-purple-500/15' },
   refunded: { text: '售后失效', color: 'text-slate-600 bg-slate-200 dark:text-slate-300 dark:bg-slate-500/15' },
+  cancelled: { text: '已取消(待处理)', color: 'text-rose-700 bg-rose-100 dark:text-rose-400 dark:bg-rose-500/15' },
 }
 
 const invoiceConfig = {
@@ -1362,6 +1364,7 @@ export default function FinanceComplianceConsole() {
                   <SelectItem value="all">全部</SelectItem>
                   <SelectItem value="consumed">已核销(入收)</SelectItem>
                   <SelectItem value="unconsumed">待核销(递延)</SelectItem>
+                  <SelectItem value="cancelled">已取消(待处理)</SelectItem>
                 </SelectContent>
               </Select>
             </div>

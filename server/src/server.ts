@@ -14,11 +14,7 @@ import { Server as SocketIOServer } from 'socket.io'
 import app from './app'
 import { setSocketIO } from './utils/socket'
 import { prisma } from './utils/prisma'
-import cron from 'node-cron'
-import { runDailyReport } from './controllers/financialController'
-import { subDays, format } from 'date-fns'
-import { startVenueMaintenanceJob } from './jobs/venueMaintenanceJob'
-import { startBookingLifecycleJob } from './jobs/bookingLifecycleJob'
+import { startBackgroundJobs } from './jobs/jobBootstrap'
 
 const PORT = parseInt(process.env.PORT || '4000', 10)
 const jobsEnabled = process.env.ENABLE_JOBS !== 'false'
@@ -104,22 +100,9 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`📁 Environment: ${process.env.NODE_ENV || 'development'}`)
   console.log(`🕐 Started at: ${new Date().toISOString()}`)
 
-  // 每日 00:05 执行财务跑批
   if (jobsEnabled) {
-    cron.schedule('5 0 * * *', async () => {
-      const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd')
-      console.log(`[Cron] Generating financial report for ${yesterday}`)
-      try {
-        await runDailyReport(yesterday)
-        console.log(`[Cron] Financial report generated for ${yesterday}`)
-      } catch (e) {
-        console.error(`[Cron] Failed to generate report for ${yesterday}:`, e)
-      }
-    })
-    console.log('[Cron] Daily financial report job scheduled (00:05)')
-
-    startVenueMaintenanceJob()
-    console.log('[Cron] Venue maintenance restore job scheduled (* * * * *)')
-    startBookingLifecycleJob()
+    startBackgroundJobs()
+  } else {
+    console.log('[Server] Background jobs disabled by ENABLE_JOBS=false')
   }
 })
