@@ -71,7 +71,10 @@ export default function Profile() {
   const { data: pageSettings } = useQuery({
     queryKey: ['page-public-settings'],
     queryFn: getPagePublicSettings,
-    staleTime: 60000,
+    staleTime: 0,
+    gcTime: 30_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   })
 
   const currentLevelKey = normalizeLevelKey(authUser?.level)

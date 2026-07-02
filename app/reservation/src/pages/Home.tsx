@@ -81,7 +81,10 @@ export default function Home() {
   const { data: pageSettings } = useQuery({
     queryKey: ['page-public-settings', selectedVenue?.id || 'all'],
     queryFn: getPagePublicSettings,
-    staleTime: 60000,
+    staleTime: 0,
+    gcTime: 30_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   })
 
   const greetingSubtitle = user

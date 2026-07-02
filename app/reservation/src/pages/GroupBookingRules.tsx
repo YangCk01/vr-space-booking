@@ -50,7 +50,10 @@ export default function GroupBookingRules() {
   const { data: pageSettings } = useQuery({
     queryKey: ['page-public-settings'],
     queryFn: getPagePublicSettings,
-    staleTime: 60000,
+    staleTime: 0,
+    gcTime: 30_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   })
 
   const rules = pageSettings?.cGroupBookingRules || ''

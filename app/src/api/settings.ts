@@ -11,7 +11,7 @@ export async function getSetting(key: string) {
 }
 
 export async function getPagePublicSettings() {
-  const res = await apiClient.get('/settings/page-public')
+  const res = await apiClient.get('/settings/page-public', { params: { _t: Date.now() } })
   return res.data.data
 }
 
