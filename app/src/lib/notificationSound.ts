@@ -10,25 +10,38 @@ export const SOUND_MODE_LABELS: Record<string, string> = {
   custom: '自定义音频',
 }
 
-export function playNotificationSound(type: string = 'default', customUrl?: string) {
+export type NotificationAudioResult = {
+  ok: boolean
+  error?: string
+}
+
+export async function playNotificationSound(type: string = 'default', customUrl?: string): Promise<NotificationAudioResult> {
   try {
+    if (type === 'custom' && !customUrl?.trim()) {
+      return { ok: false, error: '请先填写自定义音频 URL' }
+    }
+
     if (type === 'custom' && customUrl) {
       const audio = new Audio(customUrl)
       audio.volume = 0.4
-      audio.play().catch(() => {
-        // ignore autoplay errors
-      })
-      return
+      await audio.play()
+      return { ok: true }
     }
 
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext
-    if (!AudioContext) return
+    if (!AudioContext) {
+      return { ok: false, error: '当前浏览器不支持音频播放' }
+    }
     const ctx = new AudioContext()
+    if (ctx.state === 'suspended') {
+      await ctx.resume()
+    }
     const oscillator = ctx.createOscillator()
     const gainNode = ctx.createGain()
     oscillator.connect(gainNode)
     gainNode.connect(ctx.destination)
     const now = ctx.currentTime
+    const duration = type === 'crisp' ? 0.12 : type === 'soft' ? 0.2 : 0.18
 
     if (type === 'crisp') {
       oscillator.type = 'sine'
@@ -56,23 +69,59 @@ export function playNotificationSound(type: string = 'default', customUrl?: stri
       oscillator.start()
       oscillator.stop(now + 0.18)
     }
-  } catch {
-    // ignore audio errors
+
+    await new Promise<void>((resolve) => {
+      oscillator.onended = () => resolve()
+      window.setTimeout(resolve, Math.ceil(duration * 1000) + 80)
+    })
+    await ctx.close()
+    return { ok: true }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : '音频播放失败，请确认浏览器允许页面播放声音',
+    }
   }
 }
 
-export function speakNotification(text: string) {
+export async function speakNotification(text: string): Promise<NotificationAudioResult> {
   try {
-    if (!window.speechSynthesis) return
+    if (!window.speechSynthesis) {
+      return { ok: false, error: '当前浏览器不支持语音播报' }
+    }
+    const content = text.trim()
+    if (!content) {
+      return { ok: false, error: '请先填写语音播报内容' }
+    }
     window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(text)
+    const utterance = new SpeechSynthesisUtterance(content)
+    const voices = window.speechSynthesis.getVoices()
+    const zhVoice = voices.find((voice) => voice.lang.toLowerCase().startsWith('zh'))
+    if (zhVoice) {
+      utterance.voice = zhVoice
+    }
     utterance.lang = 'zh-CN'
     utterance.rate = 1
     utterance.pitch = 1
     utterance.volume = 1
-    window.speechSynthesis.speak(utterance)
-  } catch {
-    // ignore speech errors
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(() => reject(new Error('语音播报超时，请确认浏览器没有静音或拦截声音')), 8000)
+      utterance.onend = () => {
+        window.clearTimeout(timer)
+        resolve()
+      }
+      utterance.onerror = (event) => {
+        window.clearTimeout(timer)
+        reject(new Error(event.error || '语音播报失败'))
+      }
+      window.speechSynthesis.speak(utterance)
+    })
+    return { ok: true }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : '语音播报失败，请确认浏览器允许页面播放声音',
+    }
   }
 }
 

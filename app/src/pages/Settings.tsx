@@ -37,6 +37,7 @@ import { RolePermissionPanel } from '@/components/RolePermissionPanel'
 import { CustomerPageSettings } from '@/components/settings/CustomerPageSettings'
 import { AdminPageSettings } from '@/components/settings/AdminPageSettings'
 import { PaymentApiSettings } from '@/components/settings/PaymentApiSettings'
+import { toast } from 'sonner'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -577,6 +578,33 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
     mutation.mutate(payload)
   }
 
+  const handleSoundPreview = async () => {
+    const result = await playNotificationSound(soundType)
+    if (result.ok) {
+      toast.success('提示音播放成功')
+      return
+    }
+    toast.error(result.error || '提示音播放失败')
+  }
+
+  const handleVoicePreview = async () => {
+    const result = await speakNotification(voiceText)
+    if (result.ok) {
+      toast.success('语音播报完成')
+      return
+    }
+    toast.error(result.error || '语音播报失败')
+  }
+
+  const handleCustomSoundPreview = async () => {
+    const result = await playNotificationSound('custom', soundUrl.trim())
+    if (result.ok) {
+      toast.success('自定义音频播放成功')
+      return
+    }
+    toast.error(result.error || '自定义音频播放失败')
+  }
+
   return (
     <div className="space-y-6">
       <h2 className="text-vr-h2 text-vrtext-primary">通知设置</h2>
@@ -633,7 +661,7 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
                 ))}
                 <button
                   type="button"
-                  onClick={() => playNotificationSound(soundType)}
+                  onClick={handleSoundPreview}
                   className="ml-auto text-xs px-3 py-1.5 rounded-full bg-vrbg-card border border-vrborder-subtle text-vrtext-secondary hover:text-vraccent-primary hover:border-vraccent-primary transition-colors"
                 >
                   试听
@@ -653,7 +681,7 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
                   />
                   <button
                     type="button"
-                    onClick={() => speakNotification(voiceText)}
+                    onClick={handleVoicePreview}
                     className="text-xs px-3 py-1.5 rounded-full bg-vrbg-card border border-vrborder-subtle text-vrtext-secondary hover:text-vraccent-primary hover:border-vraccent-primary transition-colors"
                   >
                     试听
@@ -676,7 +704,7 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
                 />
                 <button
                   type="button"
-                  onClick={() => playNotificationSound('custom', soundUrl)}
+                  onClick={handleCustomSoundPreview}
                   className="text-xs px-3 py-1.5 rounded-full bg-vrbg-card border border-vrborder-subtle text-vrtext-secondary hover:text-vraccent-primary hover:border-vraccent-primary transition-colors"
                 >
                   试听

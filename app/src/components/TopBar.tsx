@@ -108,16 +108,17 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
 
   // 浏览器自动播放策略：首次用户交互后解锁音频
   useEffect(() => {
-    const unlock = () => {
+    const unlock = async () => {
       if (audioUnlockedRef.current) return
       try {
         const AudioContext = window.AudioContext || (window as any).webkitAudioContext
         if (AudioContext) {
           const ctx = new AudioContext()
           if (ctx.state === 'suspended') {
-            ctx.resume().then(() => ctx.close())
+            await ctx.resume()
+            await ctx.close()
           } else {
-            ctx.close()
+            await ctx.close()
           }
         }
         audioUnlockedRef.current = true
@@ -125,13 +126,18 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
         // ignore
       }
     }
-    window.addEventListener('click', unlock, { once: true })
-    return () => window.removeEventListener('click', unlock)
+    window.addEventListener('pointerdown', unlock, { once: true })
+    window.addEventListener('keydown', unlock, { once: true })
+    return () => {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('keydown', unlock)
+    }
   }, [])
 
   // 新通知声音提醒：基于最新通知时间戳，避免刷新时重复播放
   useEffect(() => {
     if (!soundEnabled) return
+    if (!audioUnlockedRef.current) return
     const list = (notifyData?.data || []) as Array<{ createdAt: string; type?: string }>
     if (list.length === 0) return
     const latest = list[0]
@@ -139,15 +145,20 @@ export default function TopBar({ breadcrumb = ['首页'] }: TopBarProps) {
     if (Number.isNaN(latestTime)) return
     const lastNotifiedAt = Number(localStorage.getItem('vr_last_notification_at') || '0')
     if (latestTime > lastNotifiedAt) {
-      if (soundMode === 'voice') {
-        const text = getVoiceTextByType(latest.type, String(voiceText))
-        speakNotification(text)
-      } else if (soundMode === 'custom') {
-        playNotificationSound('custom', String(soundUrl))
-      } else {
-        playNotificationSound(String(soundType))
+      const playLatestNotification = async () => {
+        const result = soundMode === 'voice'
+          ? await speakNotification(getVoiceTextByType(latest.type, String(voiceText)))
+          : soundMode === 'custom'
+            ? await playNotificationSound('custom', String(soundUrl))
+            : await playNotificationSound(String(soundType))
+
+        if (result.ok) {
+          localStorage.setItem('vr_last_notification_at', String(latestTime))
+        } else {
+          console.warn('[NotificationSound] 播放通知声音失败:', result.error)
+        }
       }
-      localStorage.setItem('vr_last_notification_at', String(latestTime))
+      void playLatestNotification()
     }
   }, [notifyData, soundEnabled, soundMode, soundType, soundUrl, voiceText])
 
