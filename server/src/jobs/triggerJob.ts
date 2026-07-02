@@ -68,6 +68,7 @@ async function runDynamicRules(event: TriggerEvent, payload: TriggerPayload) {
         const result = await executeCampaign(rule.campaignId, payload.userId, {
           event,
           source: 'REALTIME',
+          runOnce: rule.runOnce,
           payload,
         })
         console.log(
@@ -114,6 +115,7 @@ async function scanDormantUsers() {
         await executeCampaign(rule.campaignId, u.id, {
           event: 'DORMANT_DETECTED',
           source: 'CRON',
+          runOnce: rule.runOnce,
           payload: { dormantDays: days },
         })
         totalTriggered++
@@ -159,6 +161,7 @@ async function scanBirthdayUsers() {
         await executeCampaign(rule.campaignId, u.id, {
           event: 'BIRTHDAY',
           source: 'CRON',
+          runOnce: rule.runOnce,
           payload: { advanceDays, targetMonth: month, targetDay: day },
         })
         totalTriggered++

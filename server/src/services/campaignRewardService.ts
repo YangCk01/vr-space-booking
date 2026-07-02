@@ -5,6 +5,7 @@ import { addDays } from 'date-fns'
 export interface TriggerContext {
   event: string
   source: 'REALTIME' | 'CRON' | 'MANUAL'
+  runOnce?: boolean
   payload?: any
 }
 
@@ -12,6 +13,10 @@ export interface ExecutionResult {
   status: 'SUCCESS' | 'SKIPPED' | 'FAILED'
   reason?: string
   reward?: any
+}
+
+export function shouldBlockExistingCampaignIssue(runOnce: boolean | undefined, existingLog: unknown): boolean {
+  return runOnce !== false && Boolean(existingLog)
 }
 
 /* ─── 1. 核心发放引擎（事务保护） ─── */
@@ -79,7 +84,7 @@ export async function executeCampaign(
       const existingLog = await tx.campaignExecutionLog.findFirst({
         where: { campaignId, userId, status: 'SUCCESS' },
       })
-      if (existingLog) {
+      if (shouldBlockExistingCampaignIssue(context.runOnce, existingLog)) {
         return { status: 'SKIPPED', reason: 'ALREADY_ISSUED' }
       }
 

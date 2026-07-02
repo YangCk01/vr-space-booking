@@ -390,9 +390,18 @@ export async function pause(req: AuthenticatedRequest, res: Response) {
     if (!campaign) return error(res, '活动不存在', 404)
     if (campaign.status !== 'RUNNING') return error(res, '只有运行中的活动可以暂停', 400)
 
-    const updated = await prisma.campaign.update({
-      where: { id },
-      data: { status: 'PAUSED' },
+    const updated = await prisma.$transaction(async (tx) => {
+      const paused = await tx.campaign.update({
+        where: { id },
+        data: { status: 'PAUSED' },
+      })
+      if (campaign.type === 'CONDITIONAL') {
+        await tx.triggerRule.updateMany({
+          where: { campaignId: id },
+          data: { enabled: false },
+        })
+      }
+      return paused
     })
     return success(res, updated, '活动已暂停')
   } catch (err) {
@@ -432,9 +441,18 @@ export async function activate(req: AuthenticatedRequest, res: Response) {
     const startAt = campaign.startAt || now
     const endAt = campaign.endAt || addDays(now, 7)
 
-    const updated = await prisma.campaign.update({
-      where: { id },
-      data: { status: 'RUNNING', startAt, endAt },
+    const updated = await prisma.$transaction(async (tx) => {
+      const activated = await tx.campaign.update({
+        where: { id },
+        data: { status: 'RUNNING', startAt, endAt },
+      })
+      if (campaign.type === 'CONDITIONAL') {
+        await tx.triggerRule.updateMany({
+          where: { campaignId: id },
+          data: { enabled: true },
+        })
+      }
+      return activated
     })
     return success(res, updated, '活动已激活')
   } catch (err) {
@@ -579,6 +597,7 @@ export async function update(req: AuthenticatedRequest, res: Response) {
         if (triggerRule.conditions !== undefined) ruleUpdate.conditions = triggerRule.conditions
         if (triggerRule.actions !== undefined) ruleUpdate.actions = triggerRule.actions
         if (triggerRule.runOnce !== undefined) ruleUpdate.runOnce = triggerRule.runOnce
+        ruleUpdate.enabled = false
         if (Object.keys(ruleUpdate).length > 0) {
           await prisma.triggerRule.update({ where: { id: existingRule.id }, data: ruleUpdate })
         }
