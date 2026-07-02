@@ -96,6 +96,81 @@ function getEffectiveStatus(venue: Venue): string {
   return 'open'
 }
 
+function normalizeCoordinate(value: number) {
+  return Number(value.toFixed(6))
+}
+
+function asValidCoordinatePair(first: number, second: number, preferredOrder: 'lnglat' | 'latlng' | 'auto' = 'auto') {
+  if (!Number.isFinite(first) || !Number.isFinite(second)) return null
+
+  const firstCouldLat = Math.abs(first) <= 90
+  const secondCouldLng = Math.abs(second) <= 180
+  const firstCouldLng = Math.abs(first) <= 180
+  const secondCouldLat = Math.abs(second) <= 90
+
+  if (preferredOrder === 'latlng' && firstCouldLat && secondCouldLng) {
+    return { latitude: normalizeCoordinate(first), longitude: normalizeCoordinate(second) }
+  }
+  if (preferredOrder === 'lnglat' && firstCouldLng && secondCouldLat) {
+    return { latitude: normalizeCoordinate(second), longitude: normalizeCoordinate(first) }
+  }
+
+  // Mainland China coordinates make the ambiguous case deterministic.
+  if (first >= 70 && first <= 140 && second >= 3 && second <= 60) {
+    return { latitude: normalizeCoordinate(second), longitude: normalizeCoordinate(first) }
+  }
+  if (first >= 3 && first <= 60 && second >= 70 && second <= 140) {
+    return { latitude: normalizeCoordinate(first), longitude: normalizeCoordinate(second) }
+  }
+  if (firstCouldLat && secondCouldLng) {
+    return { latitude: normalizeCoordinate(first), longitude: normalizeCoordinate(second) }
+  }
+  if (firstCouldLng && secondCouldLat) {
+    return { latitude: normalizeCoordinate(second), longitude: normalizeCoordinate(first) }
+  }
+  return null
+}
+
+function extractCoordinatesFromMapUrl(rawUrl: string) {
+  const value = rawUrl.trim()
+  if (!value) return null
+
+  const readPair = (raw: string | null, preferredOrder: 'lnglat' | 'latlng' | 'auto') => {
+    if (!raw) return null
+    const match = decodeURIComponent(raw).match(/(-?\d+(?:\.\d+)?)\s*[,，]\s*(-?\d+(?:\.\d+)?)/)
+    if (!match) return null
+    return asValidCoordinatePair(Number(match[1]), Number(match[2]), preferredOrder)
+  }
+
+  try {
+    const url = new URL(value)
+    const host = url.hostname.toLowerCase()
+    const isGoogle = host.includes('google.')
+    const isLngLatProvider = host.includes('amap.') || host.includes('autonavi.') || host.includes('baidu.') || host.includes('qq.')
+    const preferredOrder = isGoogle ? 'latlng' : isLngLatProvider ? 'lnglat' : 'auto'
+
+    const keys = ['location', 'position', 'coord', 'center', 'destination', 'dest', 'q', 'query', 'll']
+    for (const key of keys) {
+      const parsed = readPair(url.searchParams.get(key), key === 'q' || key === 'query' || key === 'll' ? 'latlng' : preferredOrder)
+      if (parsed) return parsed
+    }
+
+    const googlePath = decodeURIComponent(`${url.pathname}${url.hash}`).match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/)
+    if (googlePath) return asValidCoordinatePair(Number(googlePath[1]), Number(googlePath[2]), 'latlng')
+
+    const googleBang = decodeURIComponent(value).match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/)
+    if (googleBang) return asValidCoordinatePair(Number(googleBang[1]), Number(googleBang[2]), 'latlng')
+
+    const generic = decodeURIComponent(value).match(/(-?\d{1,3}\.\d{4,})\s*[,，]\s*(-?\d{1,3}\.\d{4,})/)
+    if (generic) return asValidCoordinatePair(Number(generic[1]), Number(generic[2]), preferredOrder)
+  } catch {
+    const generic = value.match(/(-?\d{1,3}\.\d{4,})\s*[,，]\s*(-?\d{1,3}\.\d{4,})/)
+    if (generic) return asValidCoordinatePair(Number(generic[1]), Number(generic[2]), 'auto')
+  }
+
+  return null
+}
+
 function StatusBadge({ venue }: { venue: Venue }) {
   const normalized = getEffectiveStatus(venue)
   const cfg = statusConfig[normalized] || statusConfig.closed
@@ -360,6 +435,22 @@ export default function Venues() {
   /* ─── Form field updater ─── */
   const updateField = (field: keyof Venue, value: string | number) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const applyCoordinatesFromMapUrl = (url: string, showAlert = true) => {
+    const coordinates = extractCoordinatesFromMapUrl(url)
+    if (!coordinates) {
+      if (showAlert) {
+        alert('这个地图链接里没有可直接识别的经纬度。请复制带坐标的导航链接，或继续手动填写经纬度。')
+      }
+      return false
+    }
+    setFormData((prev: any) => ({
+      ...prev,
+      latitude: String(coordinates.latitude),
+      longitude: String(coordinates.longitude),
+    }))
+    return true
   }
 
   const venueStats = useMemo(() => {
@@ -913,7 +1004,7 @@ export default function Venues() {
                     />
                   </div>
                   <p className="col-span-2 text-vr-caption text-vrtext-tertiary">
-                    用于 C 端授权定位后按距离推荐门店；可从高德/百度地图坐标拾取器复制。
+                    用于 C 端授权定位后按距离推荐门店；填写下方带坐标的导航链接时可自动识别。
                   </p>
                 </motion.div>
 
@@ -1031,13 +1122,27 @@ export default function Venues() {
                               type="text"
                               value={link.url || ''}
                               onChange={(e) => {
+                                const nextUrl = e.target.value
                                 const arr = [...(formData.mapLinks || [])]
-                                arr[i] = { ...arr[i], url: e.target.value }
-                                setFormData((p: any) => ({ ...p, mapLinks: arr }))
+                                arr[i] = { ...arr[i], url: nextUrl }
+                                const coordinates = extractCoordinatesFromMapUrl(nextUrl)
+                                setFormData((p: any) => ({
+                                  ...p,
+                                  mapLinks: arr,
+                                  ...(coordinates && (!p.latitude || !p.longitude)
+                                    ? { latitude: String(coordinates.latitude), longitude: String(coordinates.longitude) }
+                                    : {}),
+                                }))
                               }}
                               placeholder="https://..."
                               className="flex-1 h-9 px-2 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue"
                             />
+                            <button
+                              onClick={() => applyCoordinatesFromMapUrl(link.url || '')}
+                              className="h-9 px-2 rounded-lg text-vr-caption text-vraccent-primary bg-vraccent-primary/10 hover:bg-vraccent-primary/15 shrink-0"
+                            >
+                              识别坐标
+                            </button>
                             <button onClick={() => {
                               const arr = (formData.mapLinks || []).filter((_: any, idx: number) => idx !== i)
                               setFormData((p: any) => ({ ...p, mapLinks: arr }))
