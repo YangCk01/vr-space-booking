@@ -24,6 +24,7 @@ import {
   Home,
   Package,
   Bookmark,
+  Upload,
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { NumberFieldInput } from '@/components/ui/number-field'
@@ -38,6 +39,7 @@ import { CustomerPageSettings } from '@/components/settings/CustomerPageSettings
 import { AdminPageSettings } from '@/components/settings/AdminPageSettings'
 import { PaymentApiSettings } from '@/components/settings/PaymentApiSettings'
 import { toast } from 'sonner'
+import { uploadFile } from '@/api/upload'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -521,6 +523,7 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
   const [soundType, setSoundType] = useState(s.notification_sound_type?.value ?? 'default')
   const [soundUrl, setSoundUrl] = useState(s.notification_sound_url?.value ?? '')
   const [voiceText, setVoiceText] = useState(s.notification_voice_text?.value ?? '您有新的订单，请及时查看')
+  const [uploadingSound, setUploadingSound] = useState(false)
 
   const [saved, setSaved] = useState(false)
 
@@ -603,6 +606,30 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
       return
     }
     toast.error(result.error || '自定义音频播放失败')
+  }
+
+  const handleCustomSoundUpload = async (file: File | undefined) => {
+    if (!file) return
+    const ext = file.name.split('.').pop()?.toLowerCase()
+    if (ext !== 'mp3') {
+      toast.error('只支持上传 MP3 音频文件')
+      return
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error('MP3 文件不能超过 20MB')
+      return
+    }
+
+    setUploadingSound(true)
+    try {
+      const result = await uploadFile('pages', file)
+      setSoundUrl(result.url)
+      toast.success('音频上传成功，请保存设置后生效')
+    } catch (err) {
+      toast.error('音频上传失败: ' + (err instanceof Error ? err.message : '未知错误'))
+    } finally {
+      setUploadingSound(false)
+    }
   }
 
   return (
@@ -694,21 +721,43 @@ function NotificationSettings({ settings }: { settings?: Record<string, any> }) 
             )}
 
             {soundMode === 'custom' && (
-              <div className="flex items-center gap-3">
-                <input
-                  type="text"
-                  value={soundUrl}
-                  onChange={(e) => setSoundUrl(e.target.value)}
-                  placeholder="请输入音频文件 URL（如 /sounds/notify.mp3）"
-                  className="soft-input flex-1 h-9 px-3 text-vr-body-sm"
-                />
-                <button
-                  type="button"
-                  onClick={handleCustomSoundPreview}
-                  className="text-xs px-3 py-1.5 rounded-full bg-vrbg-card border border-vrborder-subtle text-vrtext-secondary hover:text-vraccent-primary hover:border-vraccent-primary transition-colors"
-                >
-                  试听
-                </button>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <input
+                    type="text"
+                    value={soundUrl}
+                    onChange={(e) => setSoundUrl(e.target.value)}
+                    placeholder="请输入音频文件 URL（如 /uploads/pages/notify.mp3）"
+                    className="soft-input flex-1 h-9 px-3 text-vr-body-sm"
+                  />
+                  <label className={cn(
+                    'inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-vrbg-card border border-vrborder-subtle text-vrtext-secondary hover:text-vraccent-primary hover:border-vraccent-primary transition-colors cursor-pointer',
+                    uploadingSound && 'opacity-60 pointer-events-none'
+                  )}>
+                    <Upload className="w-3.5 h-3.5" />
+                    {uploadingSound ? '上传中...' : '上传MP3'}
+                    <input
+                      type="file"
+                      accept=".mp3,audio/mpeg"
+                      className="hidden"
+                      disabled={uploadingSound}
+                      onChange={(e) => {
+                        void handleCustomSoundUpload(e.target.files?.[0])
+                        e.target.value = ''
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleCustomSoundPreview}
+                    className="text-xs px-3 py-1.5 rounded-full bg-vrbg-card border border-vrborder-subtle text-vrtext-secondary hover:text-vraccent-primary hover:border-vraccent-primary transition-colors"
+                  >
+                    试听
+                  </button>
+                </div>
+                <p className="text-vr-caption text-vrtext-tertiary">
+                  支持上传本地 MP3 文件，最大 20MB；上传后请点击页面底部保存。
+                </p>
               </div>
             )}
           </div>

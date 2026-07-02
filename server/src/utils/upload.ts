@@ -35,20 +35,23 @@ function createStorage(subdir: string) {
 }
 
 // 文件过滤器
-function createFileFilter(options: { allowVideo?: boolean } = {}) {
+function createFileFilter(options: { allowVideo?: boolean; allowAudio?: boolean } = {}) {
   return (_req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
     const ext = path.extname(file.originalname).toLowerCase().replace('.', '')
     const imageExts = ['jpeg', 'jpg', 'png', 'gif', 'webp', 'svg']
     const imageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml']
     const videoExts = ['mp4', 'webm', 'mov', 'm4v']
+    const audioExts = ['mp3']
+    const audioMimes = ['audio/mpeg', 'audio/mp3', 'audio/x-mpeg', 'audio/x-mp3']
 
     const isImage = imageExts.includes(ext) && imageMimes.includes(file.mimetype)
     const isVideo = options.allowVideo && videoExts.includes(ext)
+    const isAudio = options.allowAudio && audioExts.includes(ext) && audioMimes.includes(file.mimetype)
 
-    if (isImage || isVideo) {
+    if (isImage || isVideo || isAudio) {
       cb(null, true)
-    } else if (options.allowVideo) {
-      cb(new Error(`只允许上传图片或视频文件 (jpg, png, gif, webp, svg, mp4, webm, mov, m4v)，当前文件: ${file.originalname}, 类型: ${file.mimetype || '未知'}`))
+    } else if (options.allowVideo || options.allowAudio) {
+      cb(new Error(`只允许上传图片、视频或 MP3 音频文件 (jpg, png, gif, webp, svg, mp4, webm, mov, m4v, mp3)，当前文件: ${file.originalname}, 类型: ${file.mimetype || '未知'}`))
     } else {
       cb(new Error(`只允许上传图片文件 (jpg, png, gif, webp, svg)，当前文件: ${file.originalname}, 类型: ${file.mimetype || '未知'}`))
     }
@@ -92,10 +95,11 @@ export const uploadGameImage = multer({
 // 通用单文件上传器
 export function createUploader(subdir: string) {
   const allowVideo = subdir === 'pages' || subdir === 'games'
+  const allowAudio = subdir === 'pages'
 
   return multer({
     storage: createStorage(subdir),
-    fileFilter: createFileFilter({ allowVideo }),
-    limits: allowVideo ? mediaLimits : limits,
+    fileFilter: createFileFilter({ allowVideo, allowAudio }),
+    limits: allowVideo || allowAudio ? mediaLimits : limits,
   }).single('file')
 }
