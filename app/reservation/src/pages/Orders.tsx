@@ -513,6 +513,7 @@ export default function Orders() {
             }
 
             const isGroupBuy = !!o.groupBuyPackage
+            const isRedeemedGroupBuyBooking = Boolean(o.metadata?.redeemedFromOrderId)
             const groupBuyStatusMap: Record<string, { label: string; color: string }> = {
               PENDING: { label: '待支付', color: 'text-[var(--warning)]' },
               PAID: { label: '待使用', color: 'text-[var(--accent-primary)]' },
@@ -663,7 +664,7 @@ export default function Orders() {
                         取消订单
                       </button>
                     )}
-                    {isGroupBuy && ['PAID', 'READY_TO_VERIFY'].includes(o.status) && !o.booking && (
+                    {isGroupBuy && !isRedeemedGroupBuyBooking && ['PAID', 'READY_TO_VERIFY'].includes(o.status) && !o.booking && (
                       <>
                         <button
                           onClick={() => navigate(`/order/${o.id}`)}
@@ -772,7 +773,8 @@ export default function Orders() {
                 const isMaintenanceAffected = o.disruptionStatus === 'VENUE_MAINTENANCE'
                 const info = getRefundInfo(o, refundTiers, cancelHours)
                 const isPaid = ['PAID', 'READY_TO_VERIFY'].includes(o.status)
-                const refundText = (isGroupBuy || isMaintenanceAffected) ? `¥${((o.amount || 0) / 100).toFixed(2)}` : info.refundText
+                const isRedeemedGroupBuyBooking = Boolean(o.metadata?.redeemedFromOrderId)
+                const refundText = ((isGroupBuy && !isRedeemedGroupBuyBooking) || isMaintenanceAffected) ? `¥${((o.amount || 0) / 100).toFixed(2)}` : info.refundText
                 const canCancel = isGroupBuy || isMaintenanceAffected ? true : info.canCancel
                 return (
                   <div className="p-5 space-y-4">
@@ -799,6 +801,11 @@ export default function Orders() {
                           <div className="rounded-xl p-3 bg-orange-500/10 border border-orange-500/20">
                             <p className="text-sm font-medium text-orange-500">场地维护影响，可全额退款 {refundText}</p>
                             <p className="text-xs text-[var(--text-muted)] mt-0.5">确认后订单将取消，款项按原支付方式退回。</p>
+                          </div>
+                        ) : isRedeemedGroupBuyBooking ? (
+                          <div className="rounded-xl p-3 bg-blue-500/10 border border-blue-500/20">
+                            <p className="text-sm font-medium text-blue-500">取消后团购券恢复待使用</p>
+                            <p className="text-xs text-[var(--text-muted)] mt-0.5">本次只取消预约场次，不产生退款，可重新选择时间预约。</p>
                           </div>
                         ) : isGroupBuy ? (
                           <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/20">

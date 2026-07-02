@@ -21,6 +21,7 @@ import { isPlatformEnabled } from '../utils/platformConfig'
 import { calculateRestoreNoShowTargetStatus } from '../domain/orderLifecycle'
 import { calculateBalanceDebit, calculateRefundSplitFromDeduction } from '../domain/walletLedger'
 import { UNASSIGNED_STORE_BALANCE_VENUE_ID, debitStoreBalance, refundStoreBalanceFromSnapshot } from '../domain/storeBalance'
+import { calculateCancelableRefundAmount } from '../domain/groupBuyCancellation'
 import {
   calculateNoShowDisposition,
   calculateOrderRefund,
@@ -1407,7 +1408,15 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
     if (isPaidOrder && order.booking) {
       refundRate = isMaintenanceAffected ? 1 : await calcRefundRate(order.booking.date, order.booking.startTime)
     }
-    const refundAmount = isPaidOrder ? Math.floor((order.amount || 0) * refundRate) : 0
+    const refundAmount = calculateCancelableRefundAmount({
+      order: {
+        orderKind: order.orderKind,
+        metadata: readOrderMetadata(order.metadata),
+      },
+      isPaidOrder,
+      amount: order.amount || 0,
+      refundRate,
+    })
     const refundableFeeOrders = isMaintenanceAffected
       ? order.feeOrders.filter((feeOrder) =>
         feeOrder.orderKind === 'FEE' &&
