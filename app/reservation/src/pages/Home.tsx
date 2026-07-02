@@ -21,8 +21,8 @@ function getDistanceKm(
   from: { latitude: number; longitude: number } | null,
   venue: Venue
 ) {
-  const latitude = Number((venue as any).latitude ?? (venue as any).lat)
-  const longitude = Number((venue as any).longitude ?? (venue as any).lng)
+  const latitude = Number(venue.latitude)
+  const longitude = Number(venue.longitude)
   if (!from || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
   const toRad = (value: number) => value * Math.PI / 180
   const earthRadius = 6371
@@ -211,7 +211,17 @@ export default function Home() {
       })
   }, [venueData, venueSearch, location])
 
+  const coordinateVenueCount = useMemo(() => {
+    return ((venueData?.data || []) as Venue[]).filter((venue) =>
+      Number.isFinite(Number(venue.latitude)) && Number.isFinite(Number(venue.longitude))
+    ).length
+  }, [venueData])
+
   const handleLocate = () => {
+    if (!window.isSecureContext) {
+      setLocationStatus('当前页面不是安全环境，浏览器不会开放定位权限；请使用 https 域名访问。')
+      return
+    }
     if (!navigator.geolocation) {
       setLocationStatus('当前环境暂不支持定位，后续小程序会接入手机定位接口。')
       return
@@ -223,10 +233,20 @@ export default function Home() {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
         })
-        setLocationStatus('已获取定位，门店列表已按距离优先排序。')
+        const accuracyText = position.coords.accuracy ? `，精度约 ${Math.round(position.coords.accuracy)} 米` : ''
+        setLocationStatus(
+          coordinateVenueCount > 0
+            ? `已获取当前位置${accuracyText}，门店已按距离优先排序。`
+            : `已获取当前位置${accuracyText}，但门店未配置经纬度，暂无法按距离排序。`
+        )
       },
-      () => {
-        setLocationStatus('定位授权未开启，可手动选择门店；之后也可以重新授权。')
+      (err) => {
+        const message = err.code === err.PERMISSION_DENIED
+          ? '定位授权未开启，可手动选择门店；之后也可以在浏览器权限中重新授权。'
+          : err.code === err.TIMEOUT
+          ? '定位请求超时，请检查手机定位服务或稍后重试。'
+          : '定位失败，请检查浏览器定位权限、系统定位服务和网络。'
+        setLocationStatus(message)
       },
       { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
     )

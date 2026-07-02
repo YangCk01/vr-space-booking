@@ -53,6 +53,12 @@ function timeToMinutes(value: string): number {
   return h * 60 + m
 }
 
+function optionalCoordinate(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 function overlapsMaintenance(venue: Venue, booking: { date: Date; startTime: string; endTime: string }) {
   if (
     venue.status !== 'MAINTENANCE' ||
@@ -181,6 +187,8 @@ export const createValidators = [
   body('area').isInt({ min: 1 }).withMessage('面积必须是正整数'),
   body('capacity').isInt({ min: 1 }).withMessage('容量必须是正整数'),
   body('deviceCount').optional().isInt({ min: 1 }).withMessage('设备数量必须是正整数'),
+  body('latitude').optional({ nullable: true, checkFalsy: true }).isFloat({ min: -90, max: 90 }).withMessage('纬度必须在 -90 到 90 之间'),
+  body('longitude').optional({ nullable: true, checkFalsy: true }).isFloat({ min: -180, max: 180 }).withMessage('经度必须在 -180 到 180 之间'),
 ]
 
 export const updateValidators = [
@@ -189,6 +197,8 @@ export const updateValidators = [
   body('area').optional().isInt({ min: 1 }).withMessage('面积必须是正整数'),
   body('capacity').optional().isInt({ min: 1 }).withMessage('容量必须是正整数'),
   body('deviceCount').optional().isInt({ min: 1 }).withMessage('设备数量必须是正整数'),
+  body('latitude').optional({ nullable: true, checkFalsy: true }).isFloat({ min: -90, max: 90 }).withMessage('纬度必须在 -90 到 90 之间'),
+  body('longitude').optional({ nullable: true, checkFalsy: true }).isFloat({ min: -180, max: 180 }).withMessage('经度必须在 -180 到 180 之间'),
 ]
 
 export async function list(req: AuthenticatedRequest, res: Response) {
@@ -365,6 +375,8 @@ export async function create(req: Request, res: Response) {
         qrCode: req.body.qrCode || null,
         serviceQr: req.body.serviceQr || null,
         mapLinks: req.body.mapLinks || null,
+        latitude: optionalCoordinate(req.body.latitude),
+        longitude: optionalCoordinate(req.body.longitude),
         maintenanceStartDate: req.body.maintenanceStartDate ? new Date(req.body.maintenanceStartDate) : null,
         maintenanceEndDate: req.body.maintenanceEndDate ? new Date(req.body.maintenanceEndDate) : null,
         maintenanceStartTime: req.body.maintenanceStartTime || null,
@@ -407,6 +419,8 @@ export async function update(req: Request, res: Response) {
     if (req.body.qrCode !== undefined) data.qrCode = req.body.qrCode || null
     if (req.body.serviceQr !== undefined) data.serviceQr = req.body.serviceQr || null
     if (req.body.mapLinks !== undefined) data.mapLinks = req.body.mapLinks || null
+    if (req.body.latitude !== undefined) data.latitude = optionalCoordinate(req.body.latitude)
+    if (req.body.longitude !== undefined) data.longitude = optionalCoordinate(req.body.longitude)
     if (req.body.maintenanceStartDate !== undefined) data.maintenanceStartDate = req.body.maintenanceStartDate ? new Date(req.body.maintenanceStartDate) : null
     if (req.body.maintenanceEndDate !== undefined) data.maintenanceEndDate = req.body.maintenanceEndDate ? new Date(req.body.maintenanceEndDate) : null
     if (req.body.maintenanceStartTime !== undefined) data.maintenanceStartTime = req.body.maintenanceStartTime || null

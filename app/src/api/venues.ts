@@ -18,6 +18,8 @@ export interface Venue {
   qrCode: string | null
   serviceQr: string | null
   mapLinks: any | null
+  latitude: number | null
+  longitude: number | null
   maintenanceStartDate: string | null
   maintenanceEndDate: string | null
   maintenanceStartTime: string | null
@@ -38,6 +40,8 @@ export interface VenueInput {
   phone?: string
   openTime?: string
   closeTime?: string
+  latitude?: number | null
+  longitude?: number | null
 }
 
 export async function getVenues(params?: { status?: string; search?: string; page?: number; pageSize?: number }) {

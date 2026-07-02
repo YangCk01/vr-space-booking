@@ -67,6 +67,8 @@ model Venue {
   closeTime            String?            @default("22:00")
   openTime             String?            @default("09:00")
   mapLinks             Json?
+  latitude             Float?
+  longitude            Float?
   qrCode               String?
   serviceQr            String?
   bookings             Booking[]

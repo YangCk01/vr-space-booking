@@ -130,6 +130,8 @@ const emptyVenue = {
   qrCode: '',
   serviceQr: '',
   mapLinks: [],
+  latitude: '',
+  longitude: '',
   maintenanceStartDate: '',
   maintenanceEndDate: '',
   maintenanceStartTime: '',
@@ -259,6 +261,8 @@ export default function Venues() {
       qrCode: venue.qrCode || '',
       serviceQr: venue.serviceQr || '',
       mapLinks: Array.isArray(venue.mapLinks) ? venue.mapLinks : [],
+      latitude: venue.latitude ?? '',
+      longitude: venue.longitude ?? '',
       maintenanceStartDate: dateStr(venue.maintenanceStartDate),
       maintenanceEndDate: dateStr(venue.maintenanceEndDate),
       maintenanceStartTime: venue.maintenanceStartTime || '',
@@ -314,6 +318,8 @@ export default function Venues() {
       qrCode: formData.qrCode || undefined,
       serviceQr: formData.serviceQr || undefined,
       mapLinks: formData.mapLinks || undefined,
+      latitude: formData.latitude === '' || formData.latitude === null || formData.latitude === undefined ? null : Number(formData.latitude),
+      longitude: formData.longitude === '' || formData.longitude === null || formData.longitude === undefined ? null : Number(formData.longitude),
     }
 
     if (formData.status === 'maintenance') {
@@ -867,6 +873,48 @@ export default function Venues() {
                     placeholder="请输入场地地址"
                     className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all"
                   />
+                </motion.div>
+
+                {/* Coordinates */}
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.285, duration: 0.3 }}
+                  className="grid grid-cols-2 gap-4"
+                >
+                  <div>
+                    <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">
+                      纬度
+                    </label>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      min="-90"
+                      max="90"
+                      value={formData.latitude ?? ''}
+                      onChange={(e) => setFormData((p: any) => ({ ...p, latitude: e.target.value }))}
+                      placeholder="例如 30.572815"
+                      className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-vr-body-sm text-vrtext-secondary mb-1.5">
+                      经度
+                    </label>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      min="-180"
+                      max="180"
+                      value={formData.longitude ?? ''}
+                      onChange={(e) => setFormData((p: any) => ({ ...p, longitude: e.target.value }))}
+                      placeholder="例如 104.066801"
+                      className="w-full h-10 px-3 bg-vrbg-card border border-vrborder-DEFAULT rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vr-blue focus:ring-1 focus:ring-vr-blue/15 transition-all"
+                    />
+                  </div>
+                  <p className="col-span-2 text-vr-caption text-vrtext-tertiary">
+                    用于 C 端授权定位后按距离推荐门店；可从高德/百度地图坐标拾取器复制。
+                  </p>
                 </motion.div>
 
                 {/* Phone */}
