@@ -729,9 +729,9 @@ export async function create(req: AuthenticatedRequest, res: Response) {
         ? (await prisma.user.findUnique({ where: { id: currentUserId }, select: { name: true } }))?.name
         : null
       await pushAdminNotification(
-        'ADMIN_NEW_ORDER',
-        '新订单已支付',
-        `${payerName || '用户'} 在 ${finalVenueName} 消费 ¥${(result.amount / 100).toFixed(2)}，订单号 ${result.orderNo}`,
+        groupBuyPackageId ? 'ADMIN_GROUP_BUY_PURCHASED' : 'ADMIN_NEW_ORDER',
+        groupBuyPackageId ? '团购券已购买' : '新订单已支付',
+        `${payerName || '用户'} ${groupBuyPackageId ? '购买团购券' : `在 ${finalVenueName} 消费`} ¥${(result.amount / 100).toFixed(2)}，订单号 ${result.orderNo}`,
         'USER'
       )
 
@@ -1131,9 +1131,9 @@ export async function pay(req: AuthenticatedRequest, res: Response) {
     }
     // 给管理员推送用户支付通知（管理员视角）
     await pushAdminNotification(
-      'ADMIN_NEW_ORDER',
-      '订单已支付',
-      `${paidUser?.name || '用户'} 的订单 ${order.orderNo} 支付成功，金额 ¥${(payableAmount / 100).toFixed(2)}`,
+      order.groupBuyPackageId ? 'ADMIN_GROUP_BUY_PURCHASED' : 'ADMIN_NEW_ORDER',
+      order.groupBuyPackageId ? '团购券已购买' : '订单已支付',
+      `${paidUser?.name || '用户'} 的${order.groupBuyPackageId ? '团购券订单' : '订单'} ${order.orderNo} 支付成功，金额 ¥${(payableAmount / 100).toFixed(2)}`,
       'USER'
     )
 
@@ -1629,6 +1629,13 @@ export async function cancel(req: AuthenticatedRequest, res: Response) {
         `您的订单 ${order.orderNo} 已取消${refundText}`
       )
     }
+
+    await pushAdminNotification(
+      'ADMIN_ORDER_CANCELLED',
+      '订单已取消',
+      `订单 ${order.orderNo} 已取消，场地：${order.venueName || '-'}，退款 ¥${((refundAmount + feeRefundAmount) / 100).toFixed(2)}`,
+      'USER'
+    )
 
     await logAudit(req, {
       targetType: 'ORDER',
@@ -2597,6 +2604,13 @@ export async function redeem(req: AuthenticatedRequest, res: Response) {
       )
     }
 
+    await pushAdminNotification(
+      'ADMIN_GROUP_BUY_BOOKED',
+      completed ? '团购券已核销' : '团购券预约成功',
+      `用户团购券 ${order.orderNo} ${completed ? '已核销' : `已预约 ${venue.name} ${date} ${startTime}-${endTime}`}，关联订单 ${result.childOrder.orderNo}`,
+      'USER'
+    )
+
     await logAudit(req, {
       targetType: 'ORDER',
       targetId: order.id,
@@ -2772,6 +2786,13 @@ export async function redeemCustomer(req: AuthenticatedRequest, res: Response) {
         `您的团购券已预约 ${venue.name} ${date} ${startTime}-${endTime}，请准时到店`
       )
     }
+
+    await pushAdminNotification(
+      'ADMIN_GROUP_BUY_BOOKED',
+      '团购券预约成功',
+      `用户团购券 ${order.orderNo} 已预约 ${venue.name} ${date} ${startTime}-${endTime}，关联订单 ${result.childOrder.orderNo}`,
+      'USER'
+    )
 
     await logAudit(req, {
       targetType: 'ORDER',

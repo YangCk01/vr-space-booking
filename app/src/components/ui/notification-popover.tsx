@@ -31,6 +31,30 @@ const sourceLabelMap: Record<string, string> = {
   ADMIN: '管理员',
 }
 
+const typeLabelMap: Record<string, string> = {
+  ADMIN_NEW_ORDER: '新订单',
+  ADMIN_GROUP_BUY_PURCHASED: '团购购买',
+  ADMIN_GROUP_BUY_BOOKED: '团购预约',
+  ADMIN_ORDER_CANCELLED: '订单取消',
+  ADMIN_REFUND_REQUEST: '退款',
+  BOOKING_CANCEL: '取消',
+  BOOKING_SUCCESS: '预约',
+  PAY_SUCCESS: '支付',
+  ORDER_COMPLETED: '核销',
+}
+
+const typeToneMap: Record<string, string> = {
+  ADMIN_NEW_ORDER: 'bg-emerald-100 text-emerald-700',
+  ADMIN_GROUP_BUY_PURCHASED: 'bg-violet-100 text-violet-700',
+  ADMIN_GROUP_BUY_BOOKED: 'bg-sky-100 text-sky-700',
+  ADMIN_ORDER_CANCELLED: 'bg-rose-100 text-rose-700',
+  ADMIN_REFUND_REQUEST: 'bg-orange-100 text-orange-700',
+  BOOKING_CANCEL: 'bg-rose-100 text-rose-700',
+  BOOKING_SUCCESS: 'bg-sky-100 text-sky-700',
+  PAY_SUCCESS: 'bg-emerald-100 text-emerald-700',
+  ORDER_COMPLETED: 'bg-indigo-100 text-indigo-700',
+}
+
 const NotificationItem = ({
   notification,
   index,
@@ -40,6 +64,8 @@ const NotificationItem = ({
   hoverBgColor = "hover:bg-[#ffffff37]",
 }: NotificationItemProps) => {
   const sourceLabel = notification.source ? (sourceLabelMap[notification.source] || notification.source) : null
+  const typeLabel = notification.type ? (typeLabelMap[notification.type] || notification.type) : sourceLabel
+  const typeTone = notification.type ? typeToneMap[notification.type] : undefined
   return (
     <motion.div
       initial={{ opacity: 0, x: 20, filter: "blur(10px)" }}
@@ -54,14 +80,16 @@ const NotificationItem = ({
           {!notification.read && (
             <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} />
           )}
-          {sourceLabel && (
+          {typeLabel && (
             <span className={cn(
               'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium',
-              notification.source === 'USER' ? 'bg-blue-100 text-blue-700' :
+              typeTone ||
+              (notification.source === 'USER' ? 'bg-blue-100 text-blue-700' :
               notification.source === 'ADMIN' ? 'bg-amber-100 text-amber-700' :
               'bg-slate-100 text-slate-600'
+              )
             )}>
-              {sourceLabel}
+              {typeLabel}
             </span>
           )}
           <h4 className={cn('text-sm font-medium truncate', textColor)}>

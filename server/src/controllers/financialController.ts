@@ -4,6 +4,10 @@ import { prisma } from '../utils/prisma'
 import { success, error } from '../utils/response'
 import { startOfDay, endOfDay, subDays, format } from 'date-fns'
 import { logAudit } from '../middleware/auditLog'
+import {
+  calculateGroupBuyRedemptionFinancialAmount,
+  isRedeemedGroupBuyBookingOrder,
+} from '../domain/groupBuyCancellation'
 
 const DAILY_STATUS = {
   DRAFT: 'DRAFT',
@@ -40,6 +44,25 @@ function noShowRetainedIncome(order: { amount: number; refundAmount?: number | n
   if (order.penaltyAmount != null) return Math.max(0, order.penaltyAmount)
   const refunded = order.refundAmount || 0
   return Math.max(0, order.amount - refunded)
+}
+
+function readMeta(metadata: unknown): Record<string, any> {
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata as Record<string, any> : {}
+}
+
+function normalizedOrderAmount(order: { orderKind: string; metadata?: unknown; amount: number | null }): number {
+  return calculateGroupBuyRedemptionFinancialAmount({
+    orderKind: order.orderKind,
+    metadata: readMeta(order.metadata),
+    amount: order.amount || 0,
+  })
+}
+
+function notGroupBuyRedemption(order: { orderKind: string; metadata?: unknown }): boolean {
+  return !isRedeemedGroupBuyBookingOrder({
+    orderKind: order.orderKind,
+    metadata: readMeta(order.metadata),
+  })
 }
 
 async function countPendingReconExceptions(date: string) {
@@ -824,49 +847,57 @@ export async function runDailyReport(
   })
 
   // 5.2 确权营收表（兼容字段 + 新拆分字段）
-  const prepaidDirectRevenue = await prisma.order.aggregate({
+  const prepaidDirectRevenueOrders = await prisma.order.findMany({
     where: {
       orderKind: 'NORMAL',
       status: 'PAID',
       payMethod: { in: ['WECHAT', 'ALIPAY'] },
       paidAt: { gte: start, lte: end }
     },
-    _sum: { amount: true }
+    select: { orderKind: true, metadata: true, amount: true },
   })
 
-  const confirmedDirectRevenue = await prisma.order.aggregate({
+  const confirmedDirectRevenueOrders = await prisma.order.findMany({
     where: {
       orderKind: 'NORMAL',
       status: 'COMPLETED',
       payMethod: { in: ['WECHAT', 'ALIPAY'] },
       paidAt: { gte: start, lte: end }
     },
-    _sum: { amount: true }
+    select: { orderKind: true, metadata: true, amount: true },
   })
 
-  const prepaidMemberRevenue = await prisma.order.aggregate({
+  const prepaidMemberRevenueOrders = await prisma.order.findMany({
     where: {
       orderKind: 'NORMAL',
       status: 'PAID',
       principalDeduction: { gt: 0 },
       paidAt: { gte: start, lte: end }
     },
-    _sum: { principalDeduction: true }
+    select: { orderKind: true, metadata: true, principalDeduction: true },
   })
 
-  const confirmedMemberRevenue = await prisma.order.aggregate({
+  const confirmedMemberRevenueOrders = await prisma.order.findMany({
     where: {
       orderKind: 'NORMAL',
       status: 'COMPLETED',
       principalDeduction: { gt: 0 },
       paidAt: { gte: start, lte: end }
     },
-    _sum: { principalDeduction: true }
+    select: { orderKind: true, metadata: true, principalDeduction: true },
   })
 
   // 兼容字段：prepaid + confirmed
-  const dr = (prepaidDirectRevenue._sum.amount || 0) + (confirmedDirectRevenue._sum.amount || 0)
-  const mpr = (prepaidMemberRevenue._sum.principalDeduction || 0) + (confirmedMemberRevenue._sum.principalDeduction || 0)
+  const pdr = prepaidDirectRevenueOrders.reduce((sum, order) => sum + normalizedOrderAmount(order), 0)
+  const cdr = confirmedDirectRevenueOrders.reduce((sum, order) => sum + normalizedOrderAmount(order), 0)
+  const pmr = prepaidMemberRevenueOrders
+    .filter(notGroupBuyRedemption)
+    .reduce((sum, order) => sum + (order.principalDeduction || 0), 0)
+  const cmr = confirmedMemberRevenueOrders
+    .filter(notGroupBuyRedemption)
+    .reduce((sum, order) => sum + (order.principalDeduction || 0), 0)
+  const dr = pdr + cdr
+  const mpr = pmr + cmr
 
   const pointsExchangeCost = await prisma.pointsExchange.aggregate({
     where: {
@@ -891,13 +922,14 @@ export async function runDailyReport(
     _sum: { pointsAmount: true }
   })
 
-  const couponDiscountCost = await prisma.order.aggregate({
+  const couponDiscountOrders = await prisma.order.findMany({
     where: {
+      orderKind: 'NORMAL',
       status: { in: ['PAID', 'COMPLETED'] },
       couponDiscount: { gt: 0 },
       paidAt: { gte: start, lte: end }
     },
-    _sum: { couponDiscount: true }
+    select: { orderKind: true, metadata: true, couponDiscount: true },
   })
 
   const couponGiftCount = await prisma.userCoupon.count({
@@ -970,13 +1002,11 @@ export async function runDailyReport(
   const rpi = rechargePrincipalIn._sum.amount || 0
   const dpi = directPayIn._sum.amount || 0
   const ro = refundOut._sum.refundAmount || 0
-  const pdr = prepaidDirectRevenue._sum.amount || 0
-  const cdr = confirmedDirectRevenue._sum.amount || 0
-  const pmr = prepaidMemberRevenue._sum.principalDeduction || 0
-  const cmr = confirmedMemberRevenue._sum.principalDeduction || 0
   const pec = (pointsExchangeCost._sum?.pointsCost || 0) + (pointsOrderCost._sum?.pointsCost || 0)
   const pgc = pointsGiftCost._sum?.pointsAmount || 0
-  const cdc = couponDiscountCost._sum.couponDiscount || 0
+  const cdc = couponDiscountOrders
+    .filter(notGroupBuyRedemption)
+    .reduce((sum, order) => sum + (order.couponDiscount || 0), 0)
   const tpl = principalLiability._sum.principalBalance || 0
   const tbl = bonusLiability._sum.bonusBalance || 0
   const ptsLiability = await prisma.user.aggregate({
@@ -994,9 +1024,9 @@ export async function runDailyReport(
         { noShowAt: null, updatedAt: { gte: start, lte: end } },
       ],
     },
-    select: { amount: true, refundAmount: true, penaltyAmount: true },
+    select: { orderKind: true, metadata: true, amount: true, refundAmount: true, penaltyAmount: true },
   })
-  const noShowPenaltySum = noShowOrders.reduce((s, o) => {
+  const noShowPenaltySum = noShowOrders.filter(notGroupBuyRedemption).reduce((s, o) => {
     return s + noShowRetainedIncome(o)
   }, 0)
 
@@ -1008,9 +1038,11 @@ export async function runDailyReport(
       cancelledAt: { gte: start, lte: end },
       refundAmount: { gt: 0 },
     },
-    select: { amount: true, refundAmount: true },
+    select: { orderKind: true, metadata: true, amount: true, refundAmount: true },
   })
-  const cancelFeeSum = cancelledOrders.reduce((s, o) => s + Math.max(0, o.amount - (o.refundAmount || 0)), 0)
+  const cancelFeeSum = cancelledOrders
+    .filter(notGroupBuyRedemption)
+    .reduce((s, o) => s + Math.max(0, normalizedOrderAmount(o) - (o.refundAmount || 0)), 0)
 
   // 3. 改签手续费：按独立费用订单统计（新流程）
   const rescheduleFeeSumAgg = await prisma.order.aggregate({
@@ -2028,42 +2060,46 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
     })
 
     // 2. 确权营收累计（含预付/已核销拆分）
-    const prepaidDirectRevenueSum = await prisma.order.aggregate({
+    const prepaidDirectRevenueOrders = await prisma.order.findMany({
       where: {
+        orderKind: 'NORMAL',
         status: 'PAID',
         payMethod: { in: ['WECHAT', 'ALIPAY'] },
       },
-      _sum: { amount: true },
+      select: { orderKind: true, metadata: true, amount: true },
     })
 
-    const confirmedDirectRevenueSum = await prisma.order.aggregate({
+    const confirmedDirectRevenueOrders = await prisma.order.findMany({
       where: {
+        orderKind: 'NORMAL',
         status: 'COMPLETED',
         payMethod: { in: ['WECHAT', 'ALIPAY'] },
       },
-      _sum: { amount: true },
+      select: { orderKind: true, metadata: true, amount: true },
     })
 
-    const prepaidMemberRevenueSum = await prisma.order.aggregate({
+    const prepaidMemberRevenueOrders = await prisma.order.findMany({
       where: {
+        orderKind: 'NORMAL',
         status: 'PAID',
         principalDeduction: { gt: 0 },
       },
-      _sum: { principalDeduction: true },
+      select: { orderKind: true, metadata: true, principalDeduction: true },
     })
 
-    const confirmedMemberRevenueSum = await prisma.order.aggregate({
+    const confirmedMemberRevenueOrders = await prisma.order.findMany({
       where: {
+        orderKind: 'NORMAL',
         status: 'COMPLETED',
         principalDeduction: { gt: 0 },
       },
-      _sum: { principalDeduction: true },
+      select: { orderKind: true, metadata: true, principalDeduction: true },
     })
 
     // 作废未退收入累计（兼容历史违约金字段）
     const noShowOrders = await prisma.order.findMany({
       where: { status: 'NO_SHOW' },
-      select: { amount: true, refundAmount: true, penaltyAmount: true },
+      select: { orderKind: true, metadata: true, amount: true, refundAmount: true, penaltyAmount: true },
     })
 
     const pointsExchangeCostSum = await prisma.pointsExchange.aggregate({
@@ -2075,12 +2111,13 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
       _sum: { pointsCost: true },
     })
 
-    const couponDiscountCostSum = await prisma.order.aggregate({
+    const couponDiscountOrders = await prisma.order.findMany({
       where: {
+        orderKind: 'NORMAL',
         status: { in: ['PAID', 'COMPLETED'] },
         couponDiscount: { gt: 0 },
       },
-      _sum: { couponDiscount: true },
+      select: { orderKind: true, metadata: true, couponDiscount: true },
     })
 
     const pointsGiftCostSum = await prisma.balanceTransaction.aggregate({
@@ -2139,14 +2176,20 @@ export async function totalSummary(req: AuthenticatedRequest, res: Response) {
     const refundDispositionOut = refundDispositionSum._sum?.refundAmount || 0
     const customerRefundOut = customerRefundSum._sum?.refundAmount || 0
     const balanceRefundOut = balanceRefundSum._sum?.totalAmount || 0
-    const pdr = prepaidDirectRevenueSum._sum?.amount || 0
-    const cdr = confirmedDirectRevenueSum._sum?.amount || 0
-    const pmr = prepaidMemberRevenueSum._sum?.principalDeduction || 0
-    const cmr = confirmedMemberRevenueSum._sum?.principalDeduction || 0
-    const nsp = noShowOrders.reduce((sum, order) => sum + noShowRetainedIncome(order), 0)
+    const pdr = prepaidDirectRevenueOrders.reduce((sum, order) => sum + normalizedOrderAmount(order), 0)
+    const cdr = confirmedDirectRevenueOrders.reduce((sum, order) => sum + normalizedOrderAmount(order), 0)
+    const pmr = prepaidMemberRevenueOrders
+      .filter(notGroupBuyRedemption)
+      .reduce((sum, order) => sum + (order.principalDeduction || 0), 0)
+    const cmr = confirmedMemberRevenueOrders
+      .filter(notGroupBuyRedemption)
+      .reduce((sum, order) => sum + (order.principalDeduction || 0), 0)
+    const nsp = noShowOrders.filter(notGroupBuyRedemption).reduce((sum, order) => sum + noShowRetainedIncome(order), 0)
     const pec = (pointsExchangeCostSum._sum?.pointsCost || 0) + (pointsOrderCostSum._sum?.pointsCost || 0)
     const pgc = pointsGiftCostSum._sum?.pointsAmount || 0
-    const cdc = couponDiscountCostSum._sum?.couponDiscount || 0
+    const cdc = couponDiscountOrders
+      .filter(notGroupBuyRedemption)
+      .reduce((sum, order) => sum + (order.couponDiscount || 0), 0)
     const tpl = principalLiability._sum?.principalBalance || 0
     const tbl = bonusLiability._sum?.bonusBalance || 0
     const ptsLiability = await prisma.user.aggregate({

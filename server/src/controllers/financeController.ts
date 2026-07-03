@@ -5,6 +5,11 @@ import { success, paginated, error } from '../utils/response'
 import { startOfDay, endOfDay, subDays, format } from 'date-fns'
 import { getConfig, updateConfig } from '../services/configService'
 import { logAudit } from '../middleware/auditLog'
+import {
+  calculateGroupBuyRedemptionFinancialAmount,
+  isRedeemedGroupBuyBookingOrder,
+  resolveGroupBuyRelatedOrderNo,
+} from '../domain/groupBuyCancellation'
 
 /* ─── Local business day boundaries ─── */
 function dayStart(dateStr: string): Date { return startOfDay(new Date(dateStr + 'T00:00:00')) }
@@ -131,6 +136,9 @@ export function computeAuditStatus(actualRecv: number, expectedRecv: number, con
 export function buildVouchers(record: any, taxRate: number) {
   const revenue = Math.round(record.expectedRecv / (1 + taxRate / 100))
   const tax = record.expectedRecv - revenue
+  if (record.consumeStatus === 'redeemed') {
+    return []
+  }
   if (record.consumeStatus === 'recharge') {
     return [
       { subject: '银行存款', debit: record.actualRecv, credit: 0, summary: '会员充值实收' },
@@ -194,7 +202,7 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
 
   // Parallel queries
   const [
-    todayRevenue,
+    todayRevenueOrders,
     todayRefund,
     todayCancelRefund,
     todayRecharge,
@@ -203,14 +211,14 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
     dailyRecharges,
   ] = await Promise.all([
     // 今日营收（已支付 + 已核销，仅消费订单）
-    prisma.order.aggregate({
+    prisma.order.findMany({
       where: {
         orderKind: 'NORMAL',
         paidAt: { gte: todayStart, lte: todayEnd },
         status: { in: ['PAID', 'COMPLETED'] },
         ...(venueId ? { venueId: venueId as string } : {}),
       },
-      _sum: { amount: true },
+      select: { orderKind: true, metadata: true, amount: true },
     }),
     // 今日退款处置（不含顾客取消订单退费）
     prisma.order.aggregate({
@@ -275,6 +283,7 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
         cancelledAt: true,
         noShowAt: true,
         updatedAt: true,
+        metadata: true,
       },
       orderBy: { createdAt: 'asc' },
     }),
@@ -298,6 +307,12 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
   }
 
   for (const o of dailyOrders) {
+    const financialAmount = calculateGroupBuyRedemptionFinancialAmount({
+      orderKind: o.orderKind,
+      metadata: readMeta(o.metadata),
+      amount: o.amount,
+    })
+
     // 改签费订单：按支付日期统计
     if (o.orderKind === 'FEE' && o.feeType === 'RESCHEDULE_FEE' && o.status === 'PAID' && o.paidAt) {
       const key = format(o.paidAt, 'yyyy-MM-dd')
@@ -314,7 +329,7 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
         const key = format(orderIncomeTime(o), 'yyyy-MM-dd')
         const entry = trendMap.get(key)
         if (!entry) continue
-        entry.revenue += o.amount
+        entry.revenue += financialAmount
       }
       if (o.status === 'REFUNDED' && o.refundAmount) {
         const key = format(orderRefundTime(o), 'yyyy-MM-dd')
@@ -335,7 +350,7 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
         const key = format(orderCancelTime(o), 'yyyy-MM-dd')
         const entry = trendMap.get(key)
         if (!entry) continue
-        const cancelFee = o.amount - cancelRefundAmount
+        const cancelFee = financialAmount - cancelRefundAmount
         if (cancelFee > 0) {
           entry.cancelFee += cancelFee
           entry.otherIncome += cancelFee
@@ -389,7 +404,7 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
   const todayOtherIncome = todayEntry?.otherIncome || 0
 
   // Member recharge consumption: orders paid with BALANCE or BALANCE_POINTS within period
-  const rechargeConsumption = await prisma.order.aggregate({
+  const rechargeConsumptionOrders = await prisma.order.findMany({
     where: {
       orderKind: 'NORMAL',
       paidAt: { gte: start, lte: end },
@@ -397,11 +412,25 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
       payMethod: { in: ['BALANCE', 'BALANCE_POINTS'] },
       ...(venueId ? { venueId: venueId as string } : {}),
     },
-    _sum: { amount: true },
+    select: { orderKind: true, metadata: true, amount: true },
   })
+  const todayRevenueTotal = todayRevenueOrders.reduce((sum, order) => {
+    return sum + calculateGroupBuyRedemptionFinancialAmount({
+      orderKind: order.orderKind,
+      metadata: readMeta(order.metadata),
+      amount: order.amount,
+    })
+  }, 0)
+  const rechargeConsumptionTotal = rechargeConsumptionOrders.reduce((sum, order) => {
+    return sum + calculateGroupBuyRedemptionFinancialAmount({
+      orderKind: order.orderKind,
+      metadata: readMeta(order.metadata),
+      amount: order.amount,
+    })
+  }, 0)
 
   return success(res, {
-    todayRevenue: todayRevenue._sum.amount || 0,
+    todayRevenue: todayRevenueTotal,
     todayRefund: todayRefund._sum.refundAmount || 0,
     todayCancelRefund: todayCancelRefund._sum.refundAmount || 0,
     todayRecharge: todayRecharge._sum.amount || 0,
@@ -415,7 +444,7 @@ export async function overview(req: AuthenticatedRequest, res: Response) {
     periodRescheduleFee,
     periodNoShowPenalty,
     periodCancelFee,
-    periodRechargeConsumption: rechargeConsumption._sum.amount || 0,
+    periodRechargeConsumption: rechargeConsumptionTotal,
     revenueTrend,
   })
 }
@@ -471,15 +500,30 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
       orderBy: { createdAt: 'desc' },
     })
     for (const o of orders) {
+      const metadata = readMeta(o.metadata)
+      const isGroupBuyRedemption = isRedeemedGroupBuyBookingOrder({
+        orderKind: o.orderKind,
+        metadata,
+      })
+      const financialAmount = calculateGroupBuyRedemptionFinancialAmount({
+        orderKind: o.orderKind,
+        metadata,
+        amount: o.amount,
+      })
       items.push({
         id: o.id,
-        type: 'ORDER',
+        type: isGroupBuyRedemption ? 'GROUP_BUY_REDEMPTION' : 'ORDER',
         orderNo: o.orderNo,
+        parentOrderNo: resolveGroupBuyRelatedOrderNo({
+          orderKind: o.orderKind,
+          metadata,
+          parentOrderId: null,
+        }) || undefined,
         userName: (o as any).user?.name || '-',
         userPhone: (o as any).user?.phone || '-',
-        amount: o.amount,
+        amount: financialAmount,
         payMethod: o.payMethod,
-        remark: '订单收入',
+        remark: isGroupBuyRedemption ? '团购券核销，不重复计收入' : '订单收入',
         createdAt: orderIncomeTime(o).toISOString(),
       })
     }
@@ -508,6 +552,7 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
       orderBy: { createdAt: 'desc' },
     })
     for (const o of noShowOrders) {
+      if (isRedeemedGroupBuyBookingOrder({ orderKind: o.orderKind, metadata: readMeta(o.metadata) })) continue
       const amount = noShowRetainedIncome(o)
       if (amount <= 0) continue
       const flowTime = o.noShowAt || o.updatedAt || o.createdAt
@@ -541,6 +586,7 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
       orderBy: { createdAt: 'desc' },
     })
     for (const o of refunds) {
+      if (isRedeemedGroupBuyBookingOrder({ orderKind: o.orderKind, metadata: readMeta(o.metadata) })) continue
       items.push({
         id: o.id,
         type: 'REFUND',
@@ -571,6 +617,7 @@ export async function flow(req: AuthenticatedRequest, res: Response) {
       orderBy: { cancelledAt: 'desc' },
     })
     for (const o of cancelRefunds) {
+      if (isRedeemedGroupBuyBookingOrder({ orderKind: o.orderKind, metadata: readMeta(o.metadata) })) continue
       items.push({
         id: o.id,
         type: 'CANCEL_REFUND',
@@ -889,12 +936,16 @@ export async function buildAuditRecords(params: {
     if (order.orderKind === 'FEE') continue
 
     const meta = readMeta(order.metadata)
+    const isGroupBuyRedemption = isRedeemedGroupBuyBookingOrder({
+      orderKind: order.orderKind,
+      metadata: meta,
+    })
     const thirdPartySource = meta.thirdPartyCoupon?.source as string | undefined
     const channel = thirdPartySource || (order.source === 'ONLINE' ? '微信小程序' : '线下收银台')
     const payMethod = order.payMethod || order.payments[0]?.method || 'CASH'
     const isCancelled = order.status === 'CANCELLED'
     const refundTotal = (order.refundAmount || 0)
-    const paymentActual = order.payments.reduce((sum, payment) => sum + payment.amount, 0) || order.amount
+    const paymentActual = isGroupBuyRedemption ? 0 : (order.payments.reduce((sum, payment) => sum + payment.amount, 0) || order.amount)
     const isCancelledWithoutRefund = isCancelled && refundTotal <= 0
     const isRefunded = order.status === 'REFUNDED' || (order.refundAmount || 0) > 0
     // 已支付的改签费合并到原订单，改签费本身不递延、不单独开票
@@ -914,12 +965,14 @@ export async function buildAuditRecords(params: {
     const rescheduleFeeRefundTotal = rescheduleFees.reduce((sum, f) => sum + (f.refundAmount || 0), 0)
     const rescheduleFeePrincipalUsed = rescheduleFees.reduce((sum, f) => sum + (f.principalDeduction || 0), 0)
     const rescheduleFeeGiftUsed = rescheduleFees.reduce((sum, f) => sum + (f.bonusDeduction || 0), 0)
-    const originalPrice = isCancelledWithoutRefund
+    const originalPrice = isGroupBuyRedemption
+      ? 0
+      : isCancelledWithoutRefund
       ? 0
       : isRefunded
       ? -((order.originalAmount || order.amount) + rescheduleFeeTotal)
       : (order.originalAmount || order.amount) + rescheduleFeeTotal
-    const discountBreakdown = isCancelledWithoutRefund
+    const discountBreakdown = isGroupBuyRedemption || isCancelledWithoutRefund
       ? []
       : [
           order.discountAmount > 0 ? { name: '会员优惠', amount: -order.discountAmount } : null,
@@ -930,33 +983,41 @@ export async function buildAuditRecords(params: {
         ].filter(Boolean)
     const platformRate = thirdPartySource ? Number(config.platformFeeRates[thirdPartySource] || 0) : 0
     const payRate = Number(config.paymentFeeRates[payMethod] || 0)
-    const baseAmount = isRefunded ? -((order.refundAmount || order.amount) + rescheduleFeeRefundTotal) : order.amount
-    const platformFee = !isCancelledWithoutRefund && thirdPartySource ? -roundFee(Math.abs(order.amount), platformRate) : 0
-    const gatewayFee = !isCancelledWithoutRefund && ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
+    const baseAmount = isGroupBuyRedemption ? 0 : isRefunded ? -((order.refundAmount || order.amount) + rescheduleFeeRefundTotal) : order.amount
+    const platformFee = !isGroupBuyRedemption && !isCancelledWithoutRefund && thirdPartySource ? -roundFee(Math.abs(order.amount), platformRate) : 0
+    const gatewayFee = !isGroupBuyRedemption && !isCancelledWithoutRefund && ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
       ? -roundFee(Math.abs(order.amount), payRate)
       : 0
-    const rescheduleFeePlatformFee = !isCancelledWithoutRefund && thirdPartySource ? -roundFee(rescheduleFeeTotal, platformRate) : 0
-    const rescheduleFeeGatewayFee = !isCancelledWithoutRefund && ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
+    const rescheduleFeePlatformFee = !isGroupBuyRedemption && !isCancelledWithoutRefund && thirdPartySource ? -roundFee(rescheduleFeeTotal, platformRate) : 0
+    const rescheduleFeeGatewayFee = !isGroupBuyRedemption && !isCancelledWithoutRefund && ['WECHAT', 'ALIPAY', 'CARD'].includes(payMethod)
       ? -roundFee(rescheduleFeeTotal, payRate)
       : 0
-    const expectedRecv = isCancelledWithoutRefund
+    const expectedRecv = isGroupBuyRedemption
+      ? 0
+      : isCancelledWithoutRefund
       ? 0
       : isRefunded
       ? baseAmount
       : order.amount + platformFee + gatewayFee + rescheduleFeeTotal + rescheduleFeePlatformFee + rescheduleFeeGatewayFee
-    const actualRecv = isCancelledWithoutRefund
+    const actualRecv = isGroupBuyRedemption
+      ? 0
+      : isCancelledWithoutRefund
       ? paymentActual + rescheduleFeeActual
       : isRefunded
       ? -((order.refundAmount || order.amount) + rescheduleFeeRefundTotal)
       : paymentActual + rescheduleFeeActual
-    const consumeStatus = isCancelledWithoutRefund
+    const consumeStatus = isGroupBuyRedemption
+      ? 'redeemed'
+      : isCancelledWithoutRefund
       ? 'cancelled'
       : isRefunded
       ? 'refunded'
       : order.status === 'PAID'
         ? 'unconsumed'
         : 'consumed'
-    const bankStatus = isCancelledWithoutRefund
+    const bankStatus = isGroupBuyRedemption
+      ? 'internal'
+      : isCancelledWithoutRefund
       ? actualRecv > 0 ? 'pending_recon' : 'arrived'
       : ['BALANCE', 'BALANCE_POINTS'].includes(payMethod)
       ? 'internal'
@@ -979,6 +1040,7 @@ export async function buildAuditRecords(params: {
       payMethod,
       feePayMethods: rescheduleFees.map((f) => f.payMethod).filter(Boolean) as string[],
       type:
+        (isGroupBuyRedemption ? '团购券核销：' : '') +
         (order.booking?.game?.title || order.feeReason || 'VR体验订单') +
         (rescheduleFeeTotal > 0
           ? `（含改签费${rescheduleFees.some((f) => ['BALANCE', 'BALANCE_POINTS'].includes(f.payMethod || '')) ? '·余额' : ''}）`
@@ -993,7 +1055,7 @@ export async function buildAuditRecords(params: {
       settlementCycle: config.settlementCycles[thirdPartySource || payMethod] || '实时',
       bankStatus,
       assetChange:
-        !isCancelledWithoutRefund && (order.principalDeduction || 0) + (order.bonusDeduction || 0) + rescheduleFeePrincipalUsed + rescheduleFeeGiftUsed > 0
+        !isGroupBuyRedemption && !isCancelledWithoutRefund && (order.principalDeduction || 0) + (order.bonusDeduction || 0) + rescheduleFeePrincipalUsed + rescheduleFeeGiftUsed > 0
           ? {
               type: 'balance_used',
               value: order.amount + rescheduleFeeActual,
@@ -1002,16 +1064,22 @@ export async function buildAuditRecords(params: {
             }
           : null,
       invoice: {
-        status: isCancelledWithoutRefund ? 'none' : expectedRecv > 0 ? 'pending' : isRefunded ? 'red_ink' : 'none',
-        amount: isCancelledWithoutRefund ? 0 : Math.round(expectedRecv / (1 + config.taxRate / 100)),
+        status: isGroupBuyRedemption || isCancelledWithoutRefund ? 'none' : expectedRecv > 0 ? 'pending' : isRefunded ? 'red_ink' : 'none',
+        amount: isGroupBuyRedemption || isCancelledWithoutRefund ? 0 : Math.round(expectedRecv / (1 + config.taxRate / 100)),
         taxRate: config.taxRate,
       },
       orderTime: format(order.createdAt, 'yyyy-MM-dd HH:mm'),
       reconTime: format(order.updatedAt, 'yyyy-MM-dd HH:mm'),
-      remark: isCancelledWithoutRefund
+      remark: isGroupBuyRedemption
+        ? `由团购券 ${meta.redeemedFromOrderNo || ''} 预约生成，不重复计收入`
+        : isCancelledWithoutRefund
         ? '订单已取消，未确认为收入；如已收款需走退款或人工处理'
         : meta.thirdPartyCoupon ? `平台券：${meta.thirdPartyCoupon.name}` : '',
-      relatedOrderId: order.parentOrderId || null,
+      relatedOrderId: resolveGroupBuyRelatedOrderNo({
+        orderKind: order.orderKind,
+        metadata: meta,
+        parentOrderId: order.parentOrderId,
+      }),
       userName: order.user?.name || order.booking?.personName || '-',
       userPhone: order.user?.phone || order.booking?.personPhone || '-',
       auditLog: auditLogMap.get(id) || [],
