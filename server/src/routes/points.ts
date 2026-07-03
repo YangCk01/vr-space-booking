@@ -19,17 +19,17 @@ router.post('/orders', authenticate, pointsController.createPointsOrder)
 router.get('/orders', authenticate, pointsController.listMyPointsOrders)
 router.post('/orders/:id/return', authenticate, pointsController.requestReturn)
 
-// 会员营销管理接口
-router.post('/products', authenticate, requirePermission('user:gift'), pointsController.createProduct)
-router.put('/products/:id', authenticate, requirePermission('user:gift'), pointsController.updateProduct)
-router.delete('/products/:id', authenticate, requirePermission('user:gift'), pointsController.deleteProduct)
-router.get('/exchanges/all', authenticate, requirePermission('user:gift'), pointsController.listAllExchanges)
-router.put('/exchanges/:id/fulfill', authenticate, requirePermission('user:gift'), pointsController.fulfillExchange)
+// 积分商城管理接口
+router.post('/products', authenticate, requirePermission('points:mall'), pointsController.createProduct)
+router.put('/products/:id', authenticate, requirePermission('points:mall'), pointsController.updateProduct)
+router.delete('/products/:id', authenticate, requirePermission('points:mall'), pointsController.deleteProduct)
+router.get('/exchanges/all', authenticate, requirePermission('points:mall'), pointsController.listAllExchanges)
+router.put('/exchanges/:id/fulfill', authenticate, requirePermission('points:mall'), pointsController.fulfillExchange)
 
-// 会员营销：商城订单管理
-router.get('/orders/all', authenticate, requirePermission('user:gift'), pointsController.listAllPointsOrders)
-router.put('/orders/:id/ship', authenticate, requirePermission('user:gift'), pointsController.shipPointsOrder)
-router.put('/orders/:id/complete', authenticate, requirePermission('user:gift'), pointsController.completePointsOrder)
-router.put('/orders/:id/approve-return', authenticate, requirePermission('user:gift'), pointsController.approveReturn)
+// 积分商城订单管理
+router.get('/orders/all', authenticate, requirePermission('points:mall'), pointsController.listAllPointsOrders)
+router.put('/orders/:id/ship', authenticate, requirePermission('points:mall'), pointsController.shipPointsOrder)
+router.put('/orders/:id/complete', authenticate, requirePermission('points:mall'), pointsController.completePointsOrder)
+router.put('/orders/:id/approve-return', authenticate, requirePermission('points:mall'), pointsController.approveReturn)
 
 export default router

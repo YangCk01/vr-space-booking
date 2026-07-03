@@ -8,7 +8,7 @@ import { createRechargeSchema, confirmRechargeSchema, staffRechargeSchema } from
 const router = Router()
 
 router.get('/config', getConfig)
-router.post('/staff', authenticate, requirePermission('user:gift'), validateRequest({ body: staffRechargeSchema }), staffRecharge)
+router.post('/staff', authenticate, requirePermission('recharge:staff'), validateRequest({ body: staffRechargeSchema }), staffRecharge)
 router.post('/', authenticate, validateRequest({ body: createRechargeSchema }), create)
 router.post('/confirm', authenticate, validateRequest({ body: confirmRechargeSchema }), confirm)
 router.get('/my', authenticate, listMy)

@@ -52,6 +52,7 @@ function mapTypeToSceneKey(type: string): string | null {
     ADMIN_GROUP_BUY_BOOKED: 'scene_admin_new_order',
     ADMIN_ORDER_CANCELLED: 'scene_booking_cancel',
     ADMIN_REFUND_REQUEST: 'scene_admin_refund_request',
+    ADMIN_APPROVAL_REQUEST: 'scene_admin_refund_request',
     SYSTEM_ALERT: 'scene_system_alert',
     RECON_ALERT: 'scene_recon_alert',
   }
@@ -75,7 +76,7 @@ export async function pushAdminNotification(
     }
 
     const admins = await prisma.user.findMany({
-      where: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'FINANCE'] } },
+      where: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'FINANCE'] }, status: 'ACTIVE' },
       select: { id: true },
     })
 
@@ -136,18 +137,16 @@ export async function markRead(req: AuthenticatedRequest, res: Response) {
     if (!userId) return error(res, '未登录', 401)
 
     const { id } = req.params
-    const admin = isAdmin(req)
-
     if (id === 'all') {
       await prisma.notification.updateMany({
-        where: admin ? { read: false } : { userId, read: false },
+        where: { userId, read: false },
         data: { read: true },
       })
       return success(res, null, '全部已读')
     }
 
     await prisma.notification.updateMany({
-      where: admin ? { id: id as string } : { id: id as string, userId },
+      where: { id: id as string, userId },
       data: { read: true },
     })
     return success(res, null, '已标记为已读')
@@ -162,9 +161,8 @@ export async function clearAll(req: AuthenticatedRequest, res: Response) {
     const userId = req.user?.id
     if (!userId) return error(res, '未登录', 401)
 
-    const admin = isAdmin(req)
     await prisma.notification.deleteMany({
-      where: admin ? {} : { userId },
+      where: { userId },
     })
     return success(res, null, '通知已清空')
   } catch (err) {
@@ -178,9 +176,8 @@ export async function unreadCount(req: AuthenticatedRequest, res: Response) {
     const userId = req.user?.id
     if (!userId) return error(res, '未登录', 401)
 
-    const admin = isAdmin(req)
     const count = await prisma.notification.count({
-      where: admin ? { read: false } : { userId, read: false },
+      where: { userId, read: false },
     })
     return success(res, { count })
   } catch (err) {

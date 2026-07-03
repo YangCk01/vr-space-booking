@@ -129,6 +129,7 @@ export function getVoiceTextByType(type?: string, fallback = '您有新的通知
   const map: Record<string, string> = {
     ADMIN_NEW_ORDER: '您有新的订单，请及时查看',
     ADMIN_REFUND_REQUEST: '您有新的退款申请，请及时处理',
+    ADMIN_APPROVAL_REQUEST: '您有新的审批申请，请及时处理',
     ADMIN_PRODUCT_SOLD: '您有新的商品售出',
     ADMIN_LOW_STOCK: '库存不足提醒，请及时补货',
     SYSTEM_ALERT: '系统告警，请关注',

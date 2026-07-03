@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import { authenticate } from '../middleware/auth'
 import { createUploader } from '../utils/upload'
 import { success, error } from '../utils/response'
+import { getRequiredUploadPermissions } from '../domain/adminPermissions'
 
 const router = Router()
 
@@ -12,6 +13,18 @@ router.post('/:type', authenticate, (req: Request, res: Response) => {
 
   if (!allowedTypes.includes(type)) {
     return error(res, '不支持的上传类型', 400)
+  }
+
+  const requiredPermissions = getRequiredUploadPermissions(type)
+  const user = (req as any).user
+  const userPermissions: string[] = user?.permissions || []
+  const permitted =
+    user?.role === 'SUPER_ADMIN' ||
+    requiredPermissions.length === 0 ||
+    requiredPermissions.some((permission) => userPermissions.includes(permission))
+
+  if (!permitted) {
+    return error(res, '权限不足', 403)
   }
 
   const uploader = createUploader(type)

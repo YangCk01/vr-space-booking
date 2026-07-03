@@ -97,6 +97,11 @@ const configKeyToEnum: Record<string, string> = {
   'VIP+': 'VIP_PLUS',
 }
 
+function showGiftSubmitResult(result: any, successMessage: string) {
+  const approvalRequired = Boolean(result?.approvalRequired || result?.data?.approvalRequired)
+  alert(approvalRequired ? '审批申请已提交，请等待管理员处理' : successMessage)
+}
+
 function useMemberLevels() {
   const { data: systemConfigs } = useQuery({
     queryKey: ['systemConfigs'],
@@ -1031,24 +1036,26 @@ export default function UsersPage() {
   const batchGiftPointsMutation = useMutation({
     mutationFn: ({ userIds, points, remark }: { userIds: string[]; points: number; remark?: string }) =>
       batchGiftPoints(userIds, points, '批量赠送积分', remark),
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       setSelectedIds([])
       setBatchPointsOpen(false)
       setBatchPointsForm({ points: '', remark: '' })
       setBatchGiftError('')
+      showGiftSubmitResult(result, '批量积分赠送成功')
     },
   })
 
   const batchGiftCouponMutation = useMutation({
     mutationFn: ({ userIds, data }: { userIds: string[]; data: Parameters<typeof batchGiftCoupon>[1] }) =>
       batchGiftCoupon(userIds, data),
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       setSelectedIds([])
       setBatchCouponOpen(false)
       setBatchCouponForm({ name: '', type: 'EXPERIENCE_FREE', discountRate: '', validDays: '30', reason: '', remark: '' })
       setBatchGiftError('')
+      showGiftSubmitResult(result, '批量优惠券赠送成功')
     },
   })
 
@@ -1768,7 +1775,7 @@ export default function UsersPage() {
                   setGiftLoading(true)
                   setGiftError('')
                   try {
-                    await giftPoints({
+                    const result = await giftPoints({
                       userId: giftingUser.id,
                       points: parseInt(giftPointsForm.points),
                       reason: giftPointsForm.reason as any,
@@ -1776,6 +1783,7 @@ export default function UsersPage() {
                     })
                     setGiftPointsOpen(false)
                     queryClient.invalidateQueries({ queryKey: ['users'] })
+                    showGiftSubmitResult(result, '积分赠送成功')
                   } catch (err: any) {
                     setGiftError(err?.response?.data?.message || err?.message || '赠送失败')
                   } finally {
@@ -1925,7 +1933,7 @@ export default function UsersPage() {
                   setGiftLoading(true)
                   setGiftError('')
                   try {
-                    await giftCoupon({
+                    const result = await giftCoupon({
                       userId: giftingUser.id,
                       name: giftCouponForm.name.trim(),
                       type: giftCouponForm.type,
@@ -1936,6 +1944,7 @@ export default function UsersPage() {
                     })
                     setGiftCouponOpen(false)
                     queryClient.invalidateQueries({ queryKey: ['users'] })
+                    showGiftSubmitResult(result, '优惠券赠送成功')
                   } catch (err: any) {
                     setGiftError(err?.response?.data?.message || err?.message || '赠送失败')
                   } finally {

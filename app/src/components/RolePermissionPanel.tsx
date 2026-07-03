@@ -54,11 +54,29 @@ const moduleLabels: Record<string, string> = {
   finance: '财务',
   'group-buy': '团购',
   marketing: '营销',
+  member: '会员营销',
+  monitor: '实时监控',
   order: '订单',
+  points: '积分商城',
+  recharge: '充值',
   role: '角色',
   setting: '系统设置',
+  upload: '上传',
   user: '会员与用户',
   venue: '场地',
+}
+
+const permissionHints: Record<string, string> = {
+  'approval:approve': '审批通过后会直接影响退款、赠送等业务结果',
+  'finance:adjust': '可进行对账平账、日报确认和财务调整',
+  'marketing:campaign': '可创建、暂停、复制和发放营销活动',
+  'marketing:rule': '可调整自动触发营销规则',
+  'member:marketing': '可修改会员等级、积分比例和赠送上限',
+  'points:mall': '可管理积分商城商品、兑换、发货和退回',
+  'recharge:staff': '可由后台为会员办理代充值',
+  'upload:content': '可上传门店、游戏、页面和营销素材',
+  'monitor:read': '可查看实时运营监控数据',
+  'user:gift': '可发起积分或优惠券赠送，是否审批由策略决定',
 }
 
 const highRiskPermissionCodes = new Set([
@@ -70,7 +88,30 @@ const highRiskPermissionCodes = new Set([
   'audit:read',
   'user:edit',
   'user:gift',
+  'member:marketing',
+  'points:mall',
+  'recharge:staff',
+  'marketing:campaign',
+  'marketing:rule',
+  'upload:content',
+  'monitor:read',
 ])
+
+function summarizePermissions(permissions: Permission[]) {
+  const moduleCounts = permissions.reduce<Record<string, number>>((acc, permission) => {
+    acc[permission.module] = (acc[permission.module] || 0) + 1
+    return acc
+  }, {})
+
+  return Object.entries(moduleCounts)
+    .sort(([a], [b]) => (moduleLabels[a] || a).localeCompare(moduleLabels[b] || b, 'zh-Hans-CN'))
+    .slice(0, 5)
+    .map(([module, count]) => `${moduleLabels[module] || module} ${count}`)
+}
+
+function countHighRiskPermissions(permissions: Permission[]) {
+  return permissions.filter((permission) => highRiskPermissionCodes.has(permission.code)).length
+}
 
 function PermissionMatrix({
   allPermissions,
@@ -148,12 +189,17 @@ function PermissionMatrix({
                       disabled={readOnly}
                       className="w-4 h-4 rounded border-vrborder-subtle text-vraccent-primary focus:ring-vraccent-primary focus:ring-offset-0 bg-vrbg-elevated cursor-pointer disabled:cursor-not-allowed"
                     />
-                    <span className="min-w-0 flex-1">
-                      <span className={cn('block text-vr-body-sm', selected ? 'text-vrtext-primary' : 'text-vrtext-secondary')}>
-                        {p.name}
+                      <span className="min-w-0 flex-1">
+                        <span className={cn('block text-vr-body-sm', selected ? 'text-vrtext-primary' : 'text-vrtext-secondary')}>
+                          {p.name}
+                        </span>
+                        <span className="block text-[11px] text-vrtext-muted truncate">{p.code}</span>
+                        {permissionHints[p.code] && (
+                          <span className="block text-[11px] text-vrtext-tertiary leading-snug mt-0.5">
+                            {permissionHints[p.code]}
+                          </span>
+                        )}
                       </span>
-                      <span className="block text-[11px] text-vrtext-muted truncate">{p.code}</span>
-                    </span>
                     {highRisk && !readOnly && (
                       <span className="shrink-0 rounded bg-vrwarning/15 px-1.5 py-0.5 text-[11px] text-vrwarning">高风险</span>
                     )}
@@ -354,6 +400,8 @@ export function RolePermissionPanel() {
           <div className="space-y-4">
             {roleList.map((role) => {
               const isExpanded = expandedRoleId === role.id
+              const moduleSummary = summarizePermissions(role.permissions)
+              const highRiskCount = countHighRiskPermissions(role.permissions)
               const hasChanges = editPerms[role.id] !== undefined &&
                 JSON.stringify((editPerms[role.id] || []).sort()) !==
                 JSON.stringify(role.permissions.map((p) => p.id).sort())
@@ -394,6 +442,26 @@ export function RolePermissionPanel() {
                         <p className="text-vr-caption text-vrtext-tertiary mt-0.5">
                           {role.description || '暂无描述'} · {role.permissions.length} 项权限 · {role.userCount || 0} 位账号
                         </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          {moduleSummary.map((item) => (
+                            <span
+                              key={item}
+                              className="inline-flex items-center rounded-full bg-vrbg-elevated px-2 py-0.5 text-[11px] text-vrtext-secondary"
+                            >
+                              {item}
+                            </span>
+                          ))}
+                          {role.permissions.length > moduleSummary.reduce((sum, item) => sum + Number(item.split(' ').pop() || 0), 0) && (
+                            <span className="inline-flex items-center rounded-full bg-vrbg-elevated px-2 py-0.5 text-[11px] text-vrtext-muted">
+                              更多
+                            </span>
+                          )}
+                          {highRiskCount > 0 && (
+                            <span className="inline-flex items-center rounded-full bg-vrwarning/15 px-2 py-0.5 text-[11px] text-vrwarning">
+                              高风险 {highRiskCount}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">

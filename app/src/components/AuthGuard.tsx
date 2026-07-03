@@ -18,7 +18,7 @@ const routeToPermission: Record<string, string | string[]> = {
   '/finance':   'finance:read',
   '/finance/compliance': 'finance:read',
   '/accounts':  'account:read',
-  '/member-marketing': 'user:gift',
+  '/member-marketing': 'member:marketing',
   '/settings':  'setting:read',
   '/audit-logs': 'audit:read',
   '/roles': 'role:read',
@@ -42,7 +42,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
       // Development bypass for testing
       if (import.meta.env.DEV && localStorage.getItem('devBypassAuth') === '1') {
-        setUser({ id: '1', phone: '13800000000', name: '管理员', email: null, avatar: null, role: 'ADMIN', level: 'VIP', permissions: ['order:read','order:refund','order:verify','order:export','order:reschedule','booking:read','booking:manage','approval:read','approval:request','approval:approve','finance:read','finance:adjust','finance:report','finance:reconcile','user:read','user:edit','user:gift','user:export','account:read','account:manage','role:read','role:manage','venue:read','venue:manage','venue:maintenance','content:read','content:manage','group-buy:read','group-buy:manage','marketing:campaign','marketing:rule','setting:read','setting:write','audit:read'] })
+        setUser({ id: '1', phone: '13800000000', name: '管理员', email: null, avatar: null, role: 'ADMIN', level: 'VIP', permissions: ['order:read','order:refund','order:verify','order:export','order:reschedule','booking:read','booking:manage','approval:read','approval:request','approval:approve','finance:read','finance:adjust','finance:report','finance:reconcile','user:read','user:edit','user:gift','user:export','member:marketing','points:mall','recharge:staff','account:read','account:manage','role:read','role:manage','venue:read','venue:manage','venue:maintenance','content:read','content:manage','group-buy:read','group-buy:manage','marketing:campaign','marketing:rule','setting:read','setting:write','audit:read','upload:content','monitor:read'] })
         setAuthenticated(true)
         setLoading(false)
         return

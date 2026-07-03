@@ -25,7 +25,7 @@ function requireSystemConfigWrite(req: AuthenticatedRequest, res: Response, next
   const permissions = req.user.permissions || []
   const key = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key
   if (permissions.includes('setting:write')) return next()
-  if (permissions.includes('user:gift') && memberMarketingConfigKeys.has(key)) return next()
+  if (permissions.includes('member:marketing') && memberMarketingConfigKeys.has(key)) return next()
 
   return error(res, '权限不足', 403)
 }
@@ -38,6 +38,9 @@ router.get('/', requireAnyPermission(
   'booking:manage',
   'user:read',
   'user:gift',
+  'member:marketing',
+  'points:mall',
+  'recharge:staff',
   'marketing:campaign',
   'finance:read',
   'order:read'

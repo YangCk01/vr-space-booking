@@ -145,7 +145,7 @@ const keyToPermission: Record<string, string | string[]> = {
   finance: 'finance:read',
   compliance: 'finance:read',
   accounts: 'account:read',
-  'member-marketing': 'user:gift',
+  'member-marketing': 'member:marketing',
   'audit-logs': 'audit:read',
   'coupon-effects': 'marketing:campaign',
   'venue-analytics': ['finance:report', 'venue:read'],

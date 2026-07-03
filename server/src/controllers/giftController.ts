@@ -16,6 +16,7 @@ import {
   executeGiftPoints,
   formatGiftReasonLabel,
 } from '../services/memberGiftService'
+import { pushAdminNotification } from './notificationController'
 
 /* ─── Validators ─── */
 export const giftPointsValidators = [
@@ -90,6 +91,16 @@ async function createGiftApproval(req: AuthenticatedRequest, input: {
   })
 }
 
+async function notifyGiftApprovalCreated(approval: Awaited<ReturnType<typeof createGiftApproval>>) {
+  const typeLabel = approval.type === 'COUPON_GIFT' ? '优惠券赠送' : '积分赠送'
+  await pushAdminNotification(
+    'ADMIN_APPROVAL_REQUEST',
+    `新的${typeLabel}审批`,
+    `${approval.requesterName} 发起${typeLabel}审批：${approval.targetDesc}`,
+    'APPROVAL'
+  )
+}
+
 export async function getGiftApprovalPolicy(req: AuthenticatedRequest, res: Response) {
   if (!canManageMemberGiftApprovalPolicy(req.user?.role)) return error(res, '权限不足', 403)
 
@@ -147,6 +158,7 @@ export async function giftPoints(req: AuthenticatedRequest, res: Response) {
         beforeValue: { points: user.points },
         afterValue: { points: user.points + points },
       })
+      await notifyGiftApprovalCreated(approval)
       return success(res, { approvalRequired: true, approval }, '赠送审批已提交')
     }
 
@@ -188,6 +200,7 @@ export async function giftCoupon(req: AuthenticatedRequest, res: Response) {
         beforeValue: { couponCount: 0 },
         afterValue: { name, type, discountRate, validityDays, reason, remark },
       })
+      await notifyGiftApprovalCreated(approval)
       return success(res, { approvalRequired: true, approval }, '赠送审批已提交')
     }
 
@@ -304,6 +317,7 @@ export async function batchGiftPoints(req: AuthenticatedRequest, res: Response) 
         beforeValue: { users: users.map((user) => ({ id: user.id, points: user.points })) },
         afterValue: { userIds, points, count: users.length },
       })
+      await notifyGiftApprovalCreated(approval)
       return success(res, { approvalRequired: true, approval }, '批量赠送审批已提交')
     }
 
@@ -356,6 +370,7 @@ export async function batchGiftCoupon(req: AuthenticatedRequest, res: Response) 
         beforeValue: { userIds },
         afterValue: { userIds, name, type, validityDays, reason, remark, count: users.length },
       })
+      await notifyGiftApprovalCreated(approval)
       return success(res, { approvalRequired: true, approval }, '批量赠送审批已提交')
     }
 
