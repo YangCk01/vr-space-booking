@@ -5,6 +5,7 @@ import { prisma } from '../utils/prisma'
 import { success, error, paginated } from '../utils/response'
 import { logAudit } from '../middleware/auditLog'
 import { executeNoShowDisposition, executeOrderRefund } from './orderController'
+import { MemberGiftApprovalPayload, executeMemberGiftApproval } from '../services/memberGiftService'
 
 type NoShowRefundPayload = {
   action: 'NO_REFUND' | 'PARTIAL_REFUND' | 'FULL_REFUND'
@@ -346,6 +347,8 @@ export async function approveApproval(req: AuthenticatedRequest, res: Response) 
             fees: feeExecutions.map((e) => e.afterValue),
           },
         }
+      } else if (approval.type === 'POINTS_ADJUST' || approval.type === 'COUPON_GIFT') {
+        execution = await executeMemberGiftApproval(approval.requestPayload as MemberGiftApprovalPayload, req)
       } else {
         throw new Error('该审批类型暂未接入自动执行')
       }

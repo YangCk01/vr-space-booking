@@ -28,6 +28,7 @@ import {
   Gift,
   Coins,
   Ticket,
+  SlidersHorizontal,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
 import { NumberFieldInput } from '@/components/ui/number-field'
@@ -51,7 +52,15 @@ import {
 import { getUsers, createUser, updateUser, deleteUser, batchGiftPoints, batchGiftCoupon } from '@/api/users'
 import type { User as ApiUser } from '@/api/users'
 import { getSystemConfigs } from '@/api/systemConfig'
-import { giftPoints, giftCoupon, getPointsGiftRecords, getCouponGiftRecords } from '@/api/gift'
+import {
+  giftPoints,
+  giftCoupon,
+  getPointsGiftRecords,
+  getCouponGiftRecords,
+  getMemberGiftApprovalPolicy,
+  updateMemberGiftApprovalPolicy,
+  type MemberGiftApprovalPolicy,
+} from '@/api/gift'
 import { getUserRechargeRecords } from '@/api/finance'
 import { getVenues } from '@/api/venues'
 import { getRechargeConfig, staffRecharge, type RechargeConfig } from '@/api/recharges'
@@ -876,6 +885,7 @@ export default function UsersPage() {
   const currentUser = useAuthStore((state) => state.user)
   const canEditUsers = hasPermission(currentUser, 'user:edit')
   const canGiftUsers = hasPermission(currentUser, 'user:gift')
+  const canManageGiftApprovalPolicy = currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN'
   const canViewRechargeRecords = hasPermission(currentUser, 'finance:read')
   const [activeTab, setActiveTab] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -927,6 +937,16 @@ export default function UsersPage() {
   })
   const [batchGiftError, setBatchGiftError] = useState('')
   const [batchGiftLoading, setBatchGiftLoading] = useState(false)
+  const [giftPolicyOpen, setGiftPolicyOpen] = useState(false)
+  const [giftPolicyForm, setGiftPolicyForm] = useState<MemberGiftApprovalPolicy>({
+    enabled: true,
+    requirePointsGiftApproval: true,
+    requireCouponGiftApproval: true,
+    forceExperienceCouponApproval: true,
+    pointsThreshold: 500,
+    batchSizeThreshold: 2,
+  })
+  const [giftPolicyError, setGiftPolicyError] = useState('')
 
   const { levels: memberLevels, levelMap, reverseMap } = useMemberLevels()
   const levelTabs = useDynamicLevelTabs(memberLevels)
@@ -940,6 +960,29 @@ export default function UsersPage() {
       page: currentPage,
       pageSize,
     }),
+  })
+
+  const { data: giftPolicy } = useQuery({
+    queryKey: ['member-gift-approval-policy'],
+    queryFn: getMemberGiftApprovalPolicy,
+    enabled: canManageGiftApprovalPolicy,
+  })
+
+  useEffect(() => {
+    if (giftPolicy) setGiftPolicyForm(giftPolicy)
+  }, [giftPolicy])
+
+  const updateGiftPolicyMutation = useMutation({
+    mutationFn: updateMemberGiftApprovalPolicy,
+    onSuccess: (data) => {
+      setGiftPolicyForm(data)
+      setGiftPolicyError('')
+      setGiftPolicyOpen(false)
+      queryClient.invalidateQueries({ queryKey: ['member-gift-approval-policy'] })
+    },
+    onError: (err: any) => {
+      setGiftPolicyError(err?.response?.data?.message || err?.message || '保存失败')
+    },
   })
 
   const users: ApiUser[] = userData?.data || []
@@ -1132,6 +1175,23 @@ export default function UsersPage() {
                 className="w-[280px] h-9 pl-9 pr-4 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
               />
             </motion.div>
+
+            {canManageGiftApprovalPolicy && (
+              <motion.button
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.3, delay: 0.12 }}
+                onClick={() => {
+                  if (giftPolicy) setGiftPolicyForm(giftPolicy)
+                  setGiftPolicyError('')
+                  setGiftPolicyOpen(true)
+                }}
+                className="h-9 px-4 bg-vrbg-surface border border-vrborder-subtle text-vrtext-secondary rounded-lg text-vr-body-sm font-medium hover:bg-vrbg-elevated hover:text-vrtext-primary transition-colors flex items-center gap-1.5"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                赠送审批
+              </motion.button>
+            )}
 
             {canEditUsers && (
               <motion.button
@@ -2072,6 +2132,107 @@ export default function UsersPage() {
                 className="flex-1 h-10 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary-hover transition-colors disabled:opacity-50"
               >
                 {batchGiftLoading ? '赠送中...' : '确认赠送'}
+              </button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* ─── Member Gift Approval Policy Sheet ─── */}
+      <Sheet open={giftPolicyOpen} onOpenChange={setGiftPolicyOpen}>
+        <SheetContent side="right" className="w-[520px] bg-vrbg-card border-l border-vrborder-subtle p-0 sm:max-w-[520px]">
+          <SheetHeader className="p-6 border-b border-vrborder-subtle">
+            <SheetTitle className="text-vr-h3 text-vrtext-primary font-semibold">赠送审批策略</SheetTitle>
+          </SheetHeader>
+          <div className="p-6 space-y-5 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 80px)' }}>
+            <div className="p-4 rounded-xl bg-vrbg-elevated border border-vrborder-subtle">
+              <label className="flex items-center justify-between gap-4">
+                <span>
+                  <span className="block text-vr-body-sm text-vrtext-primary font-medium">启用会员赠送审批</span>
+                  <span className="block text-vr-caption text-vrtext-tertiary mt-1">
+                    开启后，达到规则的积分或优惠券赠送会先生成审批单。
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={giftPolicyForm.enabled}
+                  onChange={(e) => setGiftPolicyForm((f) => ({ ...f, enabled: e.target.checked }))}
+                  className="w-4 h-4 accent-[#3B82F6]"
+                />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex items-center gap-3 p-3 rounded-lg bg-vrbg-surface border border-vrborder-subtle">
+                <input
+                  type="checkbox"
+                  checked={giftPolicyForm.requirePointsGiftApproval}
+                  onChange={(e) => setGiftPolicyForm((f) => ({ ...f, requirePointsGiftApproval: e.target.checked }))}
+                  className="w-4 h-4 accent-[#3B82F6]"
+                />
+                <span className="text-vr-body-sm text-vrtext-primary">积分赠送审批</span>
+              </label>
+              <label className="flex items-center gap-3 p-3 rounded-lg bg-vrbg-surface border border-vrborder-subtle">
+                <input
+                  type="checkbox"
+                  checked={giftPolicyForm.requireCouponGiftApproval}
+                  onChange={(e) => setGiftPolicyForm((f) => ({ ...f, requireCouponGiftApproval: e.target.checked }))}
+                  className="w-4 h-4 accent-[#3B82F6]"
+                />
+                <span className="text-vr-body-sm text-vrtext-primary">优惠券赠送审批</span>
+              </label>
+              <label className="col-span-2 flex items-center gap-3 p-3 rounded-lg bg-vrbg-surface border border-vrborder-subtle">
+                <input
+                  type="checkbox"
+                  checked={giftPolicyForm.forceExperienceCouponApproval}
+                  onChange={(e) => setGiftPolicyForm((f) => ({ ...f, forceExperienceCouponApproval: e.target.checked }))}
+                  className="w-4 h-4 accent-[#3B82F6]"
+                />
+                <span className="text-vr-body-sm text-vrtext-primary">免单体验券始终需要审批</span>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <label className="space-y-1.5">
+                <span className="text-vr-caption text-vrtext-secondary">积分阈值</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={giftPolicyForm.pointsThreshold}
+                  onChange={(e) => setGiftPolicyForm((f) => ({ ...f, pointsThreshold: Math.max(1, Number(e.target.value) || 1) }))}
+                  className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15"
+                />
+                <span className="block text-[11px] text-vrtext-muted">单次赠送达到该积分后进入审批。</span>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-vr-caption text-vrtext-secondary">批量人数阈值</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={giftPolicyForm.batchSizeThreshold}
+                  onChange={(e) => setGiftPolicyForm((f) => ({ ...f, batchSizeThreshold: Math.max(1, Number(e.target.value) || 1) }))}
+                  className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15"
+                />
+                <span className="block text-[11px] text-vrtext-muted">一次赠送人数达到该值后进入审批。</span>
+              </label>
+            </div>
+
+            {giftPolicyError && <p className="text-vr-body-sm text-vr-error">{giftPolicyError}</p>}
+
+            <div className="pt-3 flex gap-3">
+              <button
+                onClick={() => setGiftPolicyOpen(false)}
+                className="flex-1 h-10 rounded-lg border border-vrborder-subtle text-vrtext-secondary text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors"
+              >
+                取消
+              </button>
+              <button
+                disabled={updateGiftPolicyMutation.isPending}
+                onClick={() => updateGiftPolicyMutation.mutate(giftPolicyForm)}
+                className="flex-1 h-10 rounded-lg bg-vraccent-primary text-white text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+              >
+                {updateGiftPolicyMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                保存策略
               </button>
             </div>
           </div>

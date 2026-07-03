@@ -8,6 +8,8 @@ import {
   listCouponRecords,
   batchGiftPoints,
   batchGiftCoupon,
+  getGiftApprovalPolicy,
+  updateGiftApprovalPolicy,
   giftPointsValidators,
   giftCouponValidators,
   batchGiftPointsValidators,
@@ -17,6 +19,10 @@ import {
 const router = Router()
 
 router.use(authenticate)
+
+router.get('/approval-policy', getGiftApprovalPolicy)
+router.put('/approval-policy', updateGiftApprovalPolicy)
+
 router.use(requirePermission('user:gift'))
 
 router.post('/points', requirePermission('user:gift'), giftPointsValidators, giftPoints)

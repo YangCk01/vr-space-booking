@@ -2,11 +2,20 @@ import { Response } from 'express'
 import { body, validationResult } from 'express-validator'
 import { prisma } from '../utils/prisma'
 import { success, error } from '../utils/response'
-import { pushNotification } from './notificationController'
 import { AuthenticatedRequest } from '../types'
-import { addDays } from 'date-fns'
-import { checkGiftRisk, checkCouponGiftRisk, checkBatchLimit, recordGiftOperation } from '../services/riskControlService'
-import { logAudit } from '../middleware/auditLog'
+import { checkGiftRisk, checkCouponGiftRisk, checkBatchLimit } from '../services/riskControlService'
+import {
+  MEMBER_GIFT_APPROVAL_POLICY_KEY,
+  canManageMemberGiftApprovalPolicy,
+  normalizeMemberGiftApprovalPolicy,
+  shouldRequireMemberGiftApproval,
+} from '../domain/memberGiftApprovalPolicy'
+import {
+  MemberGiftApprovalPayload,
+  executeGiftCoupon,
+  executeGiftPoints,
+  formatGiftReasonLabel,
+} from '../services/memberGiftService'
 
 /* ─── Validators ─── */
 export const giftPointsValidators = [
@@ -38,15 +47,74 @@ export const batchGiftCouponValidators = [
   body('reason').notEmpty().withMessage('赠送原因不能为空'),
 ]
 
-/* ─── Helpers ─── */
-function formatReasonLabel(reason: string): string {
-  const map: Record<string, string> = {
-    COMPLAINT: '客诉',
-    EQUIPMENT_FAILURE: '设备故障',
-    ENTERTAIN_CLIENT: '招待客户',
-    OTHER: '备注',
+/* ─── Approval policy ─── */
+async function getStoredGiftApprovalPolicy() {
+  const setting = await prisma.systemSetting.findUnique({ where: { key: MEMBER_GIFT_APPROVAL_POLICY_KEY } })
+  return normalizeMemberGiftApprovalPolicy(setting?.value)
+}
+
+function buildRequester(req: AuthenticatedRequest) {
+  return {
+    id: req.user?.id || '',
+    name: req.user?.name || req.user?.phone || '未知用户',
+    role: req.user?.role || 'OPERATOR',
   }
-  return map[reason] || reason
+}
+
+async function createGiftApproval(req: AuthenticatedRequest, input: {
+  payload: MemberGiftApprovalPayload
+  targetType: string
+  targetId: string
+  targetDesc: string
+  amount?: number
+  reason: string
+  beforeValue?: Record<string, unknown>
+  afterValue?: Record<string, unknown>
+}) {
+  const requester = buildRequester(req)
+  return prisma.approvalRequest.create({
+    data: {
+      type: input.payload.mode === 'SINGLE_COUPON' || input.payload.mode === 'BATCH_COUPON' ? 'COUPON_GIFT' : 'POINTS_ADJUST',
+      targetType: input.targetType,
+      targetId: input.targetId,
+      targetDesc: input.targetDesc,
+      requesterId: requester.id,
+      requesterName: requester.name,
+      requesterRole: requester.role,
+      requestPayload: input.payload as any,
+      beforeValue: input.beforeValue as any,
+      afterValue: input.afterValue as any,
+      amount: input.amount,
+      reason: input.reason,
+    },
+  })
+}
+
+export async function getGiftApprovalPolicy(req: AuthenticatedRequest, res: Response) {
+  if (!canManageMemberGiftApprovalPolicy(req.user?.role)) return error(res, '权限不足', 403)
+
+  try {
+    const policy = await getStoredGiftApprovalPolicy()
+    return success(res, policy)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+export async function updateGiftApprovalPolicy(req: AuthenticatedRequest, res: Response) {
+  if (!canManageMemberGiftApprovalPolicy(req.user?.role)) return error(res, '权限不足', 403)
+
+  try {
+    const policy = normalizeMemberGiftApprovalPolicy(req.body)
+    await prisma.systemSetting.upsert({
+      where: { key: MEMBER_GIFT_APPROVAL_POLICY_KEY },
+      create: { key: MEMBER_GIFT_APPROVAL_POLICY_KEY, value: policy as any, category: 'member' },
+      update: { value: policy as any, category: 'member' },
+    })
+    return success(res, policy, '会员赠送审批策略已保存')
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
 }
 
 /* ─── 1. 赠送积分 ─── */
@@ -66,51 +134,24 @@ export async function giftPoints(req: AuthenticatedRequest, res: Response) {
 
     await checkGiftRisk(userId, operatorId, points)
 
-    const reasonLabel = formatReasonLabel(reason)
-    const fullRemark = remark
-      ? `手动赠送积分 - ${reasonLabel} - ${remark}`
-      : `手动赠送积分 - ${reasonLabel}`
+    const policy = await getStoredGiftApprovalPolicy()
+    const reasonLabel = formatGiftReasonLabel(reason)
+    if (shouldRequireMemberGiftApproval(policy, { kind: 'POINTS', points, userCount: 1 })) {
+      const approval = await createGiftApproval(req, {
+        payload: { mode: 'SINGLE_POINTS', userIds: [userId], points, reason, remark },
+        targetType: 'USER',
+        targetId: userId,
+        targetDesc: `${user.name || user.phone || userId} - 积分赠送`,
+        amount: points,
+        reason: `赠送积分 ${points}，原因：${reasonLabel}${remark ? '（' + remark + '）' : ''}`,
+        beforeValue: { points: user.points },
+        afterValue: { points: user.points + points },
+      })
+      return success(res, { approvalRequired: true, approval }, '赠送审批已提交')
+    }
 
-    await prisma.$transaction([
-      prisma.user.update({
-        where: { id: userId },
-        data: { points: { increment: points } },
-      }),
-      prisma.balanceTransaction.create({
-        data: {
-          userId,
-          type: 'POINTS_GIFT',
-          amount: 0,
-          pointsAmount: points,
-          principalAmount: 0,
-          bonusAmount: 0,
-          totalAmount: 0,
-          remark: fullRemark,
-        },
-      }),
-    ])
-
-    recordGiftOperation(operatorId)
-
-    await pushNotification(
-      userId,
-      'POINTS_GIFT',
-      '积分赠送',
-      `管理员赠送您 ${points} 积分，原因：${reasonLabel}${remark ? '（' + remark + '）' : ''}`
-    )
-
-    await logAudit(req, {
-      targetType: 'USER',
-      targetId: userId,
-      targetDesc: `${user.name || user.phone || userId} - 积分赠送`,
-      action: 'POST',
-      actionName: '赠送积分',
-      afterValue: { points, reason, remark: fullRemark },
-      amount: points,
-      reason: fullRemark,
-    })
-
-    return success(res, { userId, points, reason, remark }, '积分赠送成功')
+    const result = await executeGiftPoints({ userIds: [userId], points, reason, remark, operatorId, req })
+    return success(res, result.data, '积分赠送成功')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -135,43 +176,23 @@ export async function giftCoupon(req: AuthenticatedRequest, res: Response) {
     }
     await checkCouponGiftRisk(1)
 
-    const now = new Date()
-    const validTo = addDays(now, validityDays)
-    const reasonLabel = formatReasonLabel(reason)
+    const policy = await getStoredGiftApprovalPolicy()
+    const reasonLabel = formatGiftReasonLabel(reason)
+    if (shouldRequireMemberGiftApproval(policy, { kind: 'COUPON', couponType: type, userCount: 1 })) {
+      const approval = await createGiftApproval(req, {
+        payload: { mode: 'SINGLE_COUPON', userIds: [userId], name, type, discountRate, validityDays, reason, remark },
+        targetType: 'USER_COUPON',
+        targetId: userId,
+        targetDesc: `${user.name || user.phone || userId} - 优惠券赠送`,
+        reason: `赠送优惠券「${name}」，原因：${reasonLabel}${remark ? '（' + remark + '）' : ''}`,
+        beforeValue: { couponCount: 0 },
+        afterValue: { name, type, discountRate, validityDays, reason, remark },
+      })
+      return success(res, { approvalRequired: true, approval }, '赠送审批已提交')
+    }
 
-    const coupon = await prisma.userCoupon.create({
-      data: {
-        userId,
-        name,
-        type,
-        discountRate: type === 'DISCOUNT' ? discountRate : null,
-        status: 'UNUSED',
-        validFrom: now,
-        validTo,
-        source: 'MANUAL_GIFT',
-        giftReason: reason,
-        giftRemark: remark || null,
-      },
-    })
-
-    await pushNotification(
-      userId,
-      'COUPON_GIFT',
-      '优惠券赠送',
-      `管理员赠送您一张「${name}」优惠券，原因：${reasonLabel}${remark ? '（' + remark + '）' : ''}`
-    )
-
-    await logAudit(req, {
-      targetType: 'USER_COUPON',
-      targetId: coupon.id,
-      targetDesc: `${user.name || user.phone || userId} - 优惠券赠送`,
-      action: 'POST',
-      actionName: '赠送优惠券',
-      afterValue: { couponId: coupon.id, name, type, validityDays, reason, remark },
-      reason: `赠送优惠券「${name}」，原因：${reasonLabel}${remark ? '（' + remark + '）' : ''}`,
-    })
-
-    return success(res, coupon, '优惠券赠送成功')
+    const result = await executeGiftCoupon({ userIds: [userId], name, type, discountRate, validityDays, reason, remark, req })
+    return success(res, result.data, '优惠券赠送成功')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -270,55 +291,24 @@ export async function batchGiftPoints(req: AuthenticatedRequest, res: Response) 
     const totalPoints = points * userIds.length
     await checkGiftRisk('batch', operatorId, totalPoints)
 
-    const reasonLabel = formatReasonLabel(reason)
-    const fullRemark = remark
-      ? `批量赠送积分 - ${reasonLabel} - ${remark}`
-      : `批量赠送积分 - ${reasonLabel}`
-
-    await prisma.$transaction(
-      users.flatMap((user) => [
-        prisma.user.update({
-          where: { id: user.id },
-          data: { points: { increment: points } },
-        }),
-        prisma.balanceTransaction.create({
-          data: {
-            userId: user.id,
-            type: 'POINTS_GIFT',
-            amount: 0,
-            pointsAmount: points,
-            principalAmount: 0,
-            bonusAmount: 0,
-            totalAmount: 0,
-            remark: fullRemark,
-          },
-        }),
-      ])
-    )
-
-    recordGiftOperation(operatorId)
-
-    for (const user of users) {
-      await pushNotification(
-        user.id,
-        'POINTS_GIFT',
-        '积分赠送',
-        `管理员赠送您 ${points} 积分，原因：${reasonLabel}${remark ? '（' + remark + '）' : ''}`
-      )
+    const policy = await getStoredGiftApprovalPolicy()
+    const reasonLabel = formatGiftReasonLabel(reason)
+    if (shouldRequireMemberGiftApproval(policy, { kind: 'POINTS', points, userCount: users.length })) {
+      const approval = await createGiftApproval(req, {
+        payload: { mode: 'BATCH_POINTS', userIds, points, reason, remark },
+        targetType: 'USER',
+        targetId: 'batch',
+        targetDesc: `批量赠送积分 - ${users.length} 人`,
+        amount: totalPoints,
+        reason: `批量赠送积分 ${points}，${users.length} 人，原因：${reasonLabel}${remark ? '（' + remark + '）' : ''}`,
+        beforeValue: { users: users.map((user) => ({ id: user.id, points: user.points })) },
+        afterValue: { userIds, points, count: users.length },
+      })
+      return success(res, { approvalRequired: true, approval }, '批量赠送审批已提交')
     }
 
-    await logAudit(req, {
-      targetType: 'USER',
-      targetId: 'batch',
-      targetDesc: `批量赠送积分 - ${users.length} 人`,
-      action: 'POST',
-      actionName: '批量赠送积分',
-      afterValue: { userIds, points, reason, remark, count: users.length },
-      amount: totalPoints,
-      reason: fullRemark,
-    })
-
-    return success(res, { userIds, points, reason, remark, count: users.length }, '批量积分赠送成功')
+    const result = await executeGiftPoints({ userIds, points, reason, remark, operatorId, req })
+    return success(res, result.data, '批量积分赠送成功')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }
@@ -354,49 +344,23 @@ export async function batchGiftCoupon(req: AuthenticatedRequest, res: Response) 
     }
     await checkCouponGiftRisk(users.length)
 
-    const now = new Date()
-    const validTo = addDays(now, validityDays)
-    const reasonLabel = formatReasonLabel(reason)
-
-    await prisma.$transaction(
-      users.map((user) =>
-        prisma.userCoupon.create({
-          data: {
-            userId: user.id,
-            name,
-            type,
-            discountRate: type === 'DISCOUNT' ? discountRate : null,
-            status: 'UNUSED',
-            validFrom: now,
-            validTo,
-            source: 'MANUAL_GIFT',
-            giftReason: reason,
-            giftRemark: remark || null,
-          },
-        })
-      )
-    )
-
-    for (const user of users) {
-      await pushNotification(
-        user.id,
-        'COUPON_GIFT',
-        '优惠券赠送',
-        `管理员赠送您一张「${name}」优惠券，原因：${reasonLabel}${remark ? '（' + remark + '）' : ''}`
-      )
+    const policy = await getStoredGiftApprovalPolicy()
+    const reasonLabel = formatGiftReasonLabel(reason)
+    if (shouldRequireMemberGiftApproval(policy, { kind: 'COUPON', couponType: type, userCount: users.length })) {
+      const approval = await createGiftApproval(req, {
+        payload: { mode: 'BATCH_COUPON', userIds, name, type, discountRate, validityDays, reason, remark },
+        targetType: 'USER_COUPON',
+        targetId: 'batch',
+        targetDesc: `批量赠送优惠券 - ${users.length} 人`,
+        reason: `批量赠送优惠券「${name}」，${users.length} 人，原因：${reasonLabel}${remark ? '（' + remark + '）' : ''}`,
+        beforeValue: { userIds },
+        afterValue: { userIds, name, type, validityDays, reason, remark, count: users.length },
+      })
+      return success(res, { approvalRequired: true, approval }, '批量赠送审批已提交')
     }
 
-    await logAudit(req, {
-      targetType: 'USER_COUPON',
-      targetId: 'batch',
-      targetDesc: `批量赠送优惠券 - ${users.length} 人`,
-      action: 'POST',
-      actionName: '批量赠送优惠券',
-      afterValue: { userIds, name, type, validityDays, reason, remark, count: users.length },
-      reason: `批量赠送优惠券「${name}」，原因：${reasonLabel}${remark ? '（' + remark + '）' : ''}`,
-    })
-
-    return success(res, { userIds, name, type, count: users.length }, '批量优惠券赠送成功')
+    const result = await executeGiftCoupon({ userIds, name, type, discountRate, validityDays, reason, remark, req })
+    return success(res, result.data, '批量优惠券赠送成功')
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }

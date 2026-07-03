@@ -17,6 +17,15 @@ export interface GiftCouponPayload {
   remark?: string
 }
 
+export interface MemberGiftApprovalPolicy {
+  enabled: boolean
+  requirePointsGiftApproval: boolean
+  requireCouponGiftApproval: boolean
+  forceExperienceCouponApproval: boolean
+  pointsThreshold: number
+  batchSizeThreshold: number
+}
+
 export async function giftPoints(payload: GiftPointsPayload) {
   const res = await apiClient.post('/gift/points', payload)
   return res.data
@@ -43,4 +52,14 @@ export async function getCouponGiftRecords(params?: {
 }) {
   const res = await apiClient.get('/gift/coupon-records', { params })
   return res.data
+}
+
+export async function getMemberGiftApprovalPolicy() {
+  const res = await apiClient.get('/gift/approval-policy')
+  return res.data.data as MemberGiftApprovalPolicy
+}
+
+export async function updateMemberGiftApprovalPolicy(payload: MemberGiftApprovalPolicy) {
+  const res = await apiClient.put('/gift/approval-policy', payload)
+  return res.data.data as MemberGiftApprovalPolicy
 }
