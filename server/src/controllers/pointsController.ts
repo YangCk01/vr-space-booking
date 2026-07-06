@@ -1,15 +1,12 @@
 import { Request, Response } from 'express'
-import { format } from 'date-fns'
 import { AuthenticatedRequest } from '../types'
 import { prisma } from '../utils/prisma'
 import { success, error, paginated } from '../utils/response'
 import { pushNotification, pushAdminNotification } from './notificationController'
+import { newBusinessNo } from '../utils/id'
 
 function generateOrderNo(): string {
-  const dateStr = format(new Date(), 'yyyyMMdd')
-  const time = Date.now().toString(36).slice(-4).toUpperCase()
-  const random = Math.floor(Math.random() * 9000) + 1000
-  return `PM${dateStr}${time}${random}`
+  return newBusinessNo('PM', 6)
 }
 
 /**

@@ -4,11 +4,13 @@ import { prisma } from '../utils/prisma'
 import { UserRole } from '@prisma/client'
 import { distributeAutoGifts } from './campaignRewardService'
 import { handleEvent } from '../jobs/triggerJob'
-
-const JWT_SECRET = process.env.JWT_SECRET || 'vr-space-secret-key-change-in-production'
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'vr-space-refresh-secret-key-change-in-production'
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h'
-const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '7d'
+import {
+  getJwtExpiresIn,
+  getJwtRefreshExpiresIn,
+  getJwtRefreshSecret,
+  getJwtSecret,
+  normalizeRegisterRole,
+} from '../utils/securityConfig'
 
 export interface LoginInput {
   phone: string
@@ -19,7 +21,7 @@ export interface RegisterInput {
   phone: string
   password: string
   name: string
-  role?: UserRole
+  role?: UserRole | string
   birthday?: string
 }
 
@@ -59,13 +61,13 @@ async function generateTokens(userId: string, phone: string, role: UserRole, nam
   }
   const accessToken = jwt.sign(
     payload,
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] }
+    getJwtSecret(),
+    { expiresIn: getJwtExpiresIn() as jwt.SignOptions['expiresIn'] }
   )
   const refreshToken = jwt.sign(
     payload,
-    JWT_REFRESH_SECRET,
-    { expiresIn: JWT_REFRESH_EXPIRES_IN as jwt.SignOptions['expiresIn'] }
+    getJwtRefreshSecret(),
+    { expiresIn: getJwtRefreshExpiresIn() as jwt.SignOptions['expiresIn'] }
   )
   return { accessToken, refreshToken, permissions }
 }
@@ -139,7 +141,7 @@ export async function register(input: RegisterInput) {
       phone: input.phone,
       password: hashedPassword,
       name: input.name,
-      role: input.role || UserRole.CUSTOMER,
+      role: normalizeRegisterRole(input.role),
       birthday: input.birthday ? new Date(input.birthday) : null,
     },
   })
@@ -192,7 +194,7 @@ export async function register(input: RegisterInput) {
 
 export async function refreshToken(refreshToken: string) {
   try {
-    const decoded = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as {
+    const decoded = jwt.verify(refreshToken, getJwtRefreshSecret()) as {
       userId: string
       phone: string
       role: UserRole

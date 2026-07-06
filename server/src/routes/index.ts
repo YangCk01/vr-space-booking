@@ -31,6 +31,7 @@ import systemConfigRoutes from './systemConfig'
 import userBenefitRoutes from './userBenefits'
 import approvalRoutes from './approvals'
 import groupBuyRoutes from './groupBuy'
+import { shouldMountDebugRoutes } from '../utils/securityConfig'
 
 const router = Router()
 
@@ -55,7 +56,9 @@ router.use('/points', pointsRoutes)
 router.use('/gift', giftRoutes)
 router.use('/recon', reconRoutes)
 router.use('/device-logs', deviceLogRoutes)
-router.use('/debug', debugRoutes)
+if (shouldMountDebugRoutes()) {
+  router.use('/debug', debugRoutes)
+}
 router.use('/audit-logs', auditLogRoutes)
 router.use('/system', systemRoutes)
 router.use('/campaigns', campaignRoutes)

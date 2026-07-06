@@ -2,8 +2,7 @@ import { Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import { AuthenticatedRequest, TokenPayload } from '../types'
 import { error } from '../utils/response'
-
-const JWT_SECRET = process.env.JWT_SECRET || 'vr-space-secret-key-change-in-production'
+import { getJwtSecret } from '../utils/securityConfig'
 
 export function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization
@@ -15,7 +14,7 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
   const token = authHeader.substring(7)
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload
+    const decoded = jwt.verify(token, getJwtSecret()) as TokenPayload
     req.user = {
       id: decoded.userId,
       phone: decoded.phone,
@@ -38,7 +37,7 @@ export function optionalAuthenticate(req: AuthenticatedRequest, res: Response, n
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.substring(7)
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload
+      const decoded = jwt.verify(token, getJwtSecret()) as TokenPayload
       req.user = {
         id: decoded.userId,
         phone: decoded.phone,

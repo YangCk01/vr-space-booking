@@ -31,6 +31,7 @@ import {
 import { applyVenueScope } from '../domain/venueScope'
 import { parseNoShowDispositionRequest, parseRefundRequest } from '../domain/orderContracts'
 import { assertPaymentMethodAllowedForRole } from '../domain/paymentPolicy'
+import { generateVerifyCode } from '../utils/id'
 
 export const createValidators = [
   body('venueId').if(body('groupBuyPackageId').not().exists()).notEmpty().withMessage('场地不能为空'),
@@ -63,10 +64,6 @@ function dayEnd(dateStr: string): Date { return new Date(dateStr + 'T23:59:59.99
 function timeToMinutes(t: string): number {
   const [h, m] = t.split(':').map(Number)
   return h * 60 + m
-}
-
-function generateVerifyCode(): string {
-  return `VR${format(new Date(), 'yyyyMMdd')}${Math.floor(Math.random() * 900000) + 100000}`
 }
 
 function readOrderMetadata(metadata: Prisma.JsonValue | null | undefined): Record<string, any> {
@@ -477,7 +474,7 @@ export async function create(req: AuthenticatedRequest, res: Response) {
 
         // 子订单：每份一个独立订单号/券码，用于展示和核销
         for (let i = 0; i < quantityNum; i++) {
-          const verifyCode = `VR${format(new Date(), 'yyyyMMdd')}${Math.floor(Math.random() * 900000) + 100000}`
+          const verifyCode = generateVerifyCode()
           await tx.order.create({
             data: {
               orderNo: await generateOrderNo('group', tx),

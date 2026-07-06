@@ -8,6 +8,7 @@ import {
   calculateGroupBuyRedemptionFinancialAmount,
   isRedeemedGroupBuyBookingOrder,
 } from '../domain/groupBuyCancellation'
+import { newBusinessNo, newUuid } from '../utils/id'
 
 const DAILY_STATUS = {
   DRAFT: 'DRAFT',
@@ -27,17 +28,11 @@ function currentUser(req: AuthenticatedRequest) {
 }
 
 function adjustmentNo(prefix = 'ADJ') {
-  const d = new Date()
-  const stamp = format(d, 'yyyyMMddHHmmss')
-  return `${prefix}${stamp}${Math.random().toString(36).slice(2, 6).toUpperCase()}`
+  return newBusinessNo(prefix, 6)
 }
 
 function cryptoRandomId() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = Math.floor(Math.random() * 16)
-    const v = c === 'x' ? r : (r & 0x3) | 0x8
-    return v.toString(16)
-  })
+  return newUuid()
 }
 
 function noShowRetainedIncome(order: { amount: number; refundAmount?: number | null; penaltyAmount?: number | null }): number {

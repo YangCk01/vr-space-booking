@@ -1,0 +1,3 @@
+CREATE SEQUENCE IF NOT EXISTS order_no_normal_seq START 1;
+CREATE SEQUENCE IF NOT EXISTS order_no_group_seq START 1;
+CREATE SEQUENCE IF NOT EXISTS order_no_reschedule_seq START 1;

@@ -2,6 +2,33 @@ import { format } from 'date-fns'
 import { Prisma } from '@prisma/client'
 import { prisma } from './prisma'
 
+const prefixMap: Record<'normal' | 'group' | 'reschedule', string> = {
+  normal: 'VRN',
+  group: 'VRG',
+  reschedule: 'VRS',
+}
+
+const sequenceMap: Record<'normal' | 'group' | 'reschedule', string> = {
+  normal: 'order_no_normal_seq',
+  group: 'order_no_group_seq',
+  reschedule: 'order_no_reschedule_seq',
+}
+
+export function getOrderNoSequenceName(type: 'normal' | 'group' | 'reschedule'): string {
+  return sequenceMap[type] || sequenceMap.normal
+}
+
+export function formatOrderNoFromSequence(
+  type: 'normal' | 'group' | 'reschedule',
+  sequence: number,
+  date = new Date()
+): string {
+  const prefix = prefixMap[type] || prefixMap.normal
+  const dateStr = format(date, 'yyyyMMdd')
+  const seq = ((Math.max(1, sequence) - 1) % 99999) + 1
+  return `${prefix}${dateStr}${seq.toString().padStart(5, '0')}`
+}
+
 /**
  * 生成订单号
  * 规则：前缀(3位) + 日期(8位) + 当日自增序号(5位)
@@ -12,44 +39,16 @@ import { prisma } from './prisma'
  */
 export async function generateOrderNo(
   type: 'normal' | 'group' | 'reschedule' = 'normal',
-  tx?: Prisma.TransactionClient,
-  maxRetries = 3
+  tx?: Prisma.TransactionClient
 ): Promise<string> {
-  const prefixMap: Record<string, string> = {
-    normal: 'VRN',
-    group: 'VRG',
-    reschedule: 'VRS',
-  }
-  const prefix = prefixMap[type] || 'VRN'
-  const dateStr = format(new Date(), 'yyyyMMdd')
   const client = tx || prisma
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const lastOrder = await client.order.findFirst({
-      where: { orderNo: { startsWith: `${prefix}${dateStr}` } },
-      orderBy: { orderNo: 'desc' },
-    })
-
-    let seq = 1
-    if (lastOrder?.orderNo) {
-      const match = lastOrder.orderNo.match(new RegExp(`^${prefix}\\d{8}(\\d{5})$`))
-      if (match) {
-        seq = parseInt(match[1], 10) + 1
-      }
-    }
-
-    const seqStr = seq.toString().padStart(5, '0')
-    const orderNo = `${prefix}${dateStr}${seqStr}`
-
-    // 非事务场景下，先校验唯一性再返回，避免并发生成重复单号
-    if (!tx) {
-      const exists = await client.order.findUnique({ where: { orderNo } })
-      if (!exists) return orderNo
-      continue
-    }
-
-    return orderNo
+  const sequenceName = getOrderNoSequenceName(type)
+  const rows = await client.$queryRawUnsafe<{ nextval: bigint | number }[]>(
+    `SELECT nextval('${sequenceName}'::regclass) AS nextval`
+  )
+  const value = rows[0]?.nextval
+  if (value == null) {
+    throw new Error('生成订单号失败，请稍后重试')
   }
-
-  throw new Error('生成订单号失败，请稍后重试')
+  return formatOrderNoFromSequence(type, Number(value))
 }

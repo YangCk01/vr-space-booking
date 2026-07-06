@@ -8,18 +8,12 @@ import { requestIdMiddleware } from './middleware/requestId'
 import { requestLogger } from './middleware/requestLogger'
 import { loadConfig } from './services/configService'
 import { seedPermissions } from './utils/seedPermissions'
+import { getCorsOrigins } from './utils/securityConfig'
 
 const app = express()
 
-// 中间件
-const corsOrigin = process.env.CORS_ORIGIN
-  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
-  : process.env.NODE_ENV === 'production'
-    ? []
-    : true
-
 app.use(cors({
-  origin: Array.isArray(corsOrigin) && corsOrigin.length === 0 ? false : corsOrigin,
+  origin: getCorsOrigins(),
   credentials: true,
 }))
 

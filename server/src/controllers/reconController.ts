@@ -7,6 +7,7 @@ import { runManualRecon } from '../jobs/reconciliationJob'
 import { refundByChannel } from '../services/channelRefundService'
 import { testWebhook as testWebhookService } from '../services/notificationService'
 import { logAudit } from '../middleware/auditLog'
+import { newBusinessNo, newUuid } from '../utils/id'
 
 /**
  * 获取对账批次列表
@@ -205,7 +206,7 @@ export async function handleException(req: AuthenticatedRequest, res: Response) 
         "amount", "pointsAmount", "beforeValue", "afterValue", "reason",
         "operatorId", "operatorName", "operatorRole", "executedAt", "createdAt", "updatedAt"
       ) VALUES (
-        ${randomId()}, ${`RADJ${format(new Date(), 'yyyyMMddHHmmss')}${Math.random().toString(36).slice(2, 6).toUpperCase()}`},
+        ${randomId()}, ${newBusinessNo('RADJ', 6)},
         'RECON_EXCEPTION', ${`${exception.exceptionType}_${action}`}, 'EXECUTED', 'RECON_EXCEPTION', ${id}, ${`对账异常 ${exception.exceptionType}`},
         ${exception.exceptionType === 'HARDWARE_MISMATCH' ? 0 : Math.abs(exception.diffAmount || 0)},
         ${exception.exceptionType === 'HARDWARE_MISMATCH' ? Math.abs(exception.diffAmount || 0) : 0},
@@ -404,11 +405,7 @@ function mergeExceptionHandleRemark(existing: string | null, remark: string) {
 }
 
 function randomId() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = Math.floor(Math.random() * 16)
-    const v = c === 'x' ? r : (r & 0x3) | 0x8
-    return v.toString(16)
-  })
+  return newUuid()
 }
 
 /**

@@ -2,16 +2,13 @@ import { Request, Response } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../utils/prisma'
 import { success, error } from '../utils/response'
-import { format } from 'date-fns'
 import { getRechargeConfig, compareLevel, normalizeLevelKey } from '../utils/memberConfig'
 import { requireRechargeVenueId } from '../domain/rechargeVenue'
 import { AuthenticatedRequest } from '../types'
+import { newBusinessNo } from '../utils/id'
 
 function generateRechargeNo(): string {
-  const dateStr = format(new Date(), 'yyyyMMdd')
-  const time = Date.now().toString(36).slice(-4).toUpperCase()
-  const random = Math.floor(Math.random() * 9000) + 1000
-  return `CZ${dateStr}${time}${random}`
+  return newBusinessNo('CZ', 6)
 }
 
 /** 获取充值配置 */

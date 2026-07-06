@@ -1,8 +1,13 @@
 import multer from 'multer'
 import path from 'path'
 import fs from 'fs'
+import { randomUUID } from 'crypto'
 
 const UPLOAD_ROOT = path.join(process.cwd(), 'uploads')
+
+type UploadValidationOptions = { allowVideo?: boolean; allowAudio?: boolean }
+
+type UploadFileLike = Pick<Express.Multer.File, 'originalname' | 'mimetype'>
 
 // 确保目录存在
 function ensureDir(dir: string) {
@@ -15,7 +20,7 @@ function ensureDir(dir: string) {
 function generateFilename(originalname: string) {
   const ext = path.extname(originalname)
   const timestamp = Date.now()
-  const random = Math.random().toString(36).substring(2, 8)
+  const random = randomUUID().replace(/-/g, '').slice(0, 8)
   return `${timestamp}-${random}${ext}`
 }
 
@@ -34,27 +39,40 @@ function createStorage(subdir: string) {
   })
 }
 
+export function isAllowedUploadFile(file: UploadFileLike, options: UploadValidationOptions = {}) {
+  const ext = path.extname(file.originalname).toLowerCase().replace('.', '')
+  const imageExts = ['jpeg', 'jpg', 'png', 'gif', 'webp']
+  const imageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+  const videoExts = ['mp4', 'webm', 'mov', 'm4v']
+  const audioExts = ['mp3']
+  const audioMimes = ['audio/mpeg', 'audio/mp3', 'audio/x-mpeg', 'audio/x-mp3']
+
+  const isImage = imageExts.includes(ext) && imageMimes.includes(file.mimetype)
+  const isVideo = Boolean(options.allowVideo && videoExts.includes(ext))
+  const isAudio = Boolean(options.allowAudio && audioExts.includes(ext) && audioMimes.includes(file.mimetype))
+
+  if (isImage || isVideo || isAudio) {
+    return { allowed: true }
+  }
+
+  const allowedText = options.allowVideo || options.allowAudio
+    ? '图片、视频或 MP3 音频文件 (jpg, png, gif, webp, mp4, webm, mov, m4v, mp3)'
+    : '图片文件 (jpg, png, gif, webp)'
+  return {
+    allowed: false,
+    message: `只允许上传${allowedText}，当前文件: ${file.originalname}, 类型: ${file.mimetype || '未知'}`,
+  }
+}
+
 // 文件过滤器
-function createFileFilter(options: { allowVideo?: boolean; allowAudio?: boolean } = {}) {
+function createFileFilter(options: UploadValidationOptions = {}) {
   return (_req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
-    const ext = path.extname(file.originalname).toLowerCase().replace('.', '')
-    const imageExts = ['jpeg', 'jpg', 'png', 'gif', 'webp', 'svg']
-    const imageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml']
-    const videoExts = ['mp4', 'webm', 'mov', 'm4v']
-    const audioExts = ['mp3']
-    const audioMimes = ['audio/mpeg', 'audio/mp3', 'audio/x-mpeg', 'audio/x-mp3']
-
-    const isImage = imageExts.includes(ext) && imageMimes.includes(file.mimetype)
-    const isVideo = options.allowVideo && videoExts.includes(ext)
-    const isAudio = options.allowAudio && audioExts.includes(ext) && audioMimes.includes(file.mimetype)
-
-    if (isImage || isVideo || isAudio) {
+    const result = isAllowedUploadFile(file, options)
+    if (result.allowed) {
       cb(null, true)
-    } else if (options.allowVideo || options.allowAudio) {
-      cb(new Error(`只允许上传图片、视频或 MP3 音频文件 (jpg, png, gif, webp, svg, mp4, webm, mov, m4v, mp3)，当前文件: ${file.originalname}, 类型: ${file.mimetype || '未知'}`))
-    } else {
-      cb(new Error(`只允许上传图片文件 (jpg, png, gif, webp, svg)，当前文件: ${file.originalname}, 类型: ${file.mimetype || '未知'}`))
+      return
     }
+    cb(new Error(result.message))
   }
 }
 

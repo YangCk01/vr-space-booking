@@ -20,14 +20,15 @@ export function errorHandler(
   }))
 
   const mapped = errorToResponse(err)
+  const production = process.env.NODE_ENV === 'production'
 
   // Prisma 错误处理
   if (err.name === 'PrismaClientKnownRequestError') {
-    return responseError(res, '数据库操作失败', 400, err.message, ErrorCodes.DATABASE_ERROR)
+    return responseError(res, '数据库操作失败', 400, production ? undefined : err.message, ErrorCodes.DATABASE_ERROR)
   }
 
   if (err.name === 'PrismaClientValidationError') {
-    return responseError(res, '数据验证失败', 400, err.message, ErrorCodes.DATABASE_ERROR)
+    return responseError(res, '数据验证失败', 400, production ? undefined : err.message, ErrorCodes.DATABASE_ERROR)
   }
 
   // JWT 错误

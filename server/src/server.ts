@@ -15,14 +15,11 @@ import app from './app'
 import { setSocketIO } from './utils/socket'
 import { prisma } from './utils/prisma'
 import { startBackgroundJobs } from './jobs/jobBootstrap'
+import { getCorsOrigins } from './utils/securityConfig'
 
 const PORT = parseInt(process.env.PORT || '4000', 10)
 const jobsEnabled = process.env.ENABLE_JOBS !== 'false'
-const socketOrigins = process.env.CORS_ORIGIN
-  ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
-  : process.env.NODE_ENV === 'production'
-    ? ['https://yourdomain.com']
-    : true
+const socketOrigins = getCorsOrigins()
 
 /* ─── Global error handling ─── */
 process.on('uncaughtException', (err) => {

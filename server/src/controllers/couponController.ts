@@ -4,6 +4,7 @@ import { success, error } from '../utils/response'
 import { AuthenticatedRequest } from '../types'
 import { normalizeThirdPartyCouponCode } from '../utils/thirdPartyCoupon'
 import { getPlatformConfig, isPlatformEnabled } from '../utils/platformConfig'
+import { randomChoice } from '../utils/id'
 
 const sourceLabels: Record<string, string> = {
   MEITUAN: '美团',
@@ -54,8 +55,8 @@ export async function verify(req: AuthenticatedRequest, res: Response) {
 
     // 假实现：随机生成券面额和门槛
     // 真实接入时，此处调用平台 API 查询券信息
-    const discountAmount = [1000, 2000, 3000, 5000][Math.floor(Math.random() * 4)] // 10~50元
-    const minOrderAmount = [5000, 10000, 15000, 20000][Math.floor(Math.random() * 4)] // 50~200元
+    const discountAmount = randomChoice([1000, 2000, 3000, 5000]) // 10~50元
+    const minOrderAmount = randomChoice([5000, 10000, 15000, 20000]) // 50~200元
     const names: Record<string, string> = {
       MEITUAN: '美团优惠券',
       DOUYIN: '抖音团购券',

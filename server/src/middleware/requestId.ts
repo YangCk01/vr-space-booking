@@ -1,9 +1,10 @@
 import { Request, Response, NextFunction } from 'express'
+import { randomUUID } from 'crypto'
 
 export const REQUEST_ID_HEADER = 'x-request-id'
 
 function generateRequestId(): string {
-  return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  return `req_${Date.now().toString(36)}_${randomUUID().replace(/-/g, '').slice(0, 8)}`
 }
 
 export function requestIdMiddleware(req: Request, res: Response, next: NextFunction) {

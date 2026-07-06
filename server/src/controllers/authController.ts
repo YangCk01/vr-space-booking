@@ -84,7 +84,6 @@ export async function register(req: AuthenticatedRequest, res: Response) {
       phone: req.body.phone,
       password: req.body.password,
       name: req.body.name,
-      role: req.body.role,
       birthday: req.body.birthday,
     })
     return success(res, result, '注册成功')
