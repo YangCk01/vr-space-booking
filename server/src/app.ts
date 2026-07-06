@@ -9,6 +9,8 @@ import { requestLogger } from './middleware/requestLogger'
 import { loadConfig } from './services/configService'
 import { seedPermissions } from './utils/seedPermissions'
 import { getCorsOrigins } from './utils/securityConfig'
+import { applySecurityHeaders, createFixedWindowRateLimiter } from './middleware/security'
+import { normalizeQueryLimits } from './middleware/queryGuards'
 
 const app = express()
 
@@ -16,6 +18,10 @@ app.use(cors({
   origin: getCorsOrigins(),
   credentials: true,
 }))
+app.use(applySecurityHeaders)
+app.use(normalizeQueryLimits)
+app.use('/api/auth', createFixedWindowRateLimiter({ windowMs: 15 * 60 * 1000, max: 30, keyPrefix: 'auth' }))
+app.use('/api/upload', createFixedWindowRateLimiter({ windowMs: 60 * 1000, max: 60, keyPrefix: 'upload' }))
 
 // 全局请求 ID（最早注入，便于日志与错误追踪串联）
 app.use(requestIdMiddleware)

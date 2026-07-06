@@ -32,6 +32,7 @@ import { applyVenueScope } from '../domain/venueScope'
 import { parseNoShowDispositionRequest, parseRefundRequest } from '../domain/orderContracts'
 import { assertPaymentMethodAllowedForRole } from '../domain/paymentPolicy'
 import { generateVerifyCode } from '../utils/id'
+import { clampPageParams, resolveDateRange } from '../utils/queryLimits'
 
 export const createValidators = [
   body('venueId').if(body('groupBuyPackageId').not().exists()).notEmpty().withMessage('场地不能为空'),
@@ -142,8 +143,7 @@ export async function list(req: AuthenticatedRequest, res: Response) {
     await processBookingLifecycle()
 
     const { status, search, page = '1', pageSize = '10', startDate, endDate, source, orderType, orderKind, feeType, refundStatus, parentOrderNo } = req.query
-    const pageNum = parseInt(page as string, 10)
-    const sizeNum = parseInt(pageSize as string, 10)
+    const { page: pageNum, pageSize: sizeNum } = clampPageParams({ page, pageSize, defaultPageSize: 10, maxPageSize: 100 })
 
     const where: any = {}
     const andConditions: any[] = []
@@ -237,13 +237,10 @@ export async function list(req: AuthenticatedRequest, res: Response) {
     }
 
     if (startDate || endDate) {
+      const range = resolveDateRange({ startDate, endDate, maxDays: 93 })
       where.createdAt = {}
-      if (startDate) {
-        where.createdAt.gte = dayStart(startDate as string)
-      }
-      if (endDate) {
-        where.createdAt.lte = dayEnd(endDate as string)
-      }
+      where.createdAt.gte = dayStart(range.startDate)
+      where.createdAt.lte = dayEnd(range.endDate)
     }
 
     const scoped = applyVenueScope(where, req.user)
@@ -331,7 +328,11 @@ export async function list(req: AuthenticatedRequest, res: Response) {
       normalStatusCounts,
     })
   } catch (err) {
-    return error(res, (err as Error).message, 500)
+    const message = (err as Error).message
+    if (message.includes('查询日期范围') || message.includes('日期格式') || message.includes('开始日期')) {
+      return error(res, message, 400)
+    }
+    return error(res, message, 500)
   }
 }
 

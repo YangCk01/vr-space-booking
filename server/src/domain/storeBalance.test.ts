@@ -216,6 +216,28 @@ describe('debitStoreBalance', () => {
       { venueId: UNASSIGNED_STORE_BALANCE_VENUE_ID, principal: 50, bonus: 0 },
     ])
   })
+
+  it('rejects when a concurrent debit has already consumed the source balance', async () => {
+    const fakeClient = {
+      userStoreBalance: {
+        findMany: async () => [
+          { venueId: 'venue-a', principalBalance: 40, bonusBalance: 10 },
+        ],
+        updateMany: async () => ({ count: 0 }),
+        upsert: async () => null,
+      },
+    } as any
+
+    await assert.rejects(
+      () => debitStoreBalance(fakeClient, {
+        userId: 'user-1',
+        venueId: 'venue-a',
+        principal: 40,
+        bonus: 10,
+      }),
+      /门店余额不足或已被并发扣减/,
+    )
+  })
 })
 
 describe('validateBalanceConsistency', () => {

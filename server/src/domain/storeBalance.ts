@@ -51,6 +51,7 @@ export interface StoreBalanceClient {
   userStoreBalance: {
     findMany?: (args: any) => Promise<StoreBalanceRow[]>
     update?: (args: any) => Promise<any>
+    updateMany?: (args: any) => Promise<{ count: number }>
     upsert: (args: any) => Promise<any>
   }
 }
@@ -139,11 +140,27 @@ export async function debitStoreBalance(
     storeBalances,
   })
 
-  if (tx.userStoreBalance.update) {
-    for (const deduction of snapshot.deductions) {
-      if (!isPhysicalVenueId(deduction.venueId)) continue
-      if (deduction.principal === 0 && deduction.bonus === 0) continue
+  for (const deduction of snapshot.deductions) {
+    if (!isPhysicalVenueId(deduction.venueId)) continue
+    if (deduction.principal === 0 && deduction.bonus === 0) continue
 
+    if (tx.userStoreBalance.updateMany) {
+      const result = await tx.userStoreBalance.updateMany({
+        where: {
+          userId,
+          venueId: deduction.venueId,
+          principalBalance: { gte: deduction.principal },
+          bonusBalance: { gte: deduction.bonus },
+        },
+        data: {
+          principalBalance: { decrement: deduction.principal },
+          bonusBalance: { decrement: deduction.bonus },
+        },
+      })
+      if (result.count !== 1) {
+        throw new Error('门店余额不足或已被并发扣减，请重试')
+      }
+    } else if (tx.userStoreBalance.update) {
       await tx.userStoreBalance.update({
         where: { userId_venueId: { userId, venueId: deduction.venueId } },
         data: {

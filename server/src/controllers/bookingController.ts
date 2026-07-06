@@ -12,6 +12,8 @@ import { calculateScheduledBookingStatuses } from '../domain/orderLifecycle'
 import { calculateBalanceDebit, calculateRefundSplitFromDeduction } from '../domain/walletLedger'
 import { AuthenticatedRequest } from '../types'
 import { applyVenueScope } from '../domain/venueScope'
+import { assertBookingCapacity, buildBookingSlotLockKey } from '../domain/bookingCapacity'
+import { clampPageParams, resolveDateRange } from '../utils/queryLimits'
 
 export const createValidators = [
   body('venueId').notEmpty().withMessage('场地不能为空'),
@@ -26,8 +28,7 @@ export const createValidators = [
 export async function list(req: AuthenticatedRequest, res: Response) {
   try {
     const { venueId, date, startDate, endDate, type, page = '1', pageSize = '50' } = req.query
-    const pageNum = parseInt(page as string, 10)
-    const sizeNum = parseInt(pageSize as string, 10)
+    const { page: pageNum, pageSize: sizeNum } = clampPageParams({ page, pageSize, defaultPageSize: 50, maxPageSize: 100 })
 
     const where: any = {}
 
@@ -45,9 +46,8 @@ export async function list(req: AuthenticatedRequest, res: Response) {
         gte: new Date(`${d}T00:00:00.000Z`),
         lte: new Date(`${d}T23:59:59.999Z`),
       }
-    } else if (startDate && endDate) {
-      const sd = startDate as string
-      const ed = endDate as string
+    } else if (startDate || endDate) {
+      const { startDate: sd, endDate: ed } = resolveDateRange({ startDate, endDate, maxDays: 93 })
       where.date = {
         gte: new Date(`${sd}T00:00:00.000Z`),
         lte: new Date(`${ed}T23:59:59.999Z`),
@@ -77,7 +77,11 @@ export async function list(req: AuthenticatedRequest, res: Response) {
 
     return paginated(res, bookings, pageNum, sizeNum, total)
   } catch (err) {
-    return error(res, (err as Error).message, 500)
+    const message = (err as Error).message
+    if (message.includes('查询日期范围') || message.includes('日期格式') || message.includes('开始日期')) {
+      return error(res, message, 400)
+    }
+    return error(res, message, 500)
   }
 }
 
@@ -277,52 +281,50 @@ export async function create(req: Request, res: Response) {
       }
     }
 
-    // 检查冲突（拼场逻辑）
-    const overlapping = await prisma.booking.findMany({
-      where: {
-        venueId,
-        date: queryDate,
-        status: { not: 'CANCELLED' },
-      },
-    })
-
-    const s1 = timeToMinutes(startTime)
-    const e1 = timeToMinutes(endTime)
-    const conflicts = overlapping.filter((b) => {
-      const s2 = timeToMinutes(b.startTime)
-      const e2 = timeToMinutes(b.endTime)
-      return s1 < e2 && e1 > s2
-    })
-
     const capacity = venue.capacity || venue.deviceCount || 1
     const pc = parseInt(personCount) || 1
 
-    // 按场地人数容量判断：统计所有冲突预约的总人数
-    const currentCount = conflicts.reduce((sum, b) => sum + (b.personCount || 1), 0)
-    if (currentCount + pc > capacity) {
-      return error(res, '该时段已约满', 409)
-    }
-
     const bookingTitle = title || `${venue.name} ${type === 'TEAM' ? '团队预约' : type === 'INDIVIDUAL' ? '散客预约' : type === 'CORPORATE' ? '企业活动' : '维护'} ${startTime}-${endTime}`
 
-    const booking = await prisma.booking.create({
-      data: {
-        venueId,
-        type,
-        gameId: gameId || null,
-        title: bookingTitle,
-        date: new Date(`${date}T00:00:00.000Z`),
+    const booking = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(${buildBookingSlotLockKey(venueId, date, startTime, endTime)})`
+
+      const overlapping = await tx.booking.findMany({
+        where: {
+          venueId,
+          date: queryDate,
+          status: { not: 'CANCELLED' },
+        },
+        select: { startTime: true, endTime: true, personCount: true },
+      })
+
+      assertBookingCapacity({
+        existingBookings: overlapping,
         startTime,
         endTime,
-        personName,
-        personPhone,
-        personCount: parseInt(personCount) || 1,
-        note: note || null,
-        userId: (req as any).user?.id || null,
-      },
-      include: {
-        venue: { select: { id: true, name: true, theme: true } },
-      },
+        personCount: pc,
+        capacity,
+      })
+
+      return tx.booking.create({
+        data: {
+          venueId,
+          type,
+          gameId: gameId || null,
+          title: bookingTitle,
+          date: new Date(`${date}T00:00:00.000Z`),
+          startTime,
+          endTime,
+          personName,
+          personPhone,
+          personCount: pc,
+          note: note || null,
+          userId: (req as any).user?.id || null,
+        },
+        include: {
+          venue: { select: { id: true, name: true, theme: true } },
+        },
+      })
     })
 
     // Send notification
@@ -346,6 +348,9 @@ export async function create(req: Request, res: Response) {
 
     return success(res, booking, '预约创建成功', 201)
   } catch (err) {
+    if ((err as Error).message === '该时段已约满') {
+      return error(res, '该时段已约满', 409)
+    }
     return error(res, (err as Error).message, 500)
   }
 }
