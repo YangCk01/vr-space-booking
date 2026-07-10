@@ -73,6 +73,7 @@ import ReconExceptionsPanel from '@/components/ReconExceptionsPanel'
 import DeviceLogPanel from '@/components/DeviceLogPanel'
 import ReconcileAlertConfigPanel from '@/components/ReconcileAlertConfigPanel'
 import ReconcileDetailSheet from '@/components/finance/ReconcileDetailSheet'
+import { DateFilterPicker } from '@/components/ui/date-filter-picker'
 import {
   describeFixEffect,
   formatReconValue,
@@ -689,30 +690,16 @@ export default function Finance() {
             >
               {/* Filters */}
               <div className="flex flex-wrap items-center gap-3 bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-vrtext-muted" />
-                  <input
-                    type="date"
-                    value={flowStart}
-                    onChange={(e) => { setFlowStart(e.target.value); setFlowPage(1) }}
-                    className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
-                  />
-                  <span className="text-vr-caption text-vrtext-tertiary">至</span>
-                  <input
-                    type="date"
-                    value={flowEnd}
-                    onChange={(e) => { setFlowEnd(e.target.value); setFlowPage(1) }}
-                    className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
-                  />
-                  {(flowStart || flowEnd) && (
-                    <button
-                      onClick={() => { setFlowStart(''); setFlowEnd(''); setFlowPage(1) }}
-                      className="text-vr-caption text-vrtext-muted hover:text-vrtext-secondary transition-colors"
-                    >
-                      清除
-                    </button>
-                  )}
-                </div>
+                <DateFilterPicker
+                  mode="range"
+                  startDate={flowStart}
+                  endDate={flowEnd}
+                  onChange={({ startDate, endDate }) => {
+                    setFlowStart(startDate)
+                    setFlowEnd(endDate)
+                    setFlowPage(1)
+                  }}
+                />
 
                 {/* Venue filter */}
                 <div className="h-5 w-[1px] bg-vrborder-subtle" />
@@ -928,30 +915,16 @@ export default function Finance() {
             >
               {/* Filters */}
               <div className="flex flex-wrap items-center gap-3 bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-vrtext-muted" />
-                  <input
-                    type="date"
-                    value={refundStart}
-                    onChange={(e) => { setRefundStart(e.target.value); setRefundPage(1) }}
-                    className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
-                  />
-                  <span className="text-vr-caption text-vrtext-tertiary">至</span>
-                  <input
-                    type="date"
-                    value={refundEnd}
-                    onChange={(e) => { setRefundEnd(e.target.value); setRefundPage(1) }}
-                    className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
-                  />
-                  {(refundStart || refundEnd) && (
-                    <button
-                      onClick={() => { setRefundStart(''); setRefundEnd(''); setRefundPage(1) }}
-                      className="text-vr-caption text-vrtext-muted hover:text-vrtext-secondary transition-colors"
-                    >
-                      清除
-                    </button>
-                  )}
-                </div>
+                <DateFilterPicker
+                  mode="range"
+                  startDate={refundStart}
+                  endDate={refundEnd}
+                  onChange={({ startDate, endDate }) => {
+                    setRefundStart(startDate)
+                    setRefundEnd(endDate)
+                    setRefundPage(1)
+                  }}
+                />
 
                 <div className="h-5 w-[1px] bg-vrborder-subtle" />
                 <select
@@ -1111,15 +1084,12 @@ export default function Finance() {
                 )}
 
                 {(reconcileMode === 'daily' || canViewReports) && (
-                  <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-vrtext-muted" />
-                    <input
-                      type="date"
-                      value={dailyDate}
-                      onChange={(e) => setDailyDate(e.target.value)}
-                      className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
-                    />
-                  </div>
+                  <DateFilterPicker
+                    mode="single"
+                    startDate={dailyDate}
+                    endDate={dailyDate}
+                    onChange={({ startDate }) => setDailyDate(startDate)}
+                  />
                 )}
 
                 {canReconcile && (

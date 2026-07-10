@@ -28,6 +28,7 @@ import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { DateFilterPicker } from '@/components/ui/date-filter-picker'
 import {
   Dialog,
   DialogContent,
@@ -1052,15 +1053,16 @@ export default function FinanceComplianceConsole() {
           </div>
 
           <div className="flex items-center gap-3 w-full md:w-auto flex-wrap">
-            <div className="relative">
-              <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground size-4" />
-              <Input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => { setSelectedDate(e.target.value); setPage(1); setSelectedIds([]) }}
-                className="pl-8 w-[150px]"
-              />
-            </div>
+            <DateFilterPicker
+              mode="single"
+              startDate={selectedDate}
+              endDate={selectedDate}
+              onChange={({ startDate }) => {
+                setSelectedDate(startDate)
+                setPage(1)
+                setSelectedIds([])
+              }}
+            />
             <Select value={selectedStore} onValueChange={(v) => { setSelectedStore(v); setPage(1); setSelectedIds([]) }}>
               <SelectTrigger className="w-[180px]">
                 <MapPin className="size-4 text-muted-foreground" />

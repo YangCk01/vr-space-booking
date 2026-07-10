@@ -10,6 +10,7 @@ import {
 import { format, subDays } from 'date-fns'
 import { toast } from 'sonner'
 import ReconConfigPanel from '@/components/ReconConfigPanel'
+import { DateFilterPicker } from '@/components/ui/date-filter-picker'
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip,
   PieChart, Pie, Cell, CartesianGrid,
@@ -383,18 +384,14 @@ export default function ReconExceptionsPanel({ canAdjust = false }: { canAdjust?
         <div className="flex items-center gap-2">
           <Filter className="w-4 h-4 text-vrtext-muted" />
           <span className="text-vr-caption text-vrtext-muted">范围</span>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="h-8 px-2 rounded-lg bg-vrbg-surface border border-vrborder-subtle text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
-          />
-          <span className="text-vrtext-muted">~</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="h-8 px-2 rounded-lg bg-vrbg-surface border border-vrborder-subtle text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+          <DateFilterPicker
+            mode="range"
+            startDate={dateFrom}
+            endDate={dateTo}
+            onChange={({ startDate, endDate }) => {
+              setDateFrom(startDate)
+              setDateTo(endDate)
+            }}
           />
         </div>
 
