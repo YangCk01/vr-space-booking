@@ -39,7 +39,7 @@ export const datePresets: ReadonlyArray<{
   { key: "last30Days", label: "最近30天" },
   { key: "last90Days", label: "最近90天" },
   { key: "last365Days", label: "最近1年" },
-  { key: "currentYear", label: "今年" },
+  { key: "currentYear", label: "本年" },
   { key: "previousYear", label: "去年" },
 ]
 

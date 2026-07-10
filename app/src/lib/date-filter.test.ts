@@ -5,16 +5,22 @@ import { datePresets, getDatePreset } from "./date-filter"
 const JULY_10_2026 = new Date(2026, 6, 10, 14, 30)
 
 describe("getDatePreset", () => {
-  it("uses the approved Chinese labels for rolling date presets", () => {
+  it("uses the approved Chinese labels for all date presets", () => {
     const labels = Object.fromEntries(
       datePresets.map((preset) => [preset.key, preset.label])
     )
 
-    expect(labels).toMatchObject({
+    expect(labels).toEqual({
+      today: "今天",
+      yesterday: "昨天",
+      currentMonth: "本月",
+      previousMonth: "上月",
       last7Days: "最近7天",
       last30Days: "最近30天",
       last90Days: "最近90天",
       last365Days: "最近1年",
+      currentYear: "本年",
+      previousYear: "去年",
     })
   })
 
