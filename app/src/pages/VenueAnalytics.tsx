@@ -11,6 +11,7 @@ import {
   Gauge,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
+import { DateFilterPicker } from '@/components/ui/date-filter-picker'
 import { cn } from '@/lib/utils'
 import { format, subDays } from 'date-fns'
 import { getVenueOccupancy, getGamePerformance } from '@/api/venueAnalytics'
@@ -223,21 +224,15 @@ export default function VenueAnalytics() {
           </div>
 
           {dateRange === 'custom' && (
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={customStart}
-                onChange={(e) => setCustomStart(e.target.value)}
-                className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
-              />
-              <span className="text-vr-caption text-vrtext-tertiary">至</span>
-              <input
-                type="date"
-                value={customEnd}
-                onChange={(e) => setCustomEnd(e.target.value)}
-                className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
-              />
-            </div>
+            <DateFilterPicker
+              mode="range"
+              startDate={customStart}
+              endDate={customEnd}
+              onChange={({ startDate, endDate }) => {
+                setCustomStart(startDate)
+                setCustomEnd(endDate)
+              }}
+            />
           )}
         </div>
 

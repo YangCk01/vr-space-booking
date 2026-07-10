@@ -42,6 +42,7 @@ import {
 } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
+import { DateFilterPicker } from '@/components/ui/date-filter-picker'
 import { useThemeStore } from '@/stores/themeStore'
 import {
   getDashboard,
@@ -780,18 +781,14 @@ export default function Analytics() {
                   animate={{ opacity: 1, y: 0 }}
                   className="absolute right-0 top-full mt-1 flex items-center gap-2 bg-vrbg-elevated border border-vrborder-hover rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.15)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.5)] z-50 p-2"
                 >
-                  <input
-                    type="date"
-                    value={customStart}
-                    onChange={(e) => setCustomStart(e.target.value)}
-                    className="bg-vrbg-surface border border-vrborder-subtle rounded px-2 py-1 text-vr-caption text-vrtext-primary outline-none focus:border-vraccent-primary"
-                  />
-                  <span className="text-vrtext-muted text-vr-caption">-</span>
-                  <input
-                    type="date"
-                    value={customEnd}
-                    onChange={(e) => setCustomEnd(e.target.value)}
-                    className="bg-vrbg-surface border border-vrborder-subtle rounded px-2 py-1 text-vr-caption text-vrtext-primary outline-none focus:border-vraccent-primary"
+                  <DateFilterPicker
+                    mode="range"
+                    startDate={customStart}
+                    endDate={customEnd}
+                    onChange={({ startDate, endDate }) => {
+                      setCustomStart(startDate)
+                      setCustomEnd(endDate)
+                    }}
                   />
                 </motion.div>
               )}

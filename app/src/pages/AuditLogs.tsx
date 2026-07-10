@@ -11,9 +11,9 @@ import {
   Shield,
   Clock,
   User,
-  Calendar,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
+import { DateFilterPicker } from '@/components/ui/date-filter-picker'
 import { cn } from '@/lib/utils'
 import { getAuditLogs, getAuditLogActions, getAuditLogTargetTypes } from '@/api/auditLog'
 import { getStaffList } from '@/api/users'
@@ -286,22 +286,16 @@ export default function AuditLogs() {
         <div className="bg-vrbg-card rounded-xl border border-vrborder-subtle p-4 space-y-4">
           <div className="flex flex-col lg:flex-row flex-wrap gap-3">
             {/* Date Range */}
-            <div className="flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-vrtext-muted" />
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => { setStartDate(e.target.value); setCurrentPage(1) }}
-                className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
-              />
-              <span className="text-vr-caption text-vrtext-tertiary">至</span>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => { setEndDate(e.target.value); setCurrentPage(1) }}
-                className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
-              />
-            </div>
+            <DateFilterPicker
+              mode="range"
+              startDate={startDate}
+              endDate={endDate}
+              onChange={({ startDate, endDate }) => {
+                setStartDate(startDate)
+                setEndDate(endDate)
+                setCurrentPage(1)
+              }}
+            />
 
             {/* Operator */}
             <select

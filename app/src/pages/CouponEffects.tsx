@@ -9,13 +9,13 @@ import {
   Coins,
   Sparkles,
   Users,
-  Calendar,
   Filter,
   BarChart3,
   Eye,
   EyeOff,
 } from 'lucide-react'
 import Layout from '@/components/Layout'
+import { DateFilterPicker } from '@/components/ui/date-filter-picker'
 import { cn } from '@/lib/utils'
 import {
   Bar,
@@ -210,22 +210,15 @@ export default function CouponEffects() {
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-3 bg-vrbg-card border border-vrborder-subtle rounded-xl p-4">
-          <div className="flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-vrtext-muted" />
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
-            />
-            <span className="text-vr-caption text-vrtext-tertiary">至</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary transition-all"
-            />
-          </div>
+          <DateFilterPicker
+            mode="range"
+            startDate={startDate}
+            endDate={endDate}
+            onChange={({ startDate, endDate }) => {
+              setStartDate(startDate)
+              setEndDate(endDate)
+            }}
+          />
 
           <div className="h-5 w-[1px] bg-vrborder-subtle" />
 

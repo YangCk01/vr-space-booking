@@ -23,6 +23,7 @@ import {
   Headset,
 } from "lucide-react";
 import Layout from "@/components/Layout";
+import { DateFilterPicker } from "@/components/ui/date-filter-picker";
 import {
   getOrders,
   payOrder,
@@ -1883,37 +1884,16 @@ export default function Orders() {
             transition={{ duration: 0.3, delay: 0.12 }}
             className="flex items-center gap-2"
           >
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value);
+            <DateFilterPicker
+              mode="range"
+              startDate={startDate}
+              endDate={endDate}
+              onChange={({ startDate, endDate }) => {
+                setStartDate(startDate);
+                setEndDate(endDate);
                 setCurrentPage(1);
               }}
-              className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
             />
-            <span className="text-vr-caption text-vrtext-tertiary">至</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => {
-                setEndDate(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
-            />
-            {(startDate || endDate) && (
-              <button
-                onClick={() => {
-                  setStartDate("");
-                  setEndDate("");
-                  setCurrentPage(1);
-                }}
-                className="text-vr-caption text-vrtext-muted hover:text-vrtext-secondary transition-colors"
-              >
-                清除
-              </button>
-            )}
           </motion.div>
 
           {canExportOrders && (
