@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
 import { toast } from 'sonner'
 import { format, parse } from 'date-fns'
+import { DateFilterPicker } from '@/components/ui/date-filter-picker'
 import { cn } from '@/lib/utils'
 import {
   Loader2, Plus, Trash2, Save, X, Monitor, Users, Gamepad2,
@@ -322,11 +323,12 @@ export default function DeviceLogPanel({
           ))}
         </select>
 
-        <input
-          type="date"
-          value={selectedDate}
-          onChange={(e) => setSelectedDate(e.target.value)}
-          className="h-9 px-3 rounded-lg bg-vrbg-surface border border-vrborder-subtle text-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
+        <DateFilterPicker
+          mode="single"
+          startDate={selectedDate}
+          endDate={selectedDate}
+          onChange={({ startDate }) => setSelectedDate(startDate)}
+          allowClear={false}
         />
 
         <div className="h-5 w-[1px] bg-vrborder-subtle" />
