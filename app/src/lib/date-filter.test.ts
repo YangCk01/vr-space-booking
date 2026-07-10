@@ -1,10 +1,23 @@
 import { describe, expect, it } from "vitest"
 
-import { getDatePreset } from "./date-filter"
+import { datePresets, getDatePreset } from "./date-filter"
 
 const JULY_10_2026 = new Date(2026, 6, 10, 14, 30)
 
 describe("getDatePreset", () => {
+  it("uses the approved Chinese labels for rolling date presets", () => {
+    const labels = Object.fromEntries(
+      datePresets.map((preset) => [preset.key, preset.label])
+    )
+
+    expect(labels).toMatchObject({
+      last7Days: "最近7天",
+      last30Days: "最近30天",
+      last90Days: "最近90天",
+      last365Days: "最近1年",
+    })
+  })
+
   it("returns today as a single local calendar day", () => {
     expect(getDatePreset("today", JULY_10_2026)).toEqual({
       startDate: "2026-07-10",

@@ -30,6 +30,26 @@ type DateFilterPickerProps = {
 }
 
 const dateFormat = "yyyy-MM-dd"
+const desktopCalendarMediaQuery = "(min-width: 768px)"
+
+function useDesktopCalendar() {
+  const [isDesktop, setIsDesktop] = React.useState(() =>
+    typeof window !== "undefined" &&
+    window.matchMedia(desktopCalendarMediaQuery).matches
+  )
+
+  React.useEffect(() => {
+    const mediaQuery = window.matchMedia(desktopCalendarMediaQuery)
+    const updateViewport = () => setIsDesktop(mediaQuery.matches)
+
+    updateViewport()
+    mediaQuery.addEventListener("change", updateViewport)
+
+    return () => mediaQuery.removeEventListener("change", updateViewport)
+  }, [])
+
+  return isDesktop
+}
 
 function DateFilterPicker({
   startDate,
@@ -39,6 +59,7 @@ function DateFilterPicker({
   allowClear = true,
   className,
 }: DateFilterPickerProps) {
+  const isDesktopCalendar = useDesktopCalendar()
   const parsedStartDate = startDate ? parseISO(startDate) : undefined
   const parsedEndDate = endDate ? parseISO(endDate) : undefined
   const selectedStartDate =
@@ -48,6 +69,7 @@ function DateFilterPicker({
   const selectedRange = selectedStartDate
     ? { from: selectedStartDate, to: selectedEndDate }
     : undefined
+  const numberOfMonths = mode === "range" && isDesktopCalendar ? 2 : 1
   const selectionLabel =
     mode === "single"
       ? startDate || "选择日期"
@@ -115,7 +137,7 @@ function DateFilterPicker({
                 locale={zhCN}
                 selected={selectedRange}
                 onSelect={handleRangeSelect}
-                numberOfMonths={2}
+                numberOfMonths={numberOfMonths}
                 defaultMonth={selectedStartDate}
               />
             ) : (
