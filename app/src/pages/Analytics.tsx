@@ -508,13 +508,23 @@ export default function Analytics() {
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      const target = e.target
+      const isCustomRangePickerPortal =
+        dateRange === 'custom' &&
+        target instanceof Element &&
+        Boolean(target.closest('[data-radix-popper-content-wrapper]'))
+
+      if (
+        !isCustomRangePickerPortal &&
+        dropdownRef.current &&
+        !dropdownRef.current.contains(target as Node)
+      ) {
         setShowDropdown(false)
       }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [])
+  }, [dateRange])
 
   /* ─── Helper: build API params ─── */
   const globalParams = () => {
