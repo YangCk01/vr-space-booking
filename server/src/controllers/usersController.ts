@@ -57,6 +57,7 @@ export async function list(req: Request, res: Response) {
     const level = req.query.level as string | undefined
     const status = req.query.status as string | undefined
     const search = req.query.search as string | undefined
+    const searchType = req.query.searchType as string | undefined
     const page = (req.query.page as string) || '1'
     const pageSize = (req.query.pageSize as string) || '20'
     const pageNum = parseInt(page as string, 10)
@@ -70,12 +71,22 @@ export async function list(req: Request, res: Response) {
     if (status && status !== 'all') {
       where.status = status.toUpperCase()
     }
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-      ]
+    const keyword = search?.trim()
+    if (keyword) {
+      if (searchType === 'uid') {
+        where.id = { contains: keyword, mode: 'insensitive' }
+      } else if (searchType === 'phone') {
+        where.phone = { contains: keyword, mode: 'insensitive' }
+      } else if (searchType === 'name') {
+        where.name = { contains: keyword, mode: 'insensitive' }
+      } else {
+        where.OR = [
+          { id: { contains: keyword, mode: 'insensitive' } },
+          { name: { contains: keyword, mode: 'insensitive' } },
+          { phone: { contains: keyword, mode: 'insensitive' } },
+          { email: { contains: keyword, mode: 'insensitive' } },
+        ]
+      }
     }
 
     // 查询列表、总数、各等级统计
@@ -214,9 +225,23 @@ export async function update(req: Request, res: Response) {
     const id = req.params.id
     const data: any = {}
     if (req.body.name) data.name = req.body.name
+    if (req.body.phone) {
+      const existing = await prisma.user.findFirst({
+        where: { phone: req.body.phone, id: { not: id as string } },
+        select: { id: true },
+      })
+      if (existing) {
+        return error(res, '手机号已被注册', 409)
+      }
+      data.phone = req.body.phone
+    }
     if (req.body.email !== undefined) data.email = req.body.email || null
     if (req.body.level) data.level = req.body.level.toUpperCase()
     if (req.body.status) data.status = req.body.status.toUpperCase()
+    if (req.body.password) {
+      const bcrypt = await import('bcryptjs')
+      data.password = await bcrypt.default.hash(req.body.password, 12)
+    }
     if (req.body.totalVisits !== undefined) data.totalVisits = parseInt(req.body.totalVisits)
     if (req.body.totalSpent !== undefined) data.totalSpent = parseInt(req.body.totalSpent)
     if (req.body.birthday !== undefined) data.birthday = req.body.birthday ? new Date(req.body.birthday) : null
@@ -233,6 +258,10 @@ export async function update(req: Request, res: Response) {
         level: true,
         totalVisits: true,
         totalSpent: true,
+        balance: true,
+        principalBalance: true,
+        bonusBalance: true,
+        points: true,
         status: true,
         birthday: true,
         registerDate: true,

@@ -373,7 +373,24 @@ export interface RechargeRecord {
   createdAt: string
 }
 
+export interface BalanceTransaction {
+  id: string
+  type: string
+  amount: number
+  principalAmount?: number | null
+  bonusAmount?: number | null
+  totalAmount?: number | null
+  pointsAmount?: number | null
+  remark?: string | null
+  createdAt: string
+}
+
 export async function getUserRechargeRecords(userId: string) {
   const res = await apiClient.get('/recharges', { params: { userId } })
   return res.data.data as RechargeRecord[]
+}
+
+export async function getUserBalanceTransactions(userId: string) {
+  const res = await apiClient.get('/recharges/transactions', { params: { userId } })
+  return res.data.data as BalanceTransaction[]
 }

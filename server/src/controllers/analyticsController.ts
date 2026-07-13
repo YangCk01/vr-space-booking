@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../types'
 import { prisma } from '../utils/prisma'
 import { success, error } from '../utils/response'
 import { subDays, format, parseISO } from 'date-fns'
+import { resolveAnalyticsVenueScope } from '../domain/analyticsScope'
 
 /* ─── UTC day boundaries (for @db.Date comparison) ─── */
 function dayStart(d: Date): Date { return new Date(format(d, 'yyyy-MM-dd') + 'T00:00:00.000Z') }
@@ -351,27 +352,32 @@ export async function venueOccupancy(req: AuthenticatedRequest, res: Response) {
     const e = new Date(endDate as string)
     e.setHours(23, 59, 59, 999)
 
+    const scope = resolveAnalyticsVenueScope(req.user, venueId as string | undefined)
+    if (scope.empty) return success(res, [])
+
     let capacityMap: Map<string, number>
     let bookingsWhere: any
 
     if (venueId) {
       const venue = await prisma.venue.findUnique({
-        where: { id: venueId as string },
+        where: { id: venueId as string, ...scope.venueWhere },
         select: { capacity: true, name: true },
       })
       if (!venue) return error(res, '场地不存在', 404)
       capacityMap = new Map([[venueId as string, venue.capacity]])
       bookingsWhere = {
-        venueId: venueId as string,
+        ...scope.bookingWhere,
         date: { gte: s, lte: e },
         status: { not: 'CANCELLED' },
       }
     } else {
       const venues = await prisma.venue.findMany({
+        where: scope.venueWhere,
         select: { id: true, capacity: true },
       })
       capacityMap = new Map(venues.map((v) => [v.id, v.capacity]))
       bookingsWhere = {
+        ...scope.bookingWhere,
         date: { gte: s, lte: e },
         status: { not: 'CANCELLED' },
       }
@@ -446,17 +452,20 @@ export async function gamePerformance(req: AuthenticatedRequest, res: Response) 
     const e = new Date(endDate as string)
     e.setHours(23, 59, 59, 999)
 
+    const venueIdFilter = req.query.venueId as string | undefined
+    const scope = resolveAnalyticsVenueScope(req.user, venueIdFilter)
+    if (scope.empty) return success(res, [])
+
     const games = await prisma.game.findMany({
       select: { id: true, title: true },
     })
 
-    const venueIdFilter = req.query.venueId as string | undefined
     const bookings = await prisma.booking.findMany({
       where: {
         date: { gte: s, lte: e },
         status: { not: 'CANCELLED' },
         gameId: { not: null },
-        ...(venueIdFilter ? { venueId: venueIdFilter } : {}),
+        ...scope.bookingWhere,
       },
       select: {
         gameId: true,
@@ -468,6 +477,7 @@ export async function gamePerformance(req: AuthenticatedRequest, res: Response) 
 
     // 获取场地容量
     const venues = await prisma.venue.findMany({
+      where: scope.venueWhere,
       select: { id: true, capacity: true },
     })
     const venueCapacityMap = new Map(venues.map((v) => [v.id, v.capacity]))
@@ -505,6 +515,7 @@ export async function gamePerformance(req: AuthenticatedRequest, res: Response) 
           status: { not: 'CANCELLED' },
           gameId: { in: gameIds },
           userId: { not: null },
+          ...scope.bookingWhere,
         },
         select: { gameId: true, userId: true },
       })

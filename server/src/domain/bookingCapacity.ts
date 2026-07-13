@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { Prisma } from '@prisma/client'
 
 export interface ExistingBookingSlot {
   startTime: string
@@ -38,6 +39,10 @@ export function assertBookingCapacity(input: BookingCapacityInput) {
 export function buildBookingSlotLockKey(venueId: string, date: string, startTime: string, endTime: string): bigint {
   const digest = createHash('sha256').update(`${venueId}:${date}:${startTime}:${endTime}`).digest()
   return digest.readBigInt64BE(0)
+}
+
+export function buildBookingSlotLockQuery(lockKey: bigint): Prisma.Sql {
+  return Prisma.sql`SELECT 1::int AS locked FROM (SELECT pg_advisory_xact_lock(${lockKey})) AS advisory_lock`
 }
 
 function timeToMinutes(t: string): number {

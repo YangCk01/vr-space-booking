@@ -22,7 +22,7 @@ const Roles = lazy(() => import('./pages/Roles'))
 const CouponEffects = lazy(() => import('./pages/CouponEffects'))
 const VenueAnalytics = lazy(() => import('./pages/VenueAnalytics'))
 const Campaigns = lazy(() => import('./pages/Campaigns'))
-const TriggerRules = lazy(() => import('./pages/TriggerRules'))
+const CampaignRewardRecords = lazy(() => import('./pages/CampaignRewardRecords'))
 const Approvals = lazy(() => import('./pages/Approvals'))
 const GroupBuys = lazy(() => import('./pages/GroupBuys'))
 const PlatformManagement = lazy(() => import('./pages/PlatformManagement'))
@@ -62,7 +62,7 @@ export default function App() {
             <Route path="/coupon-effects" element={<CouponEffects />} />
             <Route path="/venue-analytics" element={<VenueAnalytics />} />
             <Route path="/campaigns" element={<Campaigns />} />
-            <Route path="/trigger-rules" element={<TriggerRules />} />
+            <Route path="/campaign-reward-records" element={<CampaignRewardRecords />} />
             <Route path="/group-buys" element={<GroupBuys />} />
             <Route path="/platforms" element={<PlatformManagement />} />
           </Routes>

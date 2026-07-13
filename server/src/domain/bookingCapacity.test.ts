@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   assertBookingCapacity,
   buildBookingSlotLockKey,
+  buildBookingSlotLockQuery,
 } from './bookingCapacity'
 
 test('assertBookingCapacity rejects overlapping bookings above capacity', () => {
@@ -44,4 +45,12 @@ test('buildBookingSlotLockKey is stable for the same venue/date/time slot', () =
     buildBookingSlotLockKey('venue-1', '2026-07-06', '10:00', '10:30'),
     buildBookingSlotLockKey('venue-1', '2026-07-06', '10:30', '11:00')
   )
+})
+
+test('booking advisory lock query returns a supported integer column', () => {
+  const query = buildBookingSlotLockQuery(123n)
+
+  assert.match(query.sql, /SELECT 1::int AS locked/i)
+  assert.match(query.sql, /pg_advisory_xact_lock\(\?\)/i)
+  assert.deepEqual(query.values, [123n])
 })

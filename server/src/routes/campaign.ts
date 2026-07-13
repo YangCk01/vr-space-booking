@@ -7,6 +7,7 @@ const router = Router()
 
 router.get('/', authenticate, requirePermission('marketing:campaign'), controller.list)
 router.post('/', authenticate, requirePermission('marketing:campaign'), controller.create)
+router.get('/reward-records', authenticate, requirePermission('marketing:campaign'), controller.rewardRecords)
 router.get('/:id', authenticate, requirePermission('marketing:campaign'), controller.getById)
 router.get('/:id/stats', authenticate, requirePermission('marketing:campaign'), controller.stats)
 router.get('/:id/effects', authenticate, requirePermission('marketing:campaign'), controller.effects)

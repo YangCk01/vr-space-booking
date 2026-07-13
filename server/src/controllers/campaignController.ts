@@ -4,6 +4,42 @@ import { prisma } from '../utils/prisma'
 import { success, error, paginated } from '../utils/response'
 import { addDays } from 'date-fns'
 import { distributeManualCampaign } from '../services/campaignRewardService'
+import {
+  mapCampaignRewardRecord,
+  normalizeRewardType,
+  parseRewardRecordFilters,
+} from '../domain/campaignRewardRecords'
+
+function rewardEligibilityData(input: any) {
+  return {
+    minOrderAmount: input.minOrderAmount ? parseInt(input.minOrderAmount) : null,
+    applicableVenues: Array.isArray(input.applicableVenues) ? input.applicableVenues : [],
+    applicableGames: Array.isArray(input.applicableGames) ? input.applicableGames : [],
+    applicableWeekdays: Array.isArray(input.applicableWeekdays) ? input.applicableWeekdays.map(Number) : [],
+    applicableStartTime: input.applicableStartTime || null,
+    applicableEndTime: input.applicableEndTime || null,
+    minPeople: input.minPeople ? parseInt(input.minPeople) : null,
+    firstOrderOnly: input.firstOrderOnly === true,
+    minCompletedOrders: input.minCompletedOrders ? parseInt(input.minCompletedOrders) : null,
+    validFrom: input.validFrom ? new Date(input.validFrom) : null,
+    validTo: input.validTo ? new Date(input.validTo) : null,
+  }
+}
+
+function validateRewardInput(input: any, event?: string): string | null {
+  const hasOrderConditions = Boolean(
+    input.minOrderAmount || input.minPeople || input.firstOrderOnly || input.minCompletedOrders
+    || input.applicableStartTime || input.applicableEndTime
+    || input.applicableVenues?.length || input.applicableGames?.length || input.applicableWeekdays?.length,
+  )
+  if (hasOrderConditions && event !== 'ORDER_COMPLETED') return '使用门槛仅适用于订单完成触发场景'
+  if ((input.applicableStartTime && !input.applicableEndTime) || (!input.applicableStartTime && input.applicableEndTime)) {
+    return '体验时段必须同时设置开始和结束时间'
+  }
+  if (!input.validFrom || !input.validTo) return '奖励必须设置生效时间段'
+  if (new Date(input.validFrom) >= new Date(input.validTo)) return '奖励失效时间必须晚于生效时间'
+  return null
+}
 
 /* ─── Helpers ─── */
 function getCampaignStatus(startAt: Date | null, endAt: Date | null, status: string): string {
@@ -68,11 +104,14 @@ export async function create(req: AuthenticatedRequest, res: Response) {
     let rewardData: any[] = []
     if (isConditional && triggerRule) {
       const action = triggerRule.actions[0]
+      const validationError = validateRewardInput(action, triggerRule.event)
+      if (validationError) return error(res, validationError, 400)
       const maxQty = triggerRule.maxQuantity ? parseInt(triggerRule.maxQuantity) : 999999
       if (action.type === 'GIFT_POINTS') {
         rewardData = [{
           rewardType: 'POINTS',
           pointsAmount: action.points ? parseInt(action.points) : 0,
+          ...rewardEligibilityData(action),
           maxQuantity: maxQty,
         }]
       } else if (action.type === 'GIFT_COUPON') {
@@ -81,6 +120,7 @@ export async function create(req: AuthenticatedRequest, res: Response) {
           couponName: action.name || '优惠券',
           couponDiscountRate: action.discountRate ? parseInt(action.discountRate) : null,
           couponValidDays: action.validityDays ? parseInt(action.validityDays) : null,
+          ...rewardEligibilityData(action),
           maxQuantity: maxQty,
         }]
       } else if (action.type === 'GIFT_EXPERIENCE_COUPON') {
@@ -88,6 +128,7 @@ export async function create(req: AuthenticatedRequest, res: Response) {
           rewardType: 'EXPERIENCE_COUPON',
           couponName: action.name || '体验券',
           couponValidDays: action.validityDays ? parseInt(action.validityDays) : null,
+          ...rewardEligibilityData(action),
           maxQuantity: maxQty,
         }]
       }
@@ -98,6 +139,7 @@ export async function create(req: AuthenticatedRequest, res: Response) {
         couponName: r.couponName || null,
         couponDiscountRate: r.couponDiscountRate ? parseInt(r.couponDiscountRate) : null,
         couponValidDays: r.couponValidDays ? parseInt(r.couponValidDays) : null,
+        ...rewardEligibilityData(r),
         maxQuantity: r.maxQuantity ? parseInt(r.maxQuantity) : 0,
       }))
     }
@@ -554,6 +596,8 @@ export async function update(req: AuthenticatedRequest, res: Response) {
     // 同步更新 CampaignReward（如果 triggerRule.actions 有变更）
     if (triggerRule?.actions && campaign.rewards.length > 0) {
       const action = triggerRule.actions[0]
+      const validationError = validateRewardInput(action, triggerRule.event)
+      if (validationError) return error(res, validationError, 400)
       const reward = campaign.rewards[0]
       const rewardUpdate: any = {}
       if (action.type === 'GIFT_POINTS') {
@@ -562,16 +606,19 @@ export async function update(req: AuthenticatedRequest, res: Response) {
         rewardUpdate.couponName = null
         rewardUpdate.couponDiscountRate = null
         rewardUpdate.couponValidDays = null
+        Object.assign(rewardUpdate, rewardEligibilityData(action))
       } else if (action.type === 'GIFT_COUPON') {
         rewardUpdate.rewardType = action.couponType === 'EXPERIENCE' ? 'EXPERIENCE_COUPON' : 'DISCOUNT_COUPON'
         rewardUpdate.couponName = action.name || '优惠券'
         rewardUpdate.couponDiscountRate = action.discountRate ? parseInt(action.discountRate) : null
         rewardUpdate.couponValidDays = action.validityDays ? parseInt(action.validityDays) : null
+        Object.assign(rewardUpdate, rewardEligibilityData(action))
         rewardUpdate.pointsAmount = null
       } else if (action.type === 'GIFT_EXPERIENCE_COUPON') {
         rewardUpdate.rewardType = 'EXPERIENCE_COUPON'
         rewardUpdate.couponName = action.name || '体验券'
         rewardUpdate.couponValidDays = action.validityDays ? parseInt(action.validityDays) : null
+        Object.assign(rewardUpdate, rewardEligibilityData(action))
         rewardUpdate.pointsAmount = null
         rewardUpdate.couponDiscountRate = null
       }
@@ -649,11 +696,18 @@ export async function clone(req: AuthenticatedRequest, res: Response) {
               couponName: r.couponName,
               couponDiscountRate: r.couponDiscountRate,
               couponValidDays: r.couponValidDays,
+              validFrom: r.validFrom,
+              validTo: r.validTo,
               maxQuantity: r.maxQuantity,
               minOrderAmount: r.minOrderAmount,
               applicableVenues: r.applicableVenues,
               applicableGames: r.applicableGames,
               applicableWeekdays: r.applicableWeekdays,
+              applicableStartTime: r.applicableStartTime,
+              applicableEndTime: r.applicableEndTime,
+              minPeople: r.minPeople,
+              firstOrderOnly: r.firstOrderOnly,
+              minCompletedOrders: r.minCompletedOrders,
             })),
           },
         },
@@ -711,45 +765,109 @@ export async function tracks(req: Request, res: Response) {
   }
 }
 
-/* ─── 14. 执行日志查询（新增） ─── */
+function rewardTypeValues(type: string): string[] {
+  if (type === 'POINTS') return ['POINTS', 'GIFT_POINTS']
+  if (type === 'EXPERIENCE_COUPON') return ['EXPERIENCE', 'EXPERIENCE_COUPON', 'GIFT_EXPERIENCE_COUPON']
+  return ['COUPON', 'GIFT_COUPON']
+}
+
+async function queryRewardRecords(query: Record<string, unknown>, fixedCampaignId?: string) {
+  const filters = parseRewardRecordFilters({ ...query, campaignId: fixedCampaignId || query.campaignId })
+  const where: any = {}
+
+  if (filters.campaignId) where.campaignId = filters.campaignId
+  if (filters.rewardType) where.rewardType = { in: rewardTypeValues(filters.rewardType) }
+  if (filters.userKeyword) {
+    where.user = {
+      OR: [
+        { name: { contains: filters.userKeyword, mode: 'insensitive' } },
+        { phone: { contains: filters.userKeyword } },
+      ],
+    }
+  }
+  if (filters.startAt || filters.endAt) {
+    where.issuedAt = {
+      ...(filters.startAt ? { gte: filters.startAt } : {}),
+      ...(filters.endAt ? { lte: filters.endAt } : {}),
+    }
+  }
+  if (filters.status === 'USED') {
+    where.status = 'SUCCESS'
+    where.usedAt = { not: null }
+  } else if (filters.status === 'ISSUED') {
+    where.status = 'SUCCESS'
+  } else if (filters.status === 'FAILED') {
+    where.status = { in: ['FAILED', 'SKIPPED'] }
+  } else if (filters.status) {
+    where.status = filters.status
+  }
+
+  const [rows, total] = await Promise.all([
+    prisma.campaignExecutionLog.findMany({
+      where,
+      skip: (filters.page - 1) * filters.pageSize,
+      take: filters.pageSize,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        campaign: {
+          select: {
+            name: true,
+            rewards: {
+              select: {
+                rewardType: true,
+                pointsAmount: true,
+                couponName: true,
+                couponDiscountRate: true,
+                couponValidDays: true,
+                applicableGames: true,
+              },
+            },
+          },
+        },
+        user: { select: { name: true, phone: true } },
+      },
+    }),
+    prisma.campaignExecutionLog.count({ where }),
+  ])
+
+  const gameIds = Array.from(new Set(rows.flatMap((row) => {
+    const type = normalizeRewardType(row.rewardType)
+    const reward = row.campaign.rewards.find((item) => normalizeRewardType(item.rewardType) === type)
+      || row.campaign.rewards[0]
+    return reward?.applicableGames || []
+  })))
+  const games = gameIds.length > 0
+    ? await prisma.game.findMany({ where: { id: { in: gameIds } }, select: { id: true, title: true } })
+    : []
+  const gameNameById = new Map(games.map((game) => [game.id, game.title]))
+  const data = rows.map((row) => {
+    const type = normalizeRewardType(row.rewardType)
+    const reward = row.campaign.rewards.find((item) => normalizeRewardType(item.rewardType) === type)
+      || row.campaign.rewards[0]
+    return mapCampaignRewardRecord({
+      ...row,
+      applicableGameNames: (reward?.applicableGames || []).map((id) => gameNameById.get(id)).filter((name): name is string => Boolean(name)),
+    })
+  })
+
+  return { data, total, page: filters.page, pageSize: filters.pageSize }
+}
+
+/* ─── 14. 全局奖励记录 ─── */
+export async function rewardRecords(req: Request, res: Response) {
+  try {
+    const result = await queryRewardRecords(req.query as Record<string, unknown>)
+    return paginated(res, result.data, result.page, result.pageSize, result.total)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}
+
+/* ─── 15. 单活动奖励记录 ─── */
 export async function executionLogs(req: Request, res: Response) {
   try {
-    const id = req.params.id as string
-    const page = parseInt((req.query.page as string) || '1', 10)
-    const pageSize = parseInt((req.query.pageSize as string) || '20', 10)
-    const statusFilter = (req.query.status as string) || 'all'
-
-    const where: any = { campaignId: id }
-    if (statusFilter && statusFilter !== 'all') {
-      where.status = statusFilter.toUpperCase()
-    }
-
-    const [data, total] = await Promise.all([
-      prisma.campaignExecutionLog.findMany({
-        where,
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          campaignId: true,
-          userId: true,
-          triggerEvent: true,
-          triggerSource: true,
-          status: true,
-          reason: true,
-          rewardType: true,
-          rewardValue: true,
-          rewardCouponName: true,
-          costPoints: true,
-          createdAt: true,
-          user: { select: { id: true, name: true, phone: true } },
-        },
-      }),
-      prisma.campaignExecutionLog.count({ where }),
-    ])
-
-    return paginated(res, data, page, pageSize, total)
+    const result = await queryRewardRecords(req.query as Record<string, unknown>, req.params.id as string)
+    return paginated(res, result.data, result.page, result.pageSize, result.total)
   } catch (err) {
     return error(res, (err as Error).message, 500)
   }

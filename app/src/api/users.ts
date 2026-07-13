@@ -3,6 +3,7 @@ import { apiClient } from './client'
 export interface User {
   id: string
   phone: string
+  password?: string
   name: string
   email: string | null
   avatar: string | null
@@ -14,6 +15,9 @@ export interface User {
   bonusBalance: number
   points: number
   status: string
+  userGroup?: string | null
+  address?: string | null
+  idCard?: string | null
   birthday: string | null
   registerDate: string
   lastLogin: string | null
@@ -21,14 +25,15 @@ export interface User {
 }
 
 export interface UserDetail extends User {
-  orders?: any[]
-  bookings?: any[]
+  orders?: unknown[]
+  bookings?: unknown[]
 }
 
 export async function getUsers(params?: {
   level?: string
   status?: string
   search?: string
+  searchType?: 'all' | 'uid' | 'phone' | 'name'
   page?: number
   pageSize?: number
 }) {

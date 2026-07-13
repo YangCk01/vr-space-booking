@@ -12,7 +12,7 @@ import { calculateScheduledBookingStatuses } from '../domain/orderLifecycle'
 import { calculateBalanceDebit, calculateRefundSplitFromDeduction } from '../domain/walletLedger'
 import { AuthenticatedRequest } from '../types'
 import { applyVenueScope } from '../domain/venueScope'
-import { assertBookingCapacity, buildBookingSlotLockKey } from '../domain/bookingCapacity'
+import { assertBookingCapacity, buildBookingSlotLockKey, buildBookingSlotLockQuery } from '../domain/bookingCapacity'
 import { clampPageParams, resolveDateRange } from '../utils/queryLimits'
 
 export const createValidators = [
@@ -287,7 +287,7 @@ export async function create(req: Request, res: Response) {
     const bookingTitle = title || `${venue.name} ${type === 'TEAM' ? '团队预约' : type === 'INDIVIDUAL' ? '散客预约' : type === 'CORPORATE' ? '企业活动' : '维护'} ${startTime}-${endTime}`
 
     const booking = await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(${buildBookingSlotLockKey(venueId, date, startTime, endTime)})`
+      await tx.$queryRaw(buildBookingSlotLockQuery(buildBookingSlotLockKey(venueId, date, startTime, endTime)))
 
       const overlapping = await tx.booking.findMany({
         where: {

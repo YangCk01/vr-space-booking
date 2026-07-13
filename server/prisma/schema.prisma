@@ -878,6 +878,8 @@ model CampaignReward {
   couponName         String?
   couponDiscountRate Int?
   couponValidDays    Int?
+  validFrom          DateTime?
+  validTo            DateTime?
   maxQuantity        Int      @default(0)
   issuedCount        Int      @default(0)
   usedCount          Int      @default(0)
@@ -885,6 +887,11 @@ model CampaignReward {
   applicableVenues   String[] @default([])
   applicableGames    String[] @default([])
   applicableWeekdays Int[]    @default([])
+  applicableStartTime String?
+  applicableEndTime   String?
+  minPeople           Int?
+  firstOrderOnly      Boolean  @default(false)
+  minCompletedOrders  Int?
   campaign           Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
   @@index([campaignId])

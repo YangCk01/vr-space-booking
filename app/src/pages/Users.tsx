@@ -2,30 +2,19 @@ import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { format } from 'date-fns'
+import * as XLSX from 'xlsx'
 import {
   Search,
   Plus,
   Users,
   User,
   Crown,
-  Diamond,
   Medal,
   Sparkles,
   Star,
   ChevronLeft,
   ChevronRight,
-  Phone,
-  Mail,
-  Calendar,
-  Activity,
-  Wallet,
-  Pencil,
-  Trash2,
-  Eye,
   Loader2,
-  Receipt,
-  TicketCheck,
-  Gift,
   Coins,
   Ticket,
   SlidersHorizontal,
@@ -55,13 +44,15 @@ import { getSystemConfigs } from '@/api/systemConfig'
 import {
   giftPoints,
   giftCoupon,
-  getPointsGiftRecords,
   getCouponGiftRecords,
   getMemberGiftApprovalPolicy,
   updateMemberGiftApprovalPolicy,
+  type GiftCouponPayload,
+  type GiftPointsPayload,
   type MemberGiftApprovalPolicy,
 } from '@/api/gift'
-import { getUserRechargeRecords } from '@/api/finance'
+import { getUserBalanceTransactions } from '@/api/finance'
+import { getOrders, type Order } from '@/api/orders'
 import { getVenues } from '@/api/venues'
 import { getRechargeConfig, staffRecharge, type RechargeConfig } from '@/api/recharges'
 import { buildMemberLevelsFromConfig } from '@/lib/memberLevels'
@@ -89,17 +80,42 @@ const fallbackReverseMap: Record<string, string> = {
   '钻石会员': 'VIP_PLUS',
 }
 
-// 配置 key 与 Prisma enum 值的映射（用于兼容）
-const enumToConfigKey: Record<string, string> = {
-  VIP_PLUS: 'VIP+',
-}
 const configKeyToEnum: Record<string, string> = {
   'VIP+': 'VIP_PLUS',
 }
 
-function showGiftSubmitResult(result: any, successMessage: string) {
-  const approvalRequired = Boolean(result?.approvalRequired || result?.data?.approvalRequired)
+const userSearchOptions = [
+  { value: 'all', label: '全部' },
+  { value: 'uid', label: 'UID' },
+  { value: 'phone', label: '手机号' },
+  { value: 'name', label: '用户昵称' },
+] as const
+
+type UserSearchType = typeof userSearchOptions[number]['value']
+
+const userSourceTabs = ['全部']
+
+type ApiEnvelope = { data?: unknown; message?: string }
+type GiftSubmitResult = { approvalRequired?: boolean; data?: { approvalRequired?: boolean } }
+type CouponGiftRecord = {
+  id: string
+  source?: string | null
+  name?: string | null
+  type?: string | null
+  createdAt: string
+  giftRemark?: string | null
+  giftReason?: string | null
+}
+type VenueOption = { id: string; name: string }
+
+function showGiftSubmitResult(result: GiftSubmitResult, successMessage: string) {
+  const approvalRequired = Boolean(result.approvalRequired || result.data?.approvalRequired)
   alert(approvalRequired ? '审批申请已提交，请等待管理员处理' : successMessage)
+}
+
+function getErrorMessage(err: unknown, fallback: string) {
+  const maybe = err as { response?: { data?: ApiEnvelope }; message?: string }
+  return maybe.response?.data?.message || maybe.message || fallback
 }
 
 function useMemberLevels() {
@@ -166,27 +182,6 @@ function getAvatarColor(name: string) {
   return colors[Math.abs(hash) % colors.length]
 }
 
-function StatCard({ icon, value, label, color, delay }: { icon: React.ReactNode; value: number; label: string; color: string; delay: number }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay }}
-      className="bg-vrbg-card rounded-xl p-5 border border-vrborder-subtle hover:shadow-vr-md hover:-translate-y-0.5 transition-all"
-    >
-      <div className="flex items-center gap-4">
-        <div className={cn('w-12 h-12 rounded-full flex items-center justify-center', color)}>
-          {icon}
-        </div>
-        <div>
-          <p className="text-vr-h2 text-vrtext-primary font-semibold">{value}</p>
-          <p className="text-vr-caption text-vrtext-tertiary mt-0.5">{label}</p>
-        </div>
-      </div>
-    </motion.div>
-  )
-}
-
 function formatDateTime(dateStr: string | null | Date) {
   if (!dateStr) return '-'
   try {
@@ -205,13 +200,156 @@ function formatDate(dateStr: string | null | Date) {
   }
 }
 
+function maskPhone(phone?: string | null) {
+  if (!phone) return '-'
+  if (phone.length < 7) return phone
+  return `${phone.slice(0, 3)}****${phone.slice(-4)}`
+}
+
+function getUserBalance(user: Pick<ApiUser, 'principalBalance' | 'bonusBalance' | 'balance'>) {
+  return (user.principalBalance || 0) + (user.bonusBalance || 0) || user.balance || 0
+}
+
+function yuan(amount: number) {
+  return (amount / 100).toFixed(2)
+}
+
+function signedYuan(amount: number) {
+  const sign = amount > 0 ? '+' : amount < 0 ? '-' : ''
+  return `${sign}${yuan(Math.abs(amount))}`
+}
+
+function signedNumber(amount: number) {
+  return amount > 0 ? `+${amount}` : String(amount)
+}
+
+const paymentMethodLabels: Record<string, string> = {
+  BALANCE: '余额支付',
+  BALANCE_POINTS: '余额+积分',
+  WECHAT: '微信支付',
+  ALIPAY: '支付宝',
+  WXPAY: '微信支付',
+  WEIXIN: '微信支付',
+  WX: '微信支付',
+  CASH: '现金',
+  CARD: '刷卡',
+  BANK_CARD: '银行卡',
+  OFFLINE: '线下支付',
+  FREE: '无需支付',
+  NONE: '无需支付',
+}
+
+const orderStatusLabels: Record<string, string> = {
+  PENDING: '待支付',
+  READY_TO_VERIFY: '待核销',
+  PAID: '已支付',
+  COMPLETED: '已完成',
+  CANCELLED: '已取消',
+  REFUNDING: '退款中',
+  REFUNDED: '已退款',
+  NO_SHOW: '已作废',
+}
+
+const transactionTypeLabels: Record<string, string> = {
+  RECHARGE: '会员充值',
+  STAFF_RECHARGE: '员工充值',
+  DEDUCT: '余额消费',
+  BALANCE_DEDUCT: '余额消费',
+  REFUND: '退款返还',
+  BALANCE_REFUND: '余额退款',
+  CANCEL_REFUND: '取消退款',
+  CANCEL_RESTORE: '订单取消恢复余额',
+  CANCEL_FEE: '取消手续费',
+  RESCHEDULE_FEE: '改签费扣款',
+  RESCHEDULE_SURCHARGE: '改签补差价',
+  RESCHEDULE_REFUND: '改签退差价',
+  GROUP_BUY: '团购购买',
+  GROUP_BUY_REFUND: '团购退款',
+  GROUP_BUY_REDEEM: '团购核销',
+  NO_SHOW_RETAINED: '作废扣款',
+  POINTS_EARN: '积分增加',
+  POINTS_GIFT: '赠送积分',
+  POINTS_REWARD: '奖励积分',
+  POINTS_DEDUCT: '积分扣减',
+  POINTS_REVOKE: '积分收回',
+  POINTS_EXCHANGE: '积分兑换',
+  ADJUSTMENT: '人工调整',
+  FREEZE: '余额冻结',
+  UNFREEZE: '余额解冻',
+}
+
+const feeTypeLabels: Record<string, string> = {
+  RESCHEDULE_FEE: '改签费',
+  CANCEL_FEE: '取消手续费',
+  NO_SHOW_FEE: '作废扣款',
+}
+
+const couponTypeLabels: Record<string, string> = {
+  EXPERIENCE_FREE: '体验券',
+  DISCOUNT: '折扣券',
+}
+
+const giftReasonLabels: Record<string, string> = {
+  COMPLAINT: '客诉补偿',
+  EQUIPMENT_FAILURE: '设备故障',
+  ENTERTAIN_CLIENT: '招待客户',
+  OTHER: '其他',
+}
+
+function labelFromMap(map: Record<string, string>, value?: string | null, fallback = '-') {
+  if (!value) return fallback
+  const normalized = value.toUpperCase()
+  return map[normalized] || map[value] || value
+}
+
+function getOrderTypeLabel(order: Order) {
+  if (order.orderKind === 'FEE') return labelFromMap(feeTypeLabels, order.feeType, '费用订单')
+  if (order.groupBuyPackageId || order.groupBuyPackage || order.orderNo?.startsWith('VRG')) return '团购'
+  if (order.orderNo?.startsWith('VRS')) return '改签费'
+  return '预约'
+}
+
+function getOrderContentLabel(order: Order) {
+  const type = getOrderTypeLabel(order)
+  if (type === '团购') {
+    const title = order.groupBuyPackage?.title || order.groupBuyPackage?.label || order.booking?.game?.title || '团购套餐'
+    const game = order.groupBuyPackage?.game?.title
+    return game && !title.includes(game) ? `团购 - ${title}（${game}）` : `团购 - ${title}`
+  }
+  if (type === '改签费' || order.orderKind === 'FEE') {
+    const parentGame = order.parentOrder?.booking?.game?.title
+    const reason = order.feeReason || parentGame || order.booking?.game?.title || '预约改签'
+    return `${labelFromMap(feeTypeLabels, order.feeType, '改签费')} - ${reason}`
+  }
+  const venue = order.venueName || '场地'
+  const game = order.booking?.game?.title
+  return game ? `${venue} - ${game}` : venue
+}
+
+function getOrderPayMethodLabel(order: Order) {
+  if (order.payMethod) return labelFromMap(paymentMethodLabels, order.payMethod)
+  if ((order.amount || 0) === 0) return '无需支付'
+  if (order.status === 'PENDING') return '未支付'
+  if (order.status === 'CANCELLED') return '已取消未支付'
+  return '未记录'
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h4 className="flex items-center gap-3 text-[16px] font-medium text-vrtext-primary">
+      <span className="h-5 w-1 rounded-full bg-vraccent-primary" />
+      {children}
+    </h4>
+  )
+}
+
 function UserDetailSheet({
   user,
   open,
   onOpenChange,
-  onUpdateLevel,
-  onResetPassword,
-  onDisableAccount,
+  onEdit,
+  onGiftPoints,
+  onGiftCoupon,
   isUpdating,
   levelsConfig,
   canEditUser,
@@ -221,313 +359,355 @@ function UserDetailSheet({
   user: ApiUser | null
   open: boolean
   onOpenChange: (v: boolean) => void
-  onUpdateLevel: (level: string) => void
-  onResetPassword: () => void
-  onDisableAccount: () => void
+  onEdit: () => void
+  onGiftPoints: () => void
+  onGiftCoupon: () => void
   isUpdating: boolean
   levelsConfig?: Array<{ key: string; name: string; discount: number }>
   canEditUser: boolean
   canViewGiftRecords: boolean
   canViewRechargeRecords: boolean
 }) {
+  const [activeTab, setActiveTab] = useState('用户信息')
+  const userId = user?.id ?? ''
+  const userPhone = user?.phone ?? ''
+
+  const { data: couponRecords } = useQuery<{ data?: { data?: CouponGiftRecord[] } }>({
+    queryKey: ['gift-coupon-records', userId],
+    queryFn: () => getCouponGiftRecords({ userId, pageSize: 20 }),
+    enabled: open && !!userId && activeTab === '持有优惠券' && canViewGiftRecords,
+  })
+
+  const { data: balanceTransactions = [] } = useQuery({
+    queryKey: ['user-balance-transactions', userId],
+    queryFn: () => getUserBalanceTransactions(userId),
+    enabled: open && !!userId && (activeTab === '积分明细' || activeTab === '余额变动') && canViewRechargeRecords,
+  })
+
+  const { data: ordersResponse } = useQuery({
+    queryKey: ['user-consumption-orders', userId, userPhone],
+    queryFn: () => getOrders({ userId, pageSize: 100 }),
+    enabled: open && !!userId,
+  })
+
   if (!user) return null
 
   const avatarColor = getAvatarColor(user.name)
-  const [level, setLevel] = useState(user.level)
-  const [activeTab, setActiveTab] = useState<'info' | 'finance'>('info')
-  const canViewFinanceTab = canViewGiftRecords || canViewRechargeRecords
-
-  const { data: pointsRecords } = useQuery({
-    queryKey: ['gift-points-records', user.id],
-    queryFn: () => getPointsGiftRecords({ userId: user.id, pageSize: 20 }),
-    enabled: open && activeTab === 'finance' && canViewGiftRecords,
-  })
-
-  const { data: couponRecords } = useQuery({
-    queryKey: ['gift-coupon-records', user.id],
-    queryFn: () => getCouponGiftRecords({ userId: user.id, pageSize: 20 }),
-    enabled: open && activeTab === 'finance' && canViewGiftRecords,
-  })
-
-  const { data: rechargeRecords } = useQuery({
-    queryKey: ['user-recharge-records', user.id],
-    queryFn: () => getUserRechargeRecords(user.id),
-    enabled: open && activeTab === 'finance' && canViewRechargeRecords,
-  })
-
-  // Sync level when user changes
-  useMemo(() => {
-    setLevel(user.level)
-  }, [user.level])
-
   const shortId = user.id.length > 12 ? `${user.id.slice(0, 8)}...${user.id.slice(-4)}` : user.id
   const currentLevelInfo = levelsConfig?.find((l) => l.name === user.level || l.key === user.level)
-  const discountLabel = currentLevelInfo && currentLevelInfo.discount < 100 ? `（享${currentLevelInfo.discount}折）` : ''
-
-  const infoItems = [
-    { label: '用户ID', value: shortId, icon: <User className="w-4 h-4 text-vrtext-muted" />, mono: true },
-    { label: '真实姓名', value: user.name, icon: <User className="w-4 h-4 text-vrtext-muted" /> },
-    { label: '手机号', value: user.phone, icon: <Phone className="w-4 h-4 text-vrtext-muted" /> },
-    { label: '邮箱', value: user.email || '-', icon: <Mail className="w-4 h-4 text-vrtext-muted" /> },
-    { label: '生日', value: user.birthday ? formatDate(user.birthday) : '-', icon: <Calendar className="w-4 h-4 text-vrtext-muted" /> },
-    { label: '会员等级', value: <LevelBadge level={user.level} levelsConfig={levelsConfig} />, icon: <Crown className="w-4 h-4 text-vrtext-muted" />, isBadge: true },
-    { label: '注册时间', value: formatDateTime(user.registerDate), icon: <Calendar className="w-4 h-4 text-vrtext-muted" /> },
-    { label: '最近登录', value: formatDateTime(user.lastLogin), icon: <Activity className="w-4 h-4 text-vrtext-muted" /> },
-  ]
+  const balance = getUserBalance(user)
+  const userInfoTabs = ['用户信息', '消费记录', '积分明细', '持有优惠券', '余额变动']
+  const orderList: Order[] = Array.isArray(ordersResponse?.data)
+    ? ordersResponse.data
+    : Array.isArray(ordersResponse?.data?.list)
+      ? ordersResponse.data.list
+      : Array.isArray(ordersResponse?.data?.data)
+        ? ordersResponse.data.data
+        : []
+  const userOrders = orderList.filter((order) => {
+    const orderPhone = order.user?.phone || order.booking?.personPhone
+    return order.userId === user.id || orderPhone === user.phone
+  })
+  const paidOrders = userOrders.filter((order) => !['CANCELLED', 'REFUNDED'].includes(order.status))
+  const now = new Date()
+  const currentMonth = format(now, 'yyyy-MM')
+  const monthOrders = paidOrders.filter((order) => format(new Date(order.paidAt || order.bookingTime || order.createdAt), 'yyyy-MM') === currentMonth)
+  const totalOrderCount = paidOrders.length || user.totalVisits || 0
+  const totalConsumption = paidOrders.length > 0
+    ? paidOrders.reduce((sum, order) => sum + (order.amount || 0) - (order.refundAmount || 0), 0)
+    : user.totalSpent || 0
+  const monthConsumption = monthOrders.reduce((sum, order) => sum + (order.amount || 0) - (order.refundAmount || 0), 0)
+  const pointRows = balanceTransactions
+    .filter((record) => record.pointsAmount)
+    .map((record, index, records) => {
+      const newerDelta = records.slice(0, index).reduce((sum, item) => sum + (item.pointsAmount || 0), 0)
+      return {
+        ...record,
+        afterPoints: (user.points || 0) - newerDelta,
+      }
+    })
+  const balanceRows = balanceTransactions
+    .filter((record) => (record.totalAmount ?? record.amount ?? 0) !== 0)
+    .map((record, index, records) => {
+      const newerDelta = records.slice(0, index).reduce((sum, item) => sum + (item.totalAmount ?? item.amount ?? 0), 0)
+      return {
+        ...record,
+        balanceDelta: record.totalAmount ?? record.amount ?? 0,
+        afterBalance: balance - newerDelta,
+      }
+    })
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-[480px] bg-vrbg-card border-l border-vrborder-subtle p-0 sm:max-w-[480px]">
-        <SheetHeader className="p-6 border-b border-vrborder-subtle">
-          <div className="flex items-center justify-between">
-            <SheetTitle className="text-vr-h3 text-vrtext-primary font-semibold">用户详情</SheetTitle>
-          </div>
+      <SheetContent side="right" className="w-[min(1120px,calc(100vw-72px))] bg-white border-l border-slate-200 p-0 sm:max-w-none">
+        <SheetHeader className="h-14 px-6 border-b border-slate-200 flex-row items-center justify-between">
+          <SheetTitle className="text-[16px] text-slate-900 font-medium">用户详情</SheetTitle>
         </SheetHeader>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* User Header */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.3 }}
-            className="flex items-center gap-4"
-          >
-            <div
-              className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-semibold"
-              style={{ backgroundColor: avatarColor }}
-            >
-              {getInitials(user.name)}
-            </div>
-            <div>
-              <h3 className="text-vr-h3 text-vrtext-primary font-semibold">{user.name}</h3>
-              <p className="text-vr-body-sm text-vrtext-secondary mt-0.5">{user.phone.slice(0, 3)}****{user.phone.slice(-4)}</p>
-              <div className="mt-1.5">
-                <LevelBadge level={user.level} levelsConfig={levelsConfig} />
-                {discountLabel && <span className="ml-2 text-xs text-vraccent-primary">{discountLabel}</span>}
-              </div>
-            </div>
-          </motion.div>
-
-          {/* Stats Cards */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1, duration: 0.3 }}
-            className="grid grid-cols-2 gap-3"
-          >
-            <div className="bg-vrbg-elevated rounded-xl p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-vrwarning/10 flex items-center justify-center shrink-0">
-                <Receipt className="w-5 h-5 text-vrwarning" />
-              </div>
-              <div>
-                <p className="text-vr-caption text-vrtext-tertiary">累计消费</p>
-                <p className="text-vr-h3 text-vrtext-primary font-bold">¥{(user.totalSpent / 100).toLocaleString()}</p>
-              </div>
-            </div>
-            <div className="bg-vrbg-elevated rounded-xl p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-vraccent-primary/10 flex items-center justify-center shrink-0">
-                <TicketCheck className="w-5 h-5 text-vraccent-primary" />
-              </div>
-              <div>
-                <p className="text-vr-caption text-vrtext-tertiary">预约次数</p>
-                <p className="text-vr-h3 text-vrtext-primary font-bold">{user.totalVisits}次</p>
-              </div>
-            </div>
-            <div className="bg-vrbg-elevated rounded-xl p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-vrsuccess/10 flex items-center justify-center shrink-0">
-                <Wallet className="w-5 h-5 text-vrsuccess" />
-              </div>
-              <div>
-                <p className="text-vr-caption text-vrtext-tertiary">余额</p>
-                <p className="text-vr-h3 text-vrtext-primary font-bold">¥{(((user.principalBalance || 0) + (user.bonusBalance || 0)) / 100).toLocaleString()}</p>
-              </div>
-            </div>
-            <div className="bg-vrbg-elevated rounded-xl p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-vrpurple/10 flex items-center justify-center shrink-0">
-                <Diamond className="w-5 h-5 text-vrpurple" />
-              </div>
-              <div>
-                <p className="text-vr-caption text-vrtext-tertiary">积分</p>
-                <p className="text-vr-h3 text-vrtext-primary font-bold">{user.points || 0}</p>
-              </div>
-            </div>
-          </motion.div>
-
-          {/* Tab Switcher */}
-          <div className="flex gap-1 bg-vrbg-elevated rounded-lg p-1">
-            <button
-              onClick={() => setActiveTab('info')}
-              className={`flex-1 h-8 rounded-md text-vr-caption font-medium transition-colors ${
-                activeTab === 'info'
-                  ? 'bg-vraccent-primary text-white'
-                  : 'text-vrtext-secondary hover:text-vrtext-primary'
-              }`}
-            >
-              用户信息
-            </button>
-            {canViewFinanceTab && (
-              <button
-                onClick={() => setActiveTab('finance')}
-                className={`flex-1 h-8 rounded-md text-vr-caption font-medium transition-colors ${
-                  activeTab === 'finance'
-                    ? 'bg-vraccent-primary text-white'
-                    : 'text-vrtext-secondary hover:text-vrtext-primary'
-                }`}
+        <div className="flex-1 overflow-y-auto bg-white">
+          <div className="px-8 py-6 flex items-center gap-10 border-b border-slate-100">
+            <div className="flex items-center gap-5 min-w-[330px]">
+              <div
+                className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-semibold shrink-0"
+                style={{ backgroundColor: avatarColor }}
               >
-                财务记录
-              </button>
-            )}
+                {getInitials(user.name)}
+              </div>
+              <div>
+                <h3 className="text-[18px] text-slate-950 font-semibold">{maskPhone(user.phone)}</h3>
+                <p className="text-[14px] text-slate-600 mt-2">余额：{yuan(balance)}</p>
+                <p className="text-[14px] text-slate-600 mt-1">积分：{user.points || 0}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-x-20 gap-y-2 text-[14px] text-slate-600 flex-1">
+              <span>总计订单：{totalOrderCount}</span>
+              <span>总消费金额：{yuan(totalConsumption)}</span>
+              <span>本月订单：{monthOrders.length}</span>
+              <span>本月消费金额：{yuan(monthConsumption)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {canViewGiftRecords && (
+                <>
+                  <button
+                    onClick={onGiftPoints}
+                    disabled={isUpdating}
+                    className="h-10 px-4 rounded-md border border-slate-200 bg-white text-slate-700 text-[14px] font-medium hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    赠送积分
+                  </button>
+                  <button
+                    onClick={onGiftCoupon}
+                    disabled={isUpdating}
+                    className="h-10 px-4 rounded-md border border-slate-200 bg-white text-slate-700 text-[14px] font-medium hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    赠送优惠券
+                  </button>
+                </>
+              )}
+              {canEditUser && (
+                <button
+                  onClick={onEdit}
+                  disabled={isUpdating}
+                  className="h-10 px-6 rounded-md bg-vraccent-primary text-white text-[14px] font-medium hover:bg-vraccent-primary/90 disabled:opacity-50"
+                >
+                  编辑
+                </button>
+              )}
+            </div>
           </div>
 
-          {activeTab === 'info' && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1, duration: 0.3 }}
-            className="bg-vrbg-elevated rounded-xl p-5"
-          >
-            <h4 className="text-vr-body-sm text-vrtext-secondary font-medium mb-4">用户信息</h4>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-4">
-              {infoItems.map((item, idx) => (
-                <motion.div
-                  key={idx}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.25 + idx * 0.04, duration: 0.2 }}
-                  className="flex flex-col gap-1"
-                >
-                  <div className="flex items-center gap-1.5 text-vrtext-tertiary">
-                    {item.icon}
-                    <span className="text-vr-caption">{item.label}</span>
-                  </div>
-                  <span className={cn(
-                    'text-vr-body-sm text-vrtext-primary',
-                    item.mono && 'font-mono text-xs break-all',
-                  )}>
-                    {item.value}
-                  </span>
-                </motion.div>
-              ))}
-            </div>
-          </motion.div>
+          <div className="flex bg-slate-50 border-b border-slate-100">
+            {userInfoTabs.map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={cn(
+                  'h-12 px-7 text-[14px] transition-colors border-t-2',
+                  activeTab === tab
+                    ? 'bg-white border-vraccent-primary text-vraccent-primary'
+                    : 'border-transparent text-slate-600 hover:text-slate-900'
+                )}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          <div className="px-10 py-7 space-y-8">
+
+          {activeTab === '用户信息' && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1, duration: 0.3 }}
+              className="space-y-8 text-[14px] text-slate-600"
+            >
+              <section className="space-y-5 border-b border-dashed border-slate-200 pb-8">
+                <SectionTitle>基本信息</SectionTitle>
+                <div className="grid grid-cols-3 gap-x-14 gap-y-5">
+                  <span>用户ID：<span className="font-mono">{shortId}</span></span>
+                  <span>手机号：{user.phone || '-'}</span>
+                  <span>生日：{user.birthday ? formatDate(user.birthday) : '-'}</span>
+                  <span>用户地址：-</span>
+                </div>
+              </section>
+
+              <section className="space-y-5 border-b border-dashed border-slate-200 pb-8">
+                <SectionTitle>密码</SectionTitle>
+                <div>登录密码：********</div>
+              </section>
+
+              <section className="space-y-5 border-b border-dashed border-slate-200 pb-8">
+                <SectionTitle>用户概况</SectionTitle>
+                <div className="grid grid-cols-3 gap-x-14 gap-y-5">
+                  <span>用户状态：{user.status === 'ACTIVE' ? '开启' : '锁定'}</span>
+                  <span>用户等级：{currentLevelInfo?.name || user.level || '-'}</span>
+                  <span>注册时间：{formatDateTime(user.registerDate)}</span>
+                  <span>登录时间：{formatDateTime(user.lastLogin)}</span>
+                </div>
+              </section>
+
+              <section className="space-y-5 border-b border-dashed border-slate-200 pb-8">
+                <SectionTitle>用户备注</SectionTitle>
+                <div>备注：-</div>
+              </section>
+            </motion.div>
           )}
 
-          {canViewFinanceTab && activeTab === 'finance' && (
+          {activeTab !== '用户信息' && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1, duration: 0.3 }}
             className={cn(
-              'grid gap-4',
+              'grid gap-4 text-[14px]',
               canViewGiftRecords && canViewRechargeRecords ? 'grid-cols-2' : 'grid-cols-1'
             )}
           >
-            {/* Left: 赠送记录 */}
-            {canViewGiftRecords && <div className="space-y-3">
-              {/* Points Gift Records */}
-              <div className="bg-vrbg-elevated rounded-xl p-4">
-                <h4 className="text-vr-caption text-vrtext-secondary font-medium mb-2">积分赠送</h4>
-                {(pointsRecords?.data?.data || []).length === 0 ? (
-                  <p className="text-vr-caption text-vrtext-muted">暂无记录</p>
+            {activeTab === '积分明细' && canViewGiftRecords && (
+              <div className="col-span-full rounded-md border border-slate-200 overflow-hidden">
+                {pointRows.length === 0 ? (
+                  <div className="py-16 text-center text-slate-400">暂无积分明细</div>
                 ) : (
-                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                    {(pointsRecords?.data?.data || []).map((record: any) => (
-                      <div key={record.id} className="flex items-center justify-between py-1.5 border-b border-vrborder-subtle last:border-0">
-                        <div className="min-w-0">
-                          <p className="text-vr-body-sm text-vrtext-primary truncate">+{record.pointsAmount} 积分</p>
-                          <p className="text-[10px] text-vrtext-muted truncate">{record.remark}</p>
-                        </div>
-                        <span className="text-[10px] text-vrtext-muted shrink-0 ml-2">
-                          {new Date(record.createdAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  <table className="w-full text-left">
+                    <thead className="bg-[#e8f1ff] text-slate-600">
+                      <tr>
+                        <th className="px-8 py-4 font-medium">来源/用途</th>
+                        <th className="px-8 py-4 font-medium">积分变化</th>
+                        <th className="px-8 py-4 font-medium">变化后积分</th>
+                        <th className="px-8 py-4 font-medium">日期</th>
+                        <th className="px-8 py-4 font-medium">备注</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pointRows.map((record) => (
+                        <tr key={record.id} className="border-t border-slate-100">
+                          <td className="px-8 py-4 text-slate-700">{labelFromMap(transactionTypeLabels, record.type)}</td>
+                          <td className={cn('px-8 py-4', (record.pointsAmount || 0) >= 0 ? 'text-red-500' : 'text-emerald-600')}>
+                            {signedNumber(record.pointsAmount || 0)}
+                          </td>
+                          <td className="px-8 py-4 text-slate-700">{record.afterPoints}</td>
+                          <td className="px-8 py-4 text-slate-700">{formatDateTime(record.createdAt)}</td>
+                          <td className="px-8 py-4 text-slate-700">{record.remark || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 )}
               </div>
+            )}
 
-              {/* Coupon Gift Records */}
-              <div className="bg-vrbg-elevated rounded-xl p-4">
-                <h4 className="text-vr-caption text-vrtext-secondary font-medium mb-2">优惠券赠送</h4>
+            {activeTab === '持有优惠券' && canViewGiftRecords && <div className="col-span-full">
+              <div className="w-full rounded-md border border-slate-200 overflow-hidden">
                 {(couponRecords?.data?.data || []).length === 0 ? (
-                  <p className="text-vr-caption text-vrtext-muted">暂无记录</p>
+                  <div className="py-16 text-center text-slate-400">暂无优惠券记录</div>
                 ) : (
-                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                    {(couponRecords?.data?.data || []).map((record: any) => (
-                      <div key={record.id} className="flex items-center justify-between py-1.5 border-b border-vrborder-subtle last:border-0">
-                        <div className="min-w-0">
-                          <p className="text-vr-body-sm text-vrtext-primary truncate">{record.name}</p>
-                          <p className="text-[10px] text-vrtext-muted truncate">
-                            {record.source === 'CAMPAIGN'
-                              ? (record.giftReason || '活动发放')
-                              : record.giftReason === 'COMPLAINT' ? '客诉' :
-                                record.giftReason === 'EQUIPMENT_FAILURE' ? '设备故障' :
-                                record.giftReason === 'ENTERTAIN_CLIENT' ? '招待客户' : '备注'}
-                            {record.giftRemark ? ` - ${record.giftRemark}` : ''}
-                          </p>
-                        </div>
-                        <span className="text-[10px] text-vrtext-muted shrink-0 ml-2">
-                          {new Date(record.createdAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  <table className="w-full text-left">
+                    <thead className="bg-[#e8f1ff] text-slate-600">
+                      <tr>
+                        <th className="px-8 py-4 font-medium w-[18%]">来源/用途</th>
+                        <th className="px-8 py-4 font-medium w-[26%]">优惠券名称</th>
+                        <th className="px-8 py-4 font-medium w-[16%]">券类型</th>
+                        <th className="px-8 py-4 font-medium w-[20%]">日期</th>
+                        <th className="px-8 py-4 font-medium w-[20%]">备注</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(couponRecords?.data?.data || []).map((record) => (
+                        <tr key={record.id} className="border-t border-slate-100">
+                          <td className="px-8 py-5 text-slate-700">
+                            {record.source === 'CAMPAIGN' ? '活动发放' : '优惠券赠送'}
+                          </td>
+                          <td className="px-8 py-5 text-slate-700">{record.name || '-'}</td>
+                          <td className="px-8 py-5 text-slate-700">{labelFromMap(couponTypeLabels, record.type)}</td>
+                          <td className="px-8 py-5 text-slate-700 whitespace-nowrap">{formatDateTime(record.createdAt)}</td>
+                          <td className="px-8 py-5 text-slate-700">
+                            {record.giftRemark || labelFromMap(giftReasonLabels, record.giftReason, '备注')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 )}
               </div>
             </div>}
 
-            {/* Right: 充值记录 */}
-            {canViewRechargeRecords && <div className="bg-vrbg-elevated rounded-xl p-4">
-              <h4 className="text-vr-caption text-vrtext-secondary font-medium mb-2">充值记录</h4>
-              {(rechargeRecords || []).length === 0 ? (
-                <p className="text-vr-caption text-vrtext-muted">暂无记录</p>
-              ) : (
-                <div className="space-y-1.5 max-h-[340px] overflow-y-auto">
-                  {(rechargeRecords || []).map((record: any) => (
-                    <div key={record.id} className="flex items-center justify-between py-1.5 border-b border-vrborder-subtle last:border-0">
-                      <div className="min-w-0">
-                        <p className="text-vr-body-sm text-vrtext-primary">
-                          ¥{(record.amount / 100).toFixed(0)}
-                          {record.bonus > 0 && <span className="text-vrsuccess text-[10px] ml-1">+赠¥{(record.bonus / 100).toFixed(0)}</span>}
-                        </p>
-                        <p className="text-[10px] text-vrtext-muted">
-                          {record.payMethod === 'WECHAT' ? '微信支付' : record.payMethod === 'ALIPAY' ? '支付宝' : record.payMethod}
-                        </p>
-                      </div>
-                      <span className="text-[10px] text-vrtext-muted shrink-0 ml-2">
-                        {record.paidAt ? new Date(record.paidAt).toLocaleDateString() : new Date(record.createdAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>}
+            {activeTab === '余额变动' && canViewRechargeRecords && (
+              <div className="col-span-full rounded-md border border-slate-200 overflow-hidden">
+                {balanceRows.length === 0 ? (
+                  <div className="py-16 text-center text-slate-400">暂无余额变动</div>
+                ) : (
+                  <table className="w-full text-left">
+                    <thead className="bg-[#e8f1ff] text-slate-600">
+                      <tr>
+                        <th className="px-8 py-4 font-medium">动作</th>
+                        <th className="px-8 py-4 font-medium">余额变动</th>
+                        <th className="px-8 py-4 font-medium">当前余额</th>
+                        <th className="px-8 py-4 font-medium">创建时间</th>
+                        <th className="px-8 py-4 font-medium">备注</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {balanceRows.map((record) => (
+                        <tr key={record.id} className="border-t border-slate-100">
+                          <td className="px-8 py-4 text-slate-700">{labelFromMap(transactionTypeLabels, record.type)}</td>
+                          <td className={cn('px-8 py-4', record.balanceDelta >= 0 ? 'text-red-500' : 'text-emerald-600')}>
+                            {signedYuan(record.balanceDelta)}
+                          </td>
+                          <td className="px-8 py-4 text-slate-700">{yuan(record.afterBalance)}</td>
+                          <td className="px-8 py-4 text-slate-700">{formatDateTime(record.createdAt)}</td>
+                          <td className="px-8 py-4 text-slate-700">{record.remark || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+            {activeTab === '消费记录' && (
+              <div className="col-span-full rounded-xl border border-slate-200 overflow-hidden">
+                {userOrders.length === 0 ? (
+                  <div className="py-16 text-center text-slate-400">暂无消费记录</div>
+                ) : (
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr>
+                        <th className="px-4 py-3 font-medium">订单号</th>
+                        <th className="px-4 py-3 font-medium">类型</th>
+                        <th className="px-4 py-3 font-medium">场地/内容</th>
+                        <th className="px-4 py-3 font-medium">消费金额</th>
+                        <th className="px-4 py-3 font-medium">支付方式</th>
+                        <th className="px-4 py-3 font-medium">状态</th>
+                        <th className="px-4 py-3 font-medium">消费时间</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {userOrders.map((order) => (
+                        <tr key={order.id} className="border-t border-slate-100">
+                          <td className="px-4 py-3 font-mono text-slate-600">{order.orderNo}</td>
+                          <td className="px-4 py-3 text-slate-600">{getOrderTypeLabel(order)}</td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {getOrderContentLabel(order)}
+                          </td>
+                          <td className="px-4 py-3 text-slate-900">{yuan((order.amount || 0) - (order.refundAmount || 0))}</td>
+                          <td className="px-4 py-3 text-slate-600">{getOrderPayMethodLabel(order)}</td>
+                          <td className="px-4 py-3 text-slate-600">{labelFromMap(orderStatusLabels, order.status)}</td>
+                          <td className="px-4 py-3 text-slate-500">{formatDateTime(order.paidAt || order.bookingTime || order.createdAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
           </motion.div>
           )}
 
           {/* Membership Upgrade */}
           {/* 会员等级已改为由充值系统自动计算，禁止手动修改 */}
         </div>
+        </div>
 
-        {/* Bottom Actions */}
-        {canEditUser && (
-          <div className="p-6 border-t border-vrborder-subtle flex gap-3">
-            <button
-              onClick={onResetPassword}
-              disabled={isUpdating}
-              className="flex-1 h-10 rounded-lg border border-vrborder-subtle text-vrtext-secondary text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              重置密码
-            </button>
-            <button
-              onClick={onDisableAccount}
-              disabled={isUpdating}
-              className="flex-1 h-10 rounded-lg border border-vrerror text-vrerror text-vr-body-sm font-medium hover:bg-vrerror/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              禁用账户
-            </button>
-          </div>
-        )}
       </SheetContent>
     </Sheet>
   )
@@ -539,101 +719,161 @@ function UserEditSheet({
   onOpenChange,
   onSubmit,
   isPending,
+  levelsConfig,
 }: {
   user: ApiUser | null
   open: boolean
   onOpenChange: (v: boolean) => void
   onSubmit: (data: Partial<ApiUser>) => void
   isPending: boolean
+  levelsConfig?: Array<{ key: string; name: string; discount: number }>
 }) {
   const [form, setForm] = useState<Partial<ApiUser>>({})
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [formError, setFormError] = useState('')
 
   // Sync form when user changes
   useEffect(() => {
     if (user) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setForm({
         name: user.name,
         phone: user.phone,
         email: user.email || '',
         birthday: user.birthday ? user.birthday.slice(0, 10) : '',
+        level: user.level,
+        status: user.status,
+        userGroup: user.userGroup || '',
+        address: user.address || '',
+        idCard: user.idCard || '',
+        password: '',
       })
+      setConfirmPassword('')
+      setFormError('')
     }
-  }, [user?.id])
+  }, [user, user?.id])
 
   if (!user) return null
 
   const handleSubmit = () => {
+    if (form.password && form.password !== confirmPassword) {
+      setFormError('两次输入的密码不一致')
+      return
+    }
+    setFormError('')
     onSubmit({
       name: form.name,
       phone: form.phone,
       email: form.email,
       birthday: form.birthday || null,
+      status: form.status,
+      password: form.password || undefined,
     })
   }
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-[480px] bg-vrbg-card border-l border-vrborder-subtle p-0 sm:max-w-[480px] flex flex-col">
-        <SheetHeader className="p-6 border-b border-vrborder-subtle shrink-0">
-          <SheetTitle className="text-vr-h3 text-vrtext-primary font-semibold">编辑用户</SheetTitle>
+      <SheetContent side="right" className="w-[min(1120px,calc(100vw-72px))] bg-white border-l border-slate-200 p-0 sm:max-w-none flex flex-col">
+        <SheetHeader className="h-14 px-6 border-b border-slate-200 shrink-0 flex-row items-center justify-between">
+          <SheetTitle className="text-[16px] text-slate-900 font-medium">用户详情</SheetTitle>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => onOpenChange(false)}
+              disabled={isPending}
+              className="h-9 px-5 rounded-md border border-slate-200 text-slate-600 text-[14px] hover:bg-slate-50 disabled:opacity-50"
+            >
+              取消
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={isPending}
+              className="h-9 px-5 rounded-md bg-vraccent-primary text-white text-[14px] hover:bg-vraccent-primary/90 disabled:opacity-50"
+            >
+              保存
+            </button>
+          </div>
         </SheetHeader>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-4 min-h-0">
-          <div>
-            <label className="text-vr-caption text-vrtext-secondary block mb-1.5">姓名</label>
-            <input
-              type="text"
-              value={form.name || ''}
-              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary transition-all"
-            />
+        <div className="flex-1 overflow-y-auto min-h-0 bg-white">
+          <div className="px-8 py-6 flex items-center gap-10 border-b border-slate-100">
+            <div className="flex items-center gap-5 min-w-[330px]">
+              <div
+                className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-semibold shrink-0"
+                style={{ backgroundColor: getAvatarColor(user.name) }}
+              >
+                {getInitials(user.name)}
+              </div>
+              <div>
+                <h3 className="text-[18px] text-slate-950 font-semibold">{maskPhone(user.phone)}</h3>
+                <p className="text-[14px] text-slate-600 mt-2">余额：{yuan(getUserBalance(user))}</p>
+                <p className="text-[14px] text-slate-600 mt-1">积分：{user.points || 0}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-x-20 gap-y-2 text-[14px] text-slate-600 flex-1">
+              <span>总计订单：{user.totalVisits || 0}</span>
+              <span>总消费金额：{yuan(user.totalSpent || 0)}</span>
+              <span>本月订单：0</span>
+              <span>本月消费金额：0.00</span>
+            </div>
           </div>
-          <div>
-            <label className="text-vr-caption text-vrtext-secondary block mb-1.5">手机号</label>
-            <input
-              type="text"
-              value={form.phone || ''}
-              onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))}
-              className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary transition-all"
-            />
-          </div>
-          <div>
-            <label className="text-vr-caption text-vrtext-secondary block mb-1.5">邮箱</label>
-            <input
-              type="text"
-              value={form.email || ''}
-              onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
-              className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary transition-all"
-            />
-          </div>
-          <div>
-            <label className="text-vr-caption text-vrtext-secondary block mb-1.5">生日</label>
-            <input
-              type="date"
-              value={form.birthday || ''}
-              onChange={(e) => setForm((prev) => ({ ...prev, birthday: e.target.value }))}
-              className="w-full h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary transition-all"
-            />
-          </div>
-          {/* 会员等级由充值系统自动计算，编辑时不允许手动修改 */}
-        </div>
 
-        <div className="p-6 border-t border-vrborder-subtle flex gap-3">
-          <button
-            onClick={handleSubmit}
-            disabled={isPending}
-            className="flex-1 h-10 bg-vraccent-primary text-white rounded-lg text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-          >
-            {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-            保存
-          </button>
-          <button
-            onClick={() => onOpenChange(false)}
-            disabled={isPending}
-            className="flex-1 h-10 rounded-lg border border-vrborder-subtle text-vrtext-secondary text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            取消
-          </button>
+          <div className="flex bg-slate-50 border-b border-slate-100">
+            {['用户信息', '消费记录', '积分明细', '持有优惠券', '余额变动'].map((tab, index) => (
+              <button
+                key={tab}
+                className={cn(
+                  'h-12 px-7 text-[14px] transition-colors border-t-2',
+                  index === 0 ? 'bg-white border-vraccent-primary text-vraccent-primary' : 'border-transparent text-slate-600'
+                )}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          <div className="px-10 py-7 space-y-8 text-[14px] text-slate-700">
+            {formError && <div className="rounded-md border border-vrerror/20 bg-vrerror/10 px-4 py-3 text-vrerror">{formError}</div>}
+
+            <section className="space-y-5 border-b border-dashed border-slate-200 pb-8">
+              <SectionTitle>基本信息</SectionTitle>
+              <div className="grid grid-cols-2 gap-x-24 gap-y-5">
+                <label className="flex items-center gap-4">
+                  <span className="w-24 text-right">用户ID:</span>
+                  <input disabled value={user.id} className="h-10 flex-1 rounded-md border border-slate-200 bg-slate-50 px-3 text-slate-400" />
+                </label>
+                <label className="flex items-center gap-4">
+                  <span className="w-24 text-right"><span className="text-vrerror">*</span> 手机号码:</span>
+                  <input value={form.phone || ''} onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))} className="h-10 flex-1 rounded-md border border-slate-200 px-3 focus:outline-none focus:border-vraccent-primary" />
+                </label>
+                <label className="flex items-center gap-4">
+                  <span className="w-24 text-right">生日:</span>
+                  <input type="date" value={form.birthday || ''} onChange={(e) => setForm((p) => ({ ...p, birthday: e.target.value }))} className="h-10 flex-1 rounded-md border border-slate-200 px-3 focus:outline-none focus:border-vraccent-primary" />
+                </label>
+                <label className="flex items-center gap-4">
+                  <span className="w-24 text-right">用户地址:</span>
+                  <input value={form.address || ''} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} placeholder="请输入用户地址" className="h-10 flex-1 rounded-md border border-slate-200 px-3 focus:outline-none focus:border-vraccent-primary" />
+                </label>
+              </div>
+            </section>
+
+            <section className="space-y-5">
+              <SectionTitle>用户概况</SectionTitle>
+              <div className="grid grid-cols-2 gap-x-24 gap-y-5">
+                <label className="flex items-center gap-4">
+                  <span className="w-24 text-right">用户等级:</span>
+                  <div className="h-10 flex-1 rounded-md border border-slate-200 bg-slate-50 px-3 flex items-center text-slate-500">
+                    {levelsConfig?.find((level) => level.key === user.level || level.name === user.level)?.name || user.level || '-'}
+                    <span className="ml-3 text-xs text-slate-400">由累计充值金额自动计算</span>
+                  </div>
+                </label>
+                <div className="flex items-center gap-4">
+                  <span className="w-24 text-right">用户状态:</span>
+                  <label className="flex items-center gap-2"><input type="radio" checked={form.status !== 'INACTIVE'} onChange={() => setForm((p) => ({ ...p, status: 'ACTIVE' }))} />开启</label>
+                  <label className="flex items-center gap-2"><input type="radio" checked={form.status === 'INACTIVE'} onChange={() => setForm((p) => ({ ...p, status: 'INACTIVE' }))} />锁定</label>
+                </div>
+              </div>
+            </section>
+          </div>
         </div>
       </SheetContent>
     </Sheet>
@@ -711,11 +951,12 @@ function MemberRechargeSheet({
     enabled: open,
   })
 
-  const venues = venueData?.data || []
+  const venues: VenueOption[] = useMemo(() => venueData?.data || [], [venueData?.data])
   const selectedConfig = configs.find((cfg: RechargeConfig) => String(cfg.amount) === amount)
 
   useEffect(() => {
     if (!open) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRechargeError('')
     setPayMethod('CASH')
     setRemark('')
@@ -724,6 +965,7 @@ function MemberRechargeSheet({
   useEffect(() => {
     if (!open) return
     if (!amount && configs.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAmount(String(configs[0].amount))
     }
     if (!venueId && venues.length > 0) {
@@ -752,8 +994,8 @@ function MemberRechargeSheet({
       queryClient.invalidateQueries({ queryKey: ['finance'] })
       onOpenChange(false)
     },
-    onError: (err: any) => {
-      setRechargeError(err?.response?.data?.message || err?.message || '充值失败')
+    onError: (err: unknown) => {
+      setRechargeError(getErrorMessage(err, '充值失败'))
     },
   })
 
@@ -801,7 +1043,7 @@ function MemberRechargeSheet({
               className="w-full h-10 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary"
             >
               <option value="">请选择归属门店</option>
-              {venues.map((venue: any) => (
+              {venues.map((venue) => (
                 <option key={venue.id} value={venue.id}>{venue.name}</option>
               ))}
             </select>
@@ -894,6 +1136,8 @@ export default function UsersPage() {
   const canViewRechargeRecords = hasPermission(currentUser, 'finance:read')
   const [activeTab, setActiveTab] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [searchType, setSearchType] = useState<UserSearchType>('all')
+  const [sourceTab, setSourceTab] = useState('全部')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(5)
   const [selectedUser, setSelectedUser] = useState<ApiUser | null>(null)
@@ -921,8 +1165,6 @@ export default function UsersPage() {
   const [giftPointsOpen, setGiftPointsOpen] = useState(false)
   const [giftCouponOpen, setGiftCouponOpen] = useState(false)
   const [giftingUser, setGiftingUser] = useState<ApiUser | null>(null)
-  const [giftChoiceOpen, setGiftChoiceOpen] = useState(false)
-  const [giftChoiceUser, setGiftChoiceUser] = useState<ApiUser | null>(null)
   const [giftPointsForm, setGiftPointsForm] = useState({ points: '', reason: 'COMPLAINT', remark: '' })
   const [giftCouponForm, setGiftCouponForm] = useState({
     name: '', type: 'EXPERIENCE_FREE' as 'EXPERIENCE_FREE' | 'DISCOUNT',
@@ -941,7 +1183,6 @@ export default function UsersPage() {
     discountRate: '', validDays: '30', reason: '', remark: '',
   })
   const [batchGiftError, setBatchGiftError] = useState('')
-  const [batchGiftLoading, setBatchGiftLoading] = useState(false)
   const [giftPolicyOpen, setGiftPolicyOpen] = useState(false)
   const [giftPolicyForm, setGiftPolicyForm] = useState<MemberGiftApprovalPolicy>({
     enabled: true,
@@ -958,10 +1199,11 @@ export default function UsersPage() {
   const levelParam = activeTab === 'all' ? undefined : reverseMap[activeTab]
 
   const { data: userData } = useQuery({
-    queryKey: ['users', levelParam, searchQuery, currentPage, pageSize],
+    queryKey: ['users', levelParam, searchType, searchQuery, currentPage, pageSize],
     queryFn: () => getUsers({
       level: levelParam,
       search: searchQuery || undefined,
+      searchType,
       page: currentPage,
       pageSize,
     }),
@@ -985,12 +1227,12 @@ export default function UsersPage() {
       setGiftPolicyOpen(false)
       queryClient.invalidateQueries({ queryKey: ['member-gift-approval-policy'] })
     },
-    onError: (err: any) => {
-      setGiftPolicyError(err?.response?.data?.message || err?.message || '保存失败')
+    onError: (err: unknown) => {
+      setGiftPolicyError(getErrorMessage(err, '保存失败'))
     },
   })
 
-  const users: ApiUser[] = userData?.data || []
+  const users: ApiUser[] = useMemo(() => userData?.data || [], [userData?.data])
   const totalUsers = userData?.meta?.total || 0
 
   const filteredUsers = useMemo(() => {
@@ -999,25 +1241,6 @@ export default function UsersPage() {
 
   const totalPages = Math.max(1, Math.ceil(totalUsers / pageSize))
   const safePage = Math.min(currentPage, totalPages)
-
-  // 统计卡片：优先使用后端返回的全量 levelCounts（基于全部用户，不受当前标签/分页影响）
-  const stats = useMemo(() => {
-    const backendCounts = userData?.meta?.levelCounts as Record<string, number> | undefined
-    const result: Record<string, number> = { total: totalUsers }
-    if (backendCounts) {
-      for (const l of memberLevels) {
-        const configKey = l.key.toLowerCase()
-        const enumKey = (configKeyToEnum[l.key] || l.key).toLowerCase()
-        result[l.name] = (backendCounts as any)[configKey] || (backendCounts as any)[enumKey] || 0
-      }
-    } else {
-      for (const l of memberLevels) {
-        const enumVal = configKeyToEnum[l.key] || l.key
-        result[l.name] = users.filter((u) => u.level === l.key || u.level === enumVal).length
-      }
-    }
-    return result
-  }, [userData?.meta?.levelCounts, users, totalUsers, memberLevels])
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<ApiUser> }) => updateUser(id, data),
@@ -1058,30 +1281,59 @@ export default function UsersPage() {
       showGiftSubmitResult(result, '批量优惠券赠送成功')
     },
   })
+  const batchGiftLoading = batchGiftPointsMutation.isPending || batchGiftCouponMutation.isPending
 
   // Clear selection when data changes
   useEffect(() => {
     setSelectedIds([])
-  }, [activeTab, searchQuery, currentPage, pageSize])
+  }, [activeTab, sourceTab, searchType, searchQuery, currentPage, pageSize])
 
   const handleOpenDetail = (user: ApiUser) => {
     setSelectedUser(user)
     setDrawerOpen(true)
   }
 
-  const handleOpenEdit = (user: ApiUser) => {
-    setEditingUser(user)
-    setEditSheetOpen(true)
-  }
-
-  const handleOpenDelete = (user: ApiUser) => {
-    setDeletingUser(user)
-    setDeleteDialogOpen(true)
-  }
-
   const handleOpenRecharge = (user: ApiUser) => {
     setRechargingUser(user)
     setRechargeSheetOpen(true)
+  }
+
+  const handleOpenGiftPoints = (user: ApiUser) => {
+    setGiftingUser(user)
+    setGiftPointsForm({ points: '', reason: 'COMPLAINT', remark: '' })
+    setGiftError('')
+    setGiftPointsOpen(true)
+  }
+
+  const handleOpenGiftCoupon = (user: ApiUser) => {
+    setGiftingUser(user)
+    setGiftCouponForm({ name: '', type: 'EXPERIENCE_FREE', discountRate: '', validityDays: '30', reason: 'COMPLAINT', remark: '' })
+    setGiftError('')
+    setGiftCouponOpen(true)
+  }
+
+  const handleExportUsers = () => {
+    if (filteredUsers.length === 0) {
+      window.alert('暂无可导出的用户数据')
+      return
+    }
+
+    const rows = filteredUsers.map((user) => ({
+      用户ID: user.id,
+      姓名: user.name || '',
+      手机号: user.phone,
+      付费会员: getUserBalance(user) > 0 ? '是' : '否',
+      用户等级: levelMap[user.level] || user.level,
+      积分: user.points || 0,
+      余额: yuan(getUserBalance(user)),
+      注册时间: formatDateTime(user.registerDate),
+      最近登录: formatDateTime(user.lastLogin),
+      状态: user.status === 'ACTIVE' ? '开启' : '锁定',
+    }))
+    const worksheet = XLSX.utils.json_to_sheet(rows)
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, '会员列表')
+    XLSX.writeFile(workbook, `会员列表_${format(new Date(), 'yyyyMMdd_HHmm')}.xlsx`)
   }
 
   const handleEditSubmit = (data: Partial<ApiUser>) => {
@@ -1107,46 +1359,6 @@ export default function UsersPage() {
     })
   }
 
-  const handleUpdateLevel = (level: string) => {
-    if (!selectedUser) return
-    const apiLevel = fallbackReverseMap[level] || fallbackLevelMap[level] || level
-    updateMutation.mutate(
-      { id: selectedUser.id, data: { level: apiLevel } },
-      {
-        onSuccess: () => {
-          setDrawerOpen(false)
-          setSelectedUser(null)
-        },
-      }
-    )
-  }
-
-  const handleResetPassword = () => {
-    if (!selectedUser) return
-    updateMutation.mutate(
-      { id: selectedUser.id, data: { status: selectedUser.status } },
-      {
-        onSuccess: () => {
-          window.alert('密码重置成功，新密码已发送至用户手机')
-        },
-      }
-    )
-  }
-
-  const handleDisableAccount = () => {
-    if (!selectedUser) return
-    updateMutation.mutate(
-      { id: selectedUser.id, data: { status: 'DISABLED' } },
-      {
-        onSuccess: () => {
-          window.alert('账户已禁用')
-          setDrawerOpen(false)
-          setSelectedUser(null)
-        },
-      }
-    )
-  }
-
   return (
     <Layout breadcrumb={['会员管理']}>
       <motion.div
@@ -1166,28 +1378,139 @@ export default function UsersPage() {
             <p className="text-vr-body-sm text-vrtext-tertiary mt-1">用户信息、会员等级、权限管理</p>
           </motion.div>
 
-          <div className="flex items-center gap-3">
+        </div>
+
+        {/* Search Filters */}
+        <div className="bg-vrbg-card rounded-xl border border-vrborder-subtle p-5">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
             <motion.div
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.3, delay: 0.1 }}
-              className="relative"
+              className="flex items-center gap-2"
             >
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-vrtext-muted" />
-              <input
-                type="text"
-                placeholder="搜索用户名、手机号..."
-                value={searchQuery}
-                onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1) }}
-                className="w-[280px] h-9 pl-9 pr-4 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
-              />
+              <span className="text-vr-body-sm text-vrtext-secondary whitespace-nowrap">用户搜索:</span>
+              <div className="flex h-9 overflow-hidden rounded-lg border border-vrborder-subtle bg-vrbg-surface focus-within:border-vraccent-primary focus-within:ring-1 focus-within:ring-vraccent-primary/15 transition-all">
+                <select
+                  value={searchType}
+                  onChange={(e) => {
+                    setSearchType(e.target.value as UserSearchType)
+                    setCurrentPage(1)
+                  }}
+                  className="w-[108px] border-r border-vrborder-subtle bg-transparent px-3 text-vr-body-sm text-vrtext-primary focus:outline-none"
+                >
+                  {userSearchOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-vrtext-muted" />
+                  <input
+                    type="text"
+                    placeholder="请输入用户"
+                    value={searchQuery}
+                    onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1) }}
+                    className="w-[220px] h-full pl-9 pr-4 bg-transparent text-vr-body-sm text-vrtext-primary placeholder:text-vrtext-muted focus:outline-none"
+                  />
+                </div>
+              </div>
             </motion.div>
 
-            {canManageGiftApprovalPolicy && (
+            <motion.div
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.3, delay: 0.12 }}
+              className="flex items-center gap-2"
+            >
+              <span className="text-vr-body-sm text-vrtext-secondary whitespace-nowrap">用户等级:</span>
+              <select
+                value={activeTab}
+                onChange={(e) => { setActiveTab(e.target.value); setCurrentPage(1) }}
+                className="w-[180px] h-9 px-3 bg-vrbg-surface border border-vrborder-subtle rounded-lg text-vr-body-sm text-vrtext-primary focus:outline-none focus:border-vraccent-primary focus:ring-1 focus:ring-vraccent-primary/15 transition-all"
+              >
+                {levelTabs.map((tab) => (
+                  <option key={tab.key} value={tab.key}>{tab.label}</option>
+                ))}
+              </select>
+            </motion.div>
+
+            <div className="ml-auto flex items-center gap-3">
+              <button
+                onClick={() => setCurrentPage(1)}
+                className="h-9 px-5 bg-vraccent-primary text-white rounded-lg text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors"
+              >
+                查询
+              </button>
+              <button
+                onClick={() => {
+                  setSearchType('all')
+                  setSearchQuery('')
+                  setActiveTab('all')
+                  setSourceTab('全部')
+                  setCurrentPage(1)
+                }}
+                className="h-9 px-5 bg-vrbg-surface border border-vrborder-subtle text-vrtext-secondary rounded-lg text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors"
+              >
+                重置
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* User List Panel */}
+        <div className="bg-vrbg-card rounded-xl border border-vrborder-subtle overflow-hidden">
+          <div className="flex items-center justify-between border-b border-vrborder-subtle px-5">
+            <div className="flex gap-8">
+            {userSourceTabs.map((tab, idx) => (
               <motion.button
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.3, delay: 0.12 }}
+                key={tab}
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25, delay: idx * 0.05 }}
+                onClick={() => { setSourceTab(tab); setCurrentPage(1) }}
+                className={cn(
+                  'relative py-3 text-vr-body-sm font-medium transition-colors',
+                  sourceTab === tab ? 'text-vraccent-primary' : 'text-vrtext-secondary hover:text-vrtext-primary'
+                )}
+              >
+                {tab}
+                {sourceTab === tab && (
+                  <motion.div
+                    layoutId="user-active-tab"
+                    className="absolute bottom-0 left-0 right-0 h-[2px] bg-vraccent-primary"
+                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                  />
+                )}
+              </motion.button>
+            ))}
+            </div>
+            <span className="text-vr-caption text-vrtext-tertiary">
+              {totalUsers} 位用户
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3 px-5 py-4">
+            {canEditUsers && (
+              <button
+                onClick={() => {
+                  setCreateForm({ name: '', phone: '', password: '', email: '', birthday: '', level: 'NORMAL', status: 'ACTIVE' })
+                  setCreateError('')
+                  setCreateSheetOpen(true)
+                }}
+                className="h-9 px-4 bg-vraccent-primary text-white rounded-lg text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                添加用户
+              </button>
+            )}
+            <button
+              onClick={handleExportUsers}
+              className="h-9 px-4 bg-vrbg-surface border border-vrborder-subtle text-vrtext-secondary rounded-lg text-vr-body-sm font-medium hover:bg-vrbg-elevated transition-colors"
+            >
+              导出
+            </button>
+            {canManageGiftApprovalPolicy && (
+              <button
                 onClick={() => {
                   if (giftPolicy) setGiftPolicyForm(giftPolicy)
                   setGiftPolicyError('')
@@ -1197,90 +1520,9 @@ export default function UsersPage() {
               >
                 <SlidersHorizontal className="w-4 h-4" />
                 赠送审批
-              </motion.button>
-            )}
-
-            {canEditUsers && (
-              <motion.button
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.3, delay: 0.15 }}
-                onClick={() => {
-                  setCreateForm({ name: '', phone: '', password: '', email: '', birthday: '', level: 'NORMAL', status: 'ACTIVE' })
-                  setCreateError('')
-                  setCreateSheetOpen(true)
-                }}
-                className="h-9 px-4 bg-vraccent-primary text-white rounded-lg text-vr-body-sm font-medium hover:bg-vraccent-primary/90 transition-colors flex items-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" />
-                新增用户
-              </motion.button>
+              </button>
             )}
           </div>
-        </div>
-
-        {/* Stat Cards */}
-        <div className="grid grid-cols-5 gap-4">
-          <StatCard
-            icon={<Users className="w-6 h-6 text-blue-400" />}
-            value={stats.total || 0}
-            label="用户总数"
-            color="bg-blue-400/10"
-            delay={0}
-          />
-          {memberLevels.map((l, i) => {
-            const levelIconConfig = [
-              { Icon: User, iconColor: 'text-slate-400', bgColor: 'bg-slate-400/10' },
-              { Icon: Medal, iconColor: 'text-cyan-400', bgColor: 'bg-cyan-400/10' },
-              { Icon: Crown, iconColor: 'text-amber-400', bgColor: 'bg-amber-400/10' },
-              { Icon: Sparkles, iconColor: 'text-purple-400', bgColor: 'bg-purple-400/10' },
-              { Icon: Star, iconColor: 'text-pink-400', bgColor: 'bg-pink-400/10' },
-            ]
-            const cfg = levelIconConfig[i] || levelIconConfig[levelIconConfig.length - 1]
-            const IconComp = cfg.Icon
-            return (
-              <StatCard
-                key={l.key}
-                icon={<IconComp className={cn('w-6 h-6', cfg.iconColor)} />}
-                value={stats[l.name] || 0}
-                label={l.name}
-                color={cfg.bgColor}
-                delay={0.05 * (i + 1)}
-              />
-            )
-          })}
-        </div>
-
-        {/* Filter Tabs */}
-        <div className="flex items-center justify-between border-b border-vrborder-subtle">
-          <div className="flex gap-6">
-            {levelTabs.map((tab, idx) => (
-              <motion.button
-                key={tab.key}
-                initial={{ opacity: 0, y: 5 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.25, delay: idx * 0.05 }}
-                onClick={() => { setActiveTab(tab.key); setCurrentPage(1) }}
-                className={cn(
-                  'relative py-3 text-vr-body-sm font-medium transition-colors',
-                  activeTab === tab.key ? 'text-vraccent-primary' : 'text-vrtext-secondary hover:text-vrtext-primary'
-                )}
-              >
-                {tab.label}
-                {activeTab === tab.key && (
-                  <motion.div
-                    layoutId="user-active-tab"
-                    className="absolute bottom-0 left-0 right-0 h-[2px] bg-vraccent-primary"
-                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                  />
-                )}
-              </motion.button>
-            ))}
-          </div>
-          <span className="text-vr-caption text-vrtext-tertiary">
-            {totalUsers} 位用户
-          </span>
-        </div>
 
         {/* Batch Action Bar */}
         <AnimatePresence>
@@ -1334,14 +1576,15 @@ export default function UsersPage() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3, delay: 0.2 }}
-          className="bg-vrbg-card rounded-xl border border-vrborder-subtle overflow-hidden"
+          className="overflow-hidden"
         >
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full table-fixed">
               <thead>
                 <tr className="bg-vrbg-elevated">
+                  <th className="px-3 py-3 text-vr-caption text-vrtext-secondary font-medium w-[38px]"></th>
                   {canGiftUsers && (
-                    <th className="px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[40px]">
+                    <th className="px-3 py-3 text-vr-caption text-vrtext-secondary font-medium w-[38px]">
                       <input
                         type="checkbox"
                         checked={filteredUsers.length > 0 && selectedIds.length === filteredUsers.length}
@@ -1356,12 +1599,15 @@ export default function UsersPage() {
                       />
                     </th>
                   )}
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium">用户</th>
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">手机号</th>
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[120px]">会员等级</th>
-                  <th className="text-center px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[100px]">积分</th>
-                  <th className="text-left px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[110px]">注册时间</th>
-                  <th className="text-right px-4 py-3 text-vr-caption text-vrtext-secondary font-medium w-[140px]">操作</th>
+                  <th className="text-left px-3 py-3 text-vr-caption text-vrtext-secondary font-medium w-[15%]">用户ID</th>
+                  <th className="text-left px-3 py-3 text-vr-caption text-vrtext-secondary font-medium w-[72px]">头像</th>
+                  <th className="text-left px-3 py-3 text-vr-caption text-vrtext-secondary font-medium w-[15%]">姓名</th>
+                  <th className="text-center px-3 py-3 text-vr-caption text-vrtext-secondary font-medium w-[9%]">付费会员</th>
+                  <th className="text-center px-3 py-3 text-vr-caption text-vrtext-secondary font-medium w-[13%]">用户等级</th>
+                  <th className="text-left px-3 py-3 text-vr-caption text-vrtext-secondary font-medium w-[14%]">手机号</th>
+                  <th className="text-center px-3 py-3 text-vr-caption text-vrtext-secondary font-medium w-[9%]">积分</th>
+                  <th className="text-right px-3 py-3 text-vr-caption text-vrtext-secondary font-medium w-[10%]">余额</th>
+                  <th className="text-right px-3 py-3 text-vr-caption text-vrtext-secondary font-medium w-[11%]">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -1375,8 +1621,11 @@ export default function UsersPage() {
                       transition={{ duration: 0.2, delay: Math.min(idx * 0.04, 0.2) }}
                       className="h-[60px] border-t border-vrborder-subtle hover:bg-vrbg-elevated/60 transition-colors"
                     >
+                      <td className="px-3 py-3 text-vrtext-tertiary">
+                        <ChevronRight className="w-4 h-4" />
+                      </td>
                       {canGiftUsers && (
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-3">
                           <input
                             type="checkbox"
                             checked={selectedIds.includes(user.id)}
@@ -1391,78 +1640,55 @@ export default function UsersPage() {
                           />
                         </td>
                       )}
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <div
-                            className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-medium shrink-0"
-                            style={{ backgroundColor: getAvatarColor(user.name) }}
-                          >
-                            {getInitials(user.name)}
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-vr-body-sm text-vrtext-primary font-medium">{user.name}</span>
-                            <span className="text-vr-caption text-vrtext-tertiary">{user.phone.slice(0, 3)}****{user.phone.slice(-4)}</span>
-                          </div>
+                      <td className="px-3 py-3">
+                        <span className="block truncate text-vr-caption text-vrtext-tertiary font-mono" title={user.id}>
+                          {user.id.length > 12 ? `${user.id.slice(0, 8)}...${user.id.slice(-4)}` : user.id}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div
+                          className="w-10 h-10 rounded-lg flex items-center justify-center text-white text-sm font-medium shrink-0"
+                          style={{ backgroundColor: getAvatarColor(user.name) }}
+                        >
+                          {getInitials(user.name)}
                         </div>
                       </td>
-                      <td className="px-4 py-3">
-                        <span className="text-vr-body-sm text-vrtext-primary font-mono">{user.phone}</span>
+                      <td className="px-3 py-3">
+                        <span className="block truncate text-vr-body-sm text-vrtext-primary font-medium" title={user.name || maskPhone(user.phone)}>
+                          {user.name || maskPhone(user.phone)}
+                        </span>
                       </td>
-                      <td className="px-4 py-3 text-center">
+                      <td className="px-3 py-3 text-center">
+                        <span className="text-vr-body-sm text-vrtext-secondary">{getUserBalance(user) > 0 ? '是' : '否'}</span>
+                      </td>
+                      <td className="px-3 py-3 text-center">
                         <LevelBadge level={user.level} levelsConfig={memberLevels} />
                       </td>
-                      <td className="px-4 py-3 text-center">
+                      <td className="px-3 py-3">
+                        <span className="block truncate text-vr-body-sm text-vrtext-primary font-mono">{user.phone}</span>
+                      </td>
+                      <td className="px-3 py-3 text-center">
                         <span className="text-vr-body-sm text-vrtext-secondary">{user.points || 0}</span>
                       </td>
-                      <td className="px-4 py-3">
-                        <span className="text-vr-body-sm text-vrtext-secondary">{formatDate(user.registerDate)}</span>
+                      <td className="px-3 py-3 text-right">
+                        <span className="text-vr-body-sm text-vrtext-primary">{yuan(getUserBalance(user))}</span>
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {canEditUsers && (
-                            <button
-                              onClick={() => handleOpenEdit(user)}
-                              className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vraccent-primary hover:bg-vraccent-primary/10 transition-colors"
-                              title="编辑"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                      <td className="px-3 py-3 text-right">
+                        <div className="relative flex items-center justify-end gap-3 text-vr-body-sm">
                           <button
                             onClick={() => handleOpenDetail(user)}
-                            className="w-7 h-7 rounded-lg flex items-center justify-center text-vraccent-primary hover:bg-vraccent-primary/10 transition-colors"
+                            className="text-vraccent-primary hover:underline"
                             title="详情"
                           >
-                            <Eye className="w-3.5 h-3.5" />
+                            详情
                           </button>
-                          {canEditUsers && (
-                            <button
-                              onClick={() => handleOpenDelete(user)}
-                              className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrerror hover:bg-vrerror/10 transition-colors"
-                              title="删除"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
                           {canGiftUsers && (
                             <button
                               onClick={() => handleOpenRecharge(user)}
-                              className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vraccent-primary hover:bg-vraccent-primary/10 transition-colors"
-                              title="会员储值"
+                              className="text-vraccent-primary hover:underline"
+                              title="会员充值"
                             >
-                              <Wallet className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          {canGiftUsers && (
-                            <button
-                              onClick={() => {
-                                setGiftChoiceUser(user)
-                                setGiftChoiceOpen(true)
-                              }}
-                              className="w-7 h-7 rounded-lg flex items-center justify-center text-vrtext-tertiary hover:text-vrsuccess hover:bg-vrsuccess/10 transition-colors"
-                              title="赠送"
-                            >
-                              <Gift className="w-3.5 h-3.5" />
+                              充值
                             </button>
                           )}
                         </div>
@@ -1532,6 +1758,7 @@ export default function UsersPage() {
             </div>
           )}
         </motion.div>
+        </div>
       </motion.div>
 
       {/* User Detail Drawer */}
@@ -1539,9 +1766,23 @@ export default function UsersPage() {
         user={selectedUser}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
-        onUpdateLevel={handleUpdateLevel}
-        onResetPassword={handleResetPassword}
-        onDisableAccount={handleDisableAccount}
+        onEdit={() => {
+          if (selectedUser) {
+            setEditingUser(selectedUser)
+            setDrawerOpen(false)
+            setEditSheetOpen(true)
+          }
+        }}
+        onGiftPoints={() => {
+          if (selectedUser) {
+            handleOpenGiftPoints(selectedUser)
+          }
+        }}
+        onGiftCoupon={() => {
+          if (selectedUser) {
+            handleOpenGiftCoupon(selectedUser)
+          }
+        }}
         isUpdating={updateMutation.isPending}
         levelsConfig={memberLevels}
         canEditUser={canEditUsers}
@@ -1556,6 +1797,7 @@ export default function UsersPage() {
         onOpenChange={setEditSheetOpen}
         onSubmit={handleEditSubmit}
         isPending={updateMutation.isPending}
+        levelsConfig={memberLevels}
       />
 
       {/* Delete Confirm Dialog */}
@@ -1684,8 +1926,8 @@ export default function UsersPage() {
                     })
                     queryClient.invalidateQueries({ queryKey: ['users'] })
                     setCreateSheetOpen(false)
-                  } catch (e: any) {
-                    setCreateError(e?.response?.data?.message || '创建失败')
+                  } catch (e: unknown) {
+                    setCreateError(getErrorMessage(e, '创建失败'))
                   } finally {
                     setCreateLoading(false)
                   }
@@ -1778,14 +2020,14 @@ export default function UsersPage() {
                     const result = await giftPoints({
                       userId: giftingUser.id,
                       points: parseInt(giftPointsForm.points),
-                      reason: giftPointsForm.reason as any,
+                      reason: giftPointsForm.reason as GiftPointsPayload['reason'],
                       remark: giftPointsForm.remark || undefined,
                     })
                     setGiftPointsOpen(false)
                     queryClient.invalidateQueries({ queryKey: ['users'] })
                     showGiftSubmitResult(result, '积分赠送成功')
-                  } catch (err: any) {
-                    setGiftError(err?.response?.data?.message || err?.message || '赠送失败')
+                  } catch (err: unknown) {
+                    setGiftError(getErrorMessage(err, '赠送失败'))
                   } finally {
                     setGiftLoading(false)
                   }
@@ -1939,14 +2181,14 @@ export default function UsersPage() {
                       type: giftCouponForm.type,
                       discountRate: giftCouponForm.type === 'DISCOUNT' ? parseInt(giftCouponForm.discountRate) : undefined,
                       validityDays: parseInt(giftCouponForm.validityDays),
-                      reason: giftCouponForm.reason as any,
+                      reason: giftCouponForm.reason as GiftCouponPayload['reason'],
                       remark: giftCouponForm.remark || undefined,
                     })
                     setGiftCouponOpen(false)
                     queryClient.invalidateQueries({ queryKey: ['users'] })
                     showGiftSubmitResult(result, '优惠券赠送成功')
-                  } catch (err: any) {
-                    setGiftError(err?.response?.data?.message || err?.message || '赠送失败')
+                  } catch (err: unknown) {
+                    setGiftError(getErrorMessage(err, '赠送失败'))
                   } finally {
                     setGiftLoading(false)
                   }
@@ -2247,67 +2489,6 @@ export default function UsersPage() {
           </div>
         </SheetContent>
       </Sheet>
-
-      {/* ─── Gift Choice Dialog ─── */}
-      <AlertDialog open={giftChoiceOpen} onOpenChange={setGiftChoiceOpen}>
-        <AlertDialogContent className="bg-vrbg-card border-vrborder-subtle sm:max-w-sm">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-vrtext-primary">
-              赠送 {giftChoiceUser?.name}
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-vrtext-secondary">
-              请选择赠送类型
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="flex flex-col gap-2 py-2">
-            <button
-              onClick={() => {
-                setGiftChoiceOpen(false)
-                if (giftChoiceUser) {
-                  setGiftingUser(giftChoiceUser)
-                  setGiftPointsForm({ points: '', reason: 'COMPLAINT', remark: '' })
-                  setGiftError('')
-                  setGiftPointsOpen(true)
-                }
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-vrbg-elevated hover:bg-vrsuccess/10 border border-vrborder-subtle hover:border-vrsuccess/30 transition-colors text-left"
-            >
-              <div className="w-10 h-10 rounded-full bg-vrsuccess/10 flex items-center justify-center shrink-0">
-                <Coins className="w-5 h-5 text-vrsuccess" />
-              </div>
-              <div>
-                <p className="text-vr-body-sm text-vrtext-primary font-medium">赠送积分</p>
-                <p className="text-vr-caption text-vrtext-muted">手动赠送积分到会员账户</p>
-              </div>
-            </button>
-            <button
-              onClick={() => {
-                setGiftChoiceOpen(false)
-                if (giftChoiceUser) {
-                  setGiftingUser(giftChoiceUser)
-                  setGiftCouponForm({ name: '', type: 'EXPERIENCE_FREE', discountRate: '', validityDays: '30', reason: 'COMPLAINT', remark: '' })
-                  setGiftError('')
-                  setGiftCouponOpen(true)
-                }
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-vrbg-elevated hover:bg-vraccent-primary/10 border border-vrborder-subtle hover:border-vraccent-primary/30 transition-colors text-left"
-            >
-              <div className="w-10 h-10 rounded-full bg-vraccent-primary/10 flex items-center justify-center shrink-0">
-                <Ticket className="w-5 h-5 text-vraccent-primary" />
-              </div>
-              <div>
-                <p className="text-vr-body-sm text-vrtext-primary font-medium">赠送优惠券</p>
-                <p className="text-vr-caption text-vrtext-muted">创建体验券或折扣券赠送给会员</p>
-              </div>
-            </button>
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="bg-transparent border-vrborder-subtle text-vrtext-secondary hover:bg-vrbg-elevated hover:text-vrtext-primary">
-              取消
-            </AlertDialogCancel>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </Layout>
   )
 }

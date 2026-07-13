@@ -69,6 +69,7 @@ function DateFilterPicker({
   const selectedRange = selectedStartDate
     ? { from: selectedStartDate, to: selectedEndDate }
     : undefined
+  const isRangeMode = mode === "range"
   const numberOfMonths = mode === "range" && isDesktopCalendar ? 2 : 1
   const selectionLabel =
     mode === "single"
@@ -106,23 +107,33 @@ function DateFilterPicker({
       <PopoverTrigger asChild>
         <Button
           variant="outline"
-          className={cn("min-w-48 justify-start gap-2", className)}
+          className={cn(
+            "justify-start gap-2",
+            isRangeMode ? "min-w-[280px]" : "min-w-48",
+            className
+          )}
         >
           <CalendarDays className="size-4 shrink-0" aria-hidden="true" />
           <span className="truncate">{selectionLabel}</span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-auto p-0">
+      <PopoverContent
+        align="start"
+        className={cn(
+          "p-0",
+          isRangeMode ? "w-[min(calc(100vw-2rem),880px)]" : "w-auto"
+        )}
+      >
         <div className="flex flex-col sm:flex-row">
           {mode === "range" && (
-            <div className="grid grid-cols-2 gap-1 border-b p-2 sm:flex sm:w-24 sm:flex-col sm:border-r sm:border-b-0">
+            <div className="grid grid-cols-2 gap-1 border-b p-3 sm:flex sm:w-36 sm:flex-col sm:border-r sm:border-b-0">
               {datePresets.map((preset) => (
                 <Button
                   key={preset.key}
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="justify-start"
+                  className="h-9 justify-start text-[15px]"
                   onClick={() => onChange(getDatePreset(preset.key))}
                 >
                   {preset.label}
@@ -130,7 +141,7 @@ function DateFilterPicker({
               ))}
             </div>
           )}
-          <div className="p-1">
+          <div className={cn(isRangeMode ? "flex-1 p-4" : "p-1")}>
             {mode === "range" ? (
               <Calendar
                 mode="range"
@@ -139,6 +150,18 @@ function DateFilterPicker({
                 onSelect={handleRangeSelect}
                 numberOfMonths={numberOfMonths}
                 defaultMonth={selectedStartDate}
+                className="w-full p-0 [--cell-size:2.75rem]"
+                classNames={{
+                  root: "w-full",
+                  months: "flex flex-col gap-6 md:flex-row md:justify-between",
+                  month: "flex w-full flex-col gap-5 md:w-[20rem]",
+                  month_caption: "flex h-11 w-full items-center justify-center px-11",
+                  caption_label: "select-none text-lg font-medium",
+                  nav: "absolute inset-x-0 top-0 flex w-full items-center justify-between",
+                  weekdays: "flex border-b pb-3",
+                  weekday: "flex-1 select-none rounded-md text-center text-[15px] font-normal text-muted-foreground",
+                  week: "mt-3 flex w-full",
+                }}
               />
             ) : (
               <Calendar

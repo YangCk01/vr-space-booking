@@ -327,3 +327,21 @@ export async function listMyTransactions(req: Request, res: Response) {
     return error(res, (err as Error).message, 500)
   }
 }
+
+/** B端：按用户查询资金/积分流水 */
+export async function listTransactions(req: Request, res: Response) {
+  try {
+    const userId = req.query.userId as string | undefined
+    if (!userId) return error(res, '用户ID不能为空', 400)
+
+    const transactions = await prisma.balanceTransaction.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    })
+
+    return success(res, transactions)
+  } catch (err) {
+    return error(res, (err as Error).message, 500)
+  }
+}

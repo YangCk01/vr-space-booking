@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { getConfig, create, confirm, list, listMy, listMyTransactions, staffRecharge } from '../controllers/rechargeController'
+import { getConfig, create, confirm, list, listMy, listMyTransactions, listTransactions, staffRecharge } from '../controllers/rechargeController'
 import { authenticate } from '../middleware/auth'
 import { requirePermission } from '../middleware/rbac'
 import { validateRequest } from '../middleware/validateRequest'
@@ -13,6 +13,7 @@ router.post('/', authenticate, validateRequest({ body: createRechargeSchema }), 
 router.post('/confirm', authenticate, validateRequest({ body: confirmRechargeSchema }), confirm)
 router.get('/my', authenticate, listMy)
 router.get('/my-transactions', authenticate, listMyTransactions)
+router.get('/transactions', authenticate, requirePermission('finance:read'), listTransactions)
 router.get('/', authenticate, requirePermission('finance:read'), list)
 
 export default router

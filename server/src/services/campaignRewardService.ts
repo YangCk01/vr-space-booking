@@ -1,5 +1,6 @@
 import { prisma } from '../utils/prisma'
 import { addDays } from 'date-fns'
+import { evaluateCampaignRewardEligibility, type CampaignUserScope } from '../domain/campaignRewardEligibility'
 
 /* ─── Types ─── */
 export interface TriggerContext {
@@ -108,6 +109,60 @@ export async function executeCampaign(
       if (!reward) {
         return { status: 'FAILED', reason: 'NO_REWARD' }
       }
+
+      const userScope: CampaignUserScope = campaign.targetTags.includes('VIP')
+        ? 'PAID'
+        : campaign.excludeTags.includes('VIP') ? 'NORMAL' : 'ALL'
+      const isVip = Boolean(await tx.userTag.findFirst({ where: { userId, tag: 'VIP' }, select: { id: true } }))
+      const order = context.payload?.orderId
+        ? await tx.order.findUnique({
+            where: { id: context.payload.orderId },
+            include: { booking: true },
+          })
+        : null
+      const completedOrderCount = order
+        ? await tx.order.count({ where: { userId, status: 'COMPLETED', orderKind: 'NORMAL' } })
+        : undefined
+      const bookingDate = order?.booking?.date
+      const eligibility = evaluateCampaignRewardEligibility({
+        userScope,
+        validFrom: reward.validFrom,
+        validTo: reward.validTo,
+        minOrderAmount: reward.minOrderAmount,
+        applicableVenues: reward.applicableVenues,
+        applicableGames: reward.applicableGames,
+        applicableWeekdays: reward.applicableWeekdays,
+        applicableStartTime: reward.applicableStartTime,
+        applicableEndTime: reward.applicableEndTime,
+        minPeople: reward.minPeople,
+        firstOrderOnly: reward.firstOrderOnly,
+        minCompletedOrders: reward.minCompletedOrders,
+      }, {
+        isVip,
+        now,
+        amount: order?.amount ?? context.payload?.amount,
+        venueId: order?.venueId ?? order?.booking?.venueId ?? context.payload?.venueId,
+        gameId: order?.booking?.gameId ?? context.payload?.gameId,
+        weekday: bookingDate ? bookingDate.getUTCDay() : context.payload?.weekday,
+        startTime: order?.booking?.startTime ?? context.payload?.startTime,
+        personCount: order?.booking?.personCount ?? context.payload?.personCount,
+        completedOrderCount,
+      })
+      if (!eligibility.eligible) {
+        await tx.campaignExecutionLog.create({
+          data: {
+            campaignId,
+            userId,
+            triggerEvent: context.event,
+            triggerSource: context.source,
+            triggerPayload: context.payload || {},
+            status: 'SKIPPED',
+            reason: eligibility.reason,
+            rewardType: reward.rewardType,
+          },
+        })
+        return { status: 'SKIPPED', reason: eligibility.reason }
+      }
       if (reward.maxQuantity > 0 && reward.issuedCount >= reward.maxQuantity) {
         return { status: 'SKIPPED', reason: 'MAX_REACHED' }
       }
@@ -188,8 +243,8 @@ async function distributeRewardTx(
         type: 'DISCOUNT',
         discountRate: reward.couponDiscountRate || null,
         status: 'UNUSED',
-        validFrom: now,
-        validTo: addDays(now, reward.couponValidDays || 7),
+        validFrom: reward.validFrom || now,
+        validTo: reward.validTo || addDays(now, reward.couponValidDays || 7),
         source: 'CAMPAIGN',
         giftReason: reason,
       },
@@ -201,8 +256,8 @@ async function distributeRewardTx(
         name: reward.couponName || '体验券',
         type: 'EXPERIENCE_FREE',
         status: 'UNUSED',
-        validFrom: now,
-        validTo: addDays(now, reward.couponValidDays || 7),
+        validFrom: reward.validFrom || now,
+        validTo: reward.validTo || addDays(now, reward.couponValidDays || 7),
         source: 'CAMPAIGN',
         giftReason: reason,
       },

@@ -9,6 +9,8 @@ import { getPlatformConfig, type PlatformConfigMap } from '@/api/settings'
 import { useAuth } from '@/providers/AuthProvider'
 import { cn } from '@/lib/utils'
 import { getImageUrl } from '@/lib/imageUrl'
+import { classifyOrderPaymentState } from '@/domain/orderPaymentState'
+import { startOrderListRedirect } from '@/domain/orderListRedirect'
 
 const payMethodMap: Record<string, { label: string; method: string }> = {
   balance: { label: '余额支付', method: 'BALANCE' },
@@ -132,6 +134,7 @@ export default function Pay() {
 
   const countdownMs = useCountdown(order?.expireAt)
   const isExpired = countdownMs <= 0 && !!order?.expireAt
+  const paymentState = classifyOrderPaymentState(order?.status)
 
   useEffect(() => {
     if (order?.status === 'PENDING' && isExpired) {
@@ -220,12 +223,17 @@ export default function Pay() {
     },
   })
 
-  // 已支付订单自动跳回订单列表（全部）
+  // 已支付生命周期中的订单统一跳回订单列表（全部）
   useEffect(() => {
-    if (order?.status === 'PAID') {
-      navigate('/orders', { replace: true })
-    }
-  }, [order?.status, navigate])
+    if (paymentState !== 'PAID') return
+
+    return startOrderListRedirect({
+      navigate: (target) => navigate(target, { replace: true }),
+      hardRedirect: (target) => window.location.replace(target),
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      cancel: (timer) => window.clearTimeout(timer as number),
+    })
+  }, [paymentState, navigate])
 
   const handlePay = () => {
     if (isExpired) {
@@ -269,7 +277,16 @@ export default function Pay() {
     )
   }
 
-  if (!order || (order.status !== 'PENDING' && order.status !== 'PAID')) {
+  if (order && paymentState === 'PAID') {
+    return (
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center text-[var(--text-muted)] px-4">
+        <div className="w-6 h-6 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
+        <p className="mt-4 text-sm">支付成功，正在返回订单列表...</p>
+      </div>
+    )
+  }
+
+  if (!order || paymentState === 'UNAVAILABLE') {
     return (
       <div className="min-h-[100dvh] flex flex-col items-center justify-center text-[var(--text-muted)] px-4">
         <CreditCard className="w-12 h-12 mb-3 opacity-30" />

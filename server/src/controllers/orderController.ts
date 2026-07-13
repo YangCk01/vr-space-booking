@@ -142,7 +142,7 @@ export async function list(req: AuthenticatedRequest, res: Response) {
     await expirePendingOrders()
     await processBookingLifecycle()
 
-    const { status, search, page = '1', pageSize = '10', startDate, endDate, source, orderType, orderKind, feeType, refundStatus, parentOrderNo } = req.query
+    const { status, search, page = '1', pageSize = '10', startDate, endDate, userId, source, orderType, orderKind, feeType, refundStatus, parentOrderNo } = req.query
     const { page: pageNum, pageSize: sizeNum } = clampPageParams({ page, pageSize, defaultPageSize: 10, maxPageSize: 100 })
 
     const where: any = {}
@@ -150,6 +150,10 @@ export async function list(req: AuthenticatedRequest, res: Response) {
 
     if (status && status !== 'all') {
       where.status = status as string
+    }
+
+    if (typeof userId === 'string' && userId.trim()) {
+      where.userId = userId
     }
 
     if (orderKind && orderKind !== 'all') {

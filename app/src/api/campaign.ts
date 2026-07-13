@@ -7,9 +7,55 @@ export interface CampaignReward {
   couponName?: string
   couponDiscountRate?: number
   couponValidDays?: number
+  validFrom?: string
+  validTo?: string
+  minOrderAmount?: number
+  applicableVenues?: string[]
+  applicableGames?: string[]
+  applicableWeekdays?: number[]
+  applicableStartTime?: string
+  applicableEndTime?: string
+  minPeople?: number
+  firstOrderOnly?: boolean
+  minCompletedOrders?: number
   maxQuantity: number
   issuedCount: number
   usedCount: number
+}
+
+export type CampaignRewardRecordType = 'POINTS' | 'COUPON' | 'EXPERIENCE_COUPON'
+
+export interface CampaignRewardRecord {
+  id: string
+  campaignId: string
+  campaignName: string
+  userId: string
+  userName: string
+  userPhone: string
+  rewardType: CampaignRewardRecordType
+  rewardName: string
+  rewardValue: number | null
+  pointsAmount: number | null
+  validDays: number | null
+  applicableGameNames: string[]
+  status: string
+  reason: string | null
+  issuedAt: string
+  usedAt: string | null
+  usedOrderId: string | null
+  usedAmount: number | null
+  description: string
+}
+
+export interface CampaignRewardRecordFilters {
+  page?: number
+  pageSize?: number
+  campaignId?: string
+  rewardType?: CampaignRewardRecordType | ''
+  status?: 'ISSUED' | 'USED' | 'FAILED' | ''
+  userKeyword?: string
+  startDate?: string
+  endDate?: string
 }
 
 export interface TriggerRuleInfo {
@@ -80,6 +126,17 @@ export interface CreateCampaignInput {
     couponName?: string
     couponDiscountRate?: number
     couponValidDays?: number
+    validFrom?: string
+    validTo?: string
+    minOrderAmount?: number
+    applicableVenues?: string[]
+    applicableGames?: string[]
+    applicableWeekdays?: number[]
+    applicableStartTime?: string
+    applicableEndTime?: string
+    minPeople?: number
+    firstOrderOnly?: boolean
+    minCompletedOrders?: number
     maxQuantity: number
   }>
   triggerRule?: CampaignTriggerRuleInput
@@ -150,6 +207,11 @@ export async function getCampaignTracks(id: string, params?: { page?: number; pa
 
 export async function getCampaignLogs(id: string, params?: { page?: number; pageSize?: number; status?: string }) {
   const res = await apiClient.get(`/campaigns/${id}/logs`, { params })
+  return res.data
+}
+
+export async function getCampaignRewardRecords(params?: CampaignRewardRecordFilters) {
+  const res = await apiClient.get('/campaigns/reward-records', { params })
   return res.data
 }
 

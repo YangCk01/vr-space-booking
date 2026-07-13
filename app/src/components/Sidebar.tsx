@@ -19,7 +19,6 @@ import {
   ShieldCheck,
   ChevronDown,
   Table2,
-  Zap,
   Package,
   Scale,
   Crown,
@@ -78,6 +77,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { key: 'member-center', label: '会员中心', icon: 'Crown', path: '/member-center' },
       { key: 'campaigns', label: '营销活动', icon: 'Megaphone', path: '/campaigns' },
+      { key: 'campaign-reward-records', label: '奖励记录', icon: 'Table2', path: '/campaign-reward-records' },
       { key: 'member-marketing', label: '会员营销', icon: 'Gift', path: '/member-marketing' },
       { key: 'group-buys', label: '团购套餐', icon: 'Package', path: '/group-buys' },
       { key: 'coupon-effects', label: '营销效果', icon: 'Ticket', path: '/coupon-effects' },
@@ -123,7 +123,6 @@ const iconMap: Record<string, React.ComponentType<{ className?: string; size?: n
   Scale,
   Table2,
   Megaphone,
-  Zap,
   Package,
   Crown,
   Ticket,
@@ -141,7 +140,8 @@ const keyToPermission: Record<string, string | string[]> = {
   'member-center': 'user:read',
   users: 'user:read',
   campaigns: 'marketing:campaign',
-  analytics: ['finance:report', 'order:read', 'venue:read'],
+  'campaign-reward-records': 'marketing:campaign',
+  analytics: 'finance:report',
   finance: 'finance:read',
   compliance: 'finance:read',
   accounts: 'account:read',
@@ -200,13 +200,11 @@ function SidebarLeaf({
   item,
   depth = 0,
   activeKey,
-  hoverKey,
   onHover,
 }: {
   item: MenuItem
   depth?: number
   activeKey: string | null
-  hoverKey: string | null
   onHover: (key: string | null) => void
 }) {
   const isActive = activeKey === item.key
@@ -373,7 +371,6 @@ function SidebarItem({
                     item={child}
                     depth={depth + 1}
                     activeKey={activeKey}
-                    hoverKey={hoverKey}
                     onHover={onHover}
                   />
                 )

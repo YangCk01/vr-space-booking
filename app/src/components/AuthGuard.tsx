@@ -13,7 +13,7 @@ const routeToPermission: Record<string, string | string[]> = {
   '/orders':    'order:read',
   '/approvals': ['approval:read', 'approval:request'],
   '/member-center': 'user:read',
-  '/analytics': ['finance:report', 'order:read', 'venue:read'],
+  '/analytics': 'finance:report',
   '/venue-analytics': ['finance:report', 'venue:read'],
   '/finance':   'finance:read',
   '/finance/compliance': 'finance:read',
@@ -26,7 +26,6 @@ const routeToPermission: Record<string, string | string[]> = {
   '/coupon-effects': 'marketing:campaign',
   '/campaigns': 'marketing:campaign',
   '/platforms': 'marketing:campaign',
-  '/trigger-rules': 'marketing:rule',
 }
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {

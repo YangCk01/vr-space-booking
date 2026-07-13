@@ -257,6 +257,7 @@ export async function processBookingLifecycle(now = new Date()) {
                 userId: b.order.userId,
                 orderId: b.order.id,
                 amount: b.order.amount,
+                gameId: b.gameId,
               })
             }
           } catch (e) {

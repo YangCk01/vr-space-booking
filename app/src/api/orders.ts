@@ -12,8 +12,11 @@ export interface Order {
   status: string
   source?: 'ONLINE' | 'OFFLINE'
   payMethod: string | null
+  orderKind?: string | null
+  feeType?: string | null
+  feeReason?: string | null
   couponDiscount?: number
-  metadata?: Record<string, any> | null
+  metadata?: Record<string, unknown> | null
   paidAt: string | null
   cancelledAt: string | null
   refundAmount: number | null
@@ -27,8 +30,15 @@ export interface Order {
     label?: string
     coverImage?: string | null
     maxPeople?: number
+    game?: { title: string }
     venues?: { id: string; name: string }[]
   }
+  parentOrder?: {
+    orderNo?: string
+    booking?: {
+      game?: { title: string }
+    }
+  } | null
   booking?: {
     game?: { title: string }
     personCount?: number
@@ -60,6 +70,7 @@ export async function getOrders(params?: {
   pageSize?: number
   startDate?: string
   endDate?: string
+  userId?: string
   source?: string
   orderType?: string
   orderKind?: string
